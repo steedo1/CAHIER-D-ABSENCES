@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
 import { aggregateSchoolCycleRoster } from "@/lib/school-cycle-roster";
+import { createSchoolSubjectResolver } from "@/lib/school-subject-identifiers";
 import {
   groupScopedClassesByCycle,
   parseSchoolCyclesSettings,
@@ -26,7 +27,7 @@ function reply(body: unknown, status = 200) {
   });
 }
 
-export async function GET() {
+export async function GET(request?: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
   const access = await requireInstitutionRole(supa, srv, ALLOWED_ROLES);
@@ -93,6 +94,14 @@ export async function GET() {
       resolveSchoolCycleForClass(row, configuration)))
     .map(({ id, label, level }) => ({ id, label, level }));
 
+  if (request?.nextUrl.searchParams.get("view") === "navigation") {
+    return reply({ ok: true, enabled: true, academicYear: year || null,
+      classes: configuration.enabledCycles.flatMap(cycle => grouped[cycle].map(row => ({
+        id: row.id, label: (row as typeof classes[number]).label, level: row.level, cycle,
+      }))),
+    });
+  }
+
   const enrollments: Array<{ class_id: string; student_id: string; end_date: string | null }> = [];
   const teachers: Array<{ class_id: string; teacher_id: string; subject_id: string | null; end_date: string | null }> = [];
   const allClassIds = classes.map((row) => row.id);
@@ -117,6 +126,7 @@ export async function GET() {
             .select("class_id,student_id,end_date")
             .eq("institution_id", institutionId)
             .in("class_id", ids)
+            .is("end_date", null)
             .order("id")
             .range(offset, offset + 499),
         teacherComplete
@@ -125,6 +135,7 @@ export async function GET() {
             .select("class_id,teacher_id,subject_id,end_date")
             .eq("institution_id", institutionId)
             .in("class_id", ids)
+            .is("end_date", null)
             .order("id")
             .range(offset, offset + 499),
       ]);
@@ -151,15 +162,17 @@ export async function GET() {
     configuration.subjectTracksByCycle).flatMap((mappings) =>
       Object.keys(mappings || {}))));
   let subjects: Array<{ id: string; name: string }> = [];
+  let subjectAliases: Array<{ id: string; subject_id: string }> = [];
   if (classifiedSubjectIds.length) {
     const allowed = await srv.from("institution_subjects")
-      .select("subject_id,custom_name")
+      .select("id,subject_id,custom_name")
       .eq("institution_id", institutionId)
       .eq("is_active", true)
       .in("subject_id", classifiedSubjectIds)
       .limit(501);
     if (allowed.error) return reply({ error: "subjects_load_failed" }, 503);
     const active = allowed.data || [];
+    subjectAliases = active;
     const actualIds = Array.from(new Set(active.map((row) => row.subject_id)));
     if (actualIds.length) {
       const global = await srv.from("subjects")
@@ -175,6 +188,7 @@ export async function GET() {
   }
 
   const namesById = new Map(subjects.map((subject) => [subject.id, subject.name]));
+  const resolveSubject = createSchoolSubjectResolver(subjectAliases);
   const cycleForClass = new Map(configuration.enabledCycles.flatMap((cycle) =>
     grouped[cycle].map((row) => [row.id, cycle] as const)));
   const byProgram = Object.fromEntries(configuration.enabledCycles.map((cycle) => [
@@ -187,7 +201,7 @@ export async function GET() {
         const activeSet = new Set(activeIds);
         const assignedTeacherIds = new Set(teachers
           .filter((row) => !row.end_date && cycleForClass.get(row.class_id) === cycle &&
-            Boolean(row.subject_id && activeSet.has(row.subject_id)))
+            Boolean(row.subject_id && activeSet.has(resolveSubject(row.subject_id) || "")))
           .map((row) => row.teacher_id));
         return [
           track,

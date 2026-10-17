@@ -6,6 +6,7 @@ import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-s
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { isEducationType } from "@/lib/education-organization";
 import { dedupeEquivalentGeneralSecondaryClasses } from "@/lib/general-secondary-class-equivalence";
+import { inferSchoolCycleFromLevel, isSchoolCycle, isTeachingTrack, parseSchoolCyclesSettings, type SchoolCyclesSettings } from "@/lib/school-cycles";
 
 const READ_ALLOWED_ROLES = new Set([
   "admin",
@@ -64,12 +65,16 @@ function isGeneralSecondaryClassRow(row: any) {
   );
 }
 
-function dedupeGeneralSecondaryAliasesByAcademicYear(rows: any[]) {
+function dedupeGeneralSecondaryAliasesByAcademicYear(rows: any[], school?: SchoolCyclesSettings | null) {
   const preferredIds = new Set<string>();
   const byAcademicYear = new Map<string, any[]>();
+  const eligible = (row: any) => {
+    const cycle = school?.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level);
+    return isGeneralSecondaryClassRow(row) && !(school?.enabled && (cycle === "primary" || cycle === "preschool"));
+  };
 
   for (const row of rows) {
-    if (!isGeneralSecondaryClassRow(row)) continue;
+    if (!eligible(row)) continue;
     const academicYear = String(row?.academic_year || "").trim();
     const group = byAcademicYear.get(academicYear) || [];
     group.push(row);
@@ -84,7 +89,7 @@ function dedupeGeneralSecondaryAliasesByAcademicYear(rows: any[]) {
 
   // La requête est déjà triée : filtrer conserve donc l'ordre stable de l'API.
   return rows.filter(
-    (row) => !isGeneralSecondaryClassRow(row) || preferredIds.has(String(row.id)),
+    (row) => !eligible(row) || preferredIds.has(String(row.id)),
   );
 }
 
@@ -146,6 +151,27 @@ export async function GET(req: NextRequest) {
 
   const { srv, institutionId } = ctx;
   const url = new URL(req.url);
+  let cycleSettings: SchoolCyclesSettings | null = null;
+  const requestedCycle = url.searchParams.get("school_cycle");
+  const requestedTrack = url.searchParams.get("teaching_track");
+  const requestedLevel = url.searchParams.get("school_level") || "";
+  const requestedClass = url.searchParams.get("school_class_id") || "";
+  if (["school_cycle", "teaching_track", "school_level", "school_class_id"].some(key => url.searchParams.has(key))) {
+    const school = await srv.from("institutions").select("settings_json").eq("id", institutionId).maybeSingle();
+    if (school.error || !school.data) return NextResponse.json({ error: "school_scope_unavailable" }, { status: 503 });
+    const configuration = parseSchoolCyclesSettings(school.data.settings_json);
+    if (configuration.enabled) {
+      cycleSettings = configuration;
+      if (requestedCycle && requestedCycle !== "all" && (!isSchoolCycle(requestedCycle) || !configuration.enabledCycles.includes(requestedCycle))) {
+        return NextResponse.json({ error: "school_cycle_not_allowed" }, { status: 400 });
+      }
+      const cycles = isSchoolCycle(requestedCycle) ? [requestedCycle] : configuration.enabledCycles;
+      if (requestedTrack && requestedTrack !== "all" && (!isTeachingTrack(requestedTrack) ||
+        !cycles.some(cycle => configuration.teachingTracksByCycle[cycle]?.includes(requestedTrack)))) {
+        return NextResponse.json({ error: "teaching_track_not_allowed" }, { status: 400 });
+      }
+    }
+  }
   const limitRaw = url.searchParams.get("limit");
   const academicYearParam = (
     url.searchParams.get("academic_year") || ""
@@ -246,16 +272,28 @@ export async function GET(req: NextRequest) {
         : query.eq("formation_level_code", levelCodeParam);
   }
 
-  const { data, error } = await query
-    .order("level", { ascending: true })
-    .order("label", { ascending: true })
-    .limit(limit);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+  const ordered = query.order("level", { ascending: true }).order("label", { ascending: true }).order("id");
+  let sourceRows: any[] = [];
+  if (cycleSettings?.enabled) {
+    for (let offset = 0; offset < 10000; offset += 500) {
+      const page = await ordered.range(offset, offset + 499);
+      if (page.error) return NextResponse.json({ error: "classes_load_failed" }, { status: 503 });
+      sourceRows.push(...(page.data || []));
+      if ((page.data || []).length < 500) break;
+      if (offset === 9500) return NextResponse.json({ error: "too_many_classes" }, { status: 503 });
+    }
+    const settings = cycleSettings;
+    sourceRows = sourceRows.filter(row => {
+      const cycle = settings.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level);
+      return (cycle ? settings.enabledCycles.includes(cycle) : !requestedCycle || requestedCycle === "all") &&
+        (!requestedCycle || requestedCycle === "all" || cycle === requestedCycle) &&
+        (!requestedLevel || row.level === requestedLevel) && (!requestedClass || row.id === requestedClass);
+    }).slice(0, Math.min(1000, limit));
+  } else {
+    const result = await ordered.limit(limit);
+    if (result.error) return NextResponse.json({ error: result.error.message }, { status: 400 });
+    sourceRows = result.data || [];
   }
-
-  const sourceRows = (data ?? []) as any[];
   let authorizedRows = sourceRows;
   if (ctx.educatorScoped) {
     try {
@@ -267,7 +305,7 @@ export async function GET(req: NextRequest) {
   }
   const visibleRows = classIdParam
     ? authorizedRows
-    : dedupeGeneralSecondaryAliasesByAcademicYear(authorizedRows);
+    : dedupeGeneralSecondaryAliasesByAcademicYear(authorizedRows, cycleSettings);
 
   const items = visibleRows.map((c: any) => ({
     id: c.id,

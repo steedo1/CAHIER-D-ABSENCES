@@ -21,6 +21,7 @@ type ReportResponse = {
   ok?: boolean;
   reporting?: FrancoArabicReportsSettings;
   error?: string;
+  revision?: string;
 };
 type CycleResponse = {
   ok?: boolean;
@@ -48,6 +49,7 @@ export default function SchoolBulletinSettings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [revision, setRevision] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -75,6 +77,7 @@ export default function SchoolBulletinSettings() {
         const reporting = data.reporting;
         const config = data.configuration;
         setSettings(reporting);
+        setRevision(data.revision || "");
         setSubjects(data.subjects || []);
         setSubjectTracksByCycle(config.subjectTracksByCycle || {});
         setMulticycleReady(config.enabled);
@@ -194,7 +197,7 @@ export default function SchoolBulletinSettings() {
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...settings, format: hasArabic ? settings.format : "separate" }),
+          body: JSON.stringify({ ...settings, revision, format: hasArabic ? settings.format : "separate" }),
         },
       );
       const data = await response.json() as ReportResponse;
@@ -202,6 +205,7 @@ export default function SchoolBulletinSettings() {
         throw new Error(data.error || "Enregistrement impossible.");
       }
       setSettings(data.reporting);
+      setRevision(data.revision || "");
       setNotice("Paramètres de préparation des bulletins enregistrés pour cette école.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Enregistrement impossible.");
@@ -215,8 +219,8 @@ export default function SchoolBulletinSettings() {
       <div>
         <h2 className="text-lg font-bold text-slate-900">Paramètres des bulletins</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Préparer le modèle de bulletin et les barèmes par niveau. Ces réglages
-          ne changent pas encore les notes ni les bulletins existants.
+          Définir les barèmes et la présentation par niveau et enseignement.
+          Le calcul adapté nécessite une activation explicite ci-dessous.
         </p>
       </div>
       {loading ? <p className="text-sm text-slate-600">Chargement des paramètres…</p> : (
@@ -234,6 +238,21 @@ export default function SchoolBulletinSettings() {
           </label>
           {settings.enabled && (
             <div className="space-y-4">
+              <label className="flex items-center gap-3 text-sm font-semibold">
+                <input id="activate-specialized-bulletins" type="checkbox" disabled={blocked}
+                  checked={settings.engine === "specialized"}
+                  onChange={(event) => setSettings(old => ({ ...old, engine: event.target.checked ? "specialized" : "legacy" }))} />
+                Utiliser ces règles pour les bulletins des cycles configurés
+              </label>
+              <p className="text-sm text-slate-600">Sans cette activation, les bulletins habituels restent utilisés. Les matières communes aux deux enseignements nécessitent un rattachement explicite des évaluations avant tout calcul.</p>
+              <label htmlFor="coefficient-authority" className="block text-sm font-medium">Règles de coefficients utilisées pour ces bulletins</label>
+              <select id="coefficient-authority" disabled={blocked} className="rounded-lg border p-2"
+                value={settings.coefficientSource || "institution"}
+                onChange={event => setSettings(old => ({ ...old, coefficientSource: event.target.value as "institution" | "program" }))}>
+                <option value="institution">Coefficients existants de l’établissement</option>
+                <option value="program">Coefficients définis ici par niveau et enseignement</option>
+              </select>
+              <p className="text-sm text-slate-600">Une seule règle est utilisée pour chaque bulletin. Avec les coefficients existants, les valeurs ci-dessous ne participent pas au calcul ; les disciplines proviennent du programme de niveau déjà configuré.</p>
               {hasArabic ? (
               <div>
                 <label htmlFor="report-format" className="mb-1 block text-sm font-medium">
@@ -262,8 +281,8 @@ export default function SchoolBulletinSettings() {
               <div className="border-t pt-4">
                 <h3 className="font-semibold text-slate-900">Barèmes par niveau</h3>
                 <p className="mt-1 text-sm text-slate-600">
-                  Laissez vide tant que l'établissement n'a pas confirmé ses barèmes.
-                  Un CP1 peut utiliser /10 et un CM1 /20 : rien n'est imposé automatiquement.
+                  Laissez vide tant que l’établissement n’a pas confirmé ses barèmes.
+                  Un CP1 peut utiliser /10 et un CM1 /20 : rien n’est imposé automatiquement.
                 </p>
                 <div className="mt-3 space-y-3">
                   {settings.scales.map((scale, index) => {
@@ -316,13 +335,13 @@ export default function SchoolBulletinSettings() {
                   + Ajouter un barème
                 </button>
               </div>
-              <div className="border-t pt-4">
+              {(settings.coefficientSource || "institution") === "program" ? <div className="border-t pt-4">
                 <h3 className="font-semibold text-slate-900">
                   Coefficients par matière et par niveau
                 </h3>
                 <p className="mt-1 text-sm text-slate-600">
                   Choisissez le niveau et la discipline, puis renseignez le coefficient
-                  confirmé par l'établissement. Les coefficients du secondaire existant
+                  confirmé par l’établissement. Les coefficients du secondaire existant
                   et du CSCA ne sont pas modifiés.
                 </p>
                 <div className="mt-3 space-y-3">
@@ -393,7 +412,7 @@ export default function SchoolBulletinSettings() {
                   className="mt-3 min-h-10 rounded-xl border px-4 py-2 text-sm font-semibold">
                   + Ajouter un coefficient
                 </button>
-              </div>
+              </div> : <a href="/admin/parametres#subject-coeffs" className="block text-sm font-semibold text-sky-800 underline">Configurer les coefficients dans les paramètres existants de l’établissement</a>}
               {settings.scales.length > 0 && (() => {
                 const first = settings.scales[0];
                 const scale = getConfiguredScoringScale(settings,
@@ -402,7 +421,7 @@ export default function SchoolBulletinSettings() {
                 return example === null || example === undefined ? null : (
                   <p className="rounded-lg bg-sky-50 p-3 text-xs text-sky-900">
                     Vérification mathématique : {scale! / 2}/{scale} correspond à
-                    {" "}{example}/20. C'est un exemple de conversion, pas une moyenne générale calculée.
+                    {" "}{example}/20. C’est un exemple de conversion, pas une moyenne générale calculée.
                   </p>
                 );
               })()}

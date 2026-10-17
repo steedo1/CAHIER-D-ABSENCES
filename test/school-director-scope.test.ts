@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   canAccessScopedTeachingResource,
   canAccessSchoolWideAdministration,
+  canAccessDirectorProgramResource,
 } from "../src/lib/school-director-scope";
 import {
   parseSchoolCyclesSettings,
@@ -66,4 +67,29 @@ test("School-wide access respects enabled cycles, legacy scoped access denied", 
   assert.equal(canAccessScopedTeachingResource(legacy, {
     kind: "teaching_track", track: "french",
   }, { cycle: "secondary", subjectId: frenchId }), false);
+});
+
+test("program resources enforce both the authenticated institution and the explicit teaching identity", () => {
+  for (const track of ["french", "arabic"] as const) {
+    const principal = { institutionId: "school-a", scope: { kind: "teaching_track", track } } as const;
+    assert.equal(canAccessDirectorProgramResource(settings, principal, {
+      institutionId: "school-a", cycle: "primary", subjectId: bothId, track,
+    }), true);
+    assert.equal(canAccessDirectorProgramResource(settings, principal, {
+      institutionId: "school-b", cycle: "primary", subjectId: bothId, track,
+    }), false);
+    assert.equal(canAccessDirectorProgramResource(settings, principal, {
+      institutionId: "school-a", cycle: "primary", subjectId: bothId,
+      track: track === "french" ? "arabic" : "french",
+    }), false);
+    assert.equal(canAccessSchoolWideAdministration(principal.scope), false);
+  }
+});
+
+test("a stale subject mapping cannot re-enable a disabled teaching program", () => {
+  const stale = structuredClone(settings);
+  stale.teachingTracksByCycle.primary = ["french"];
+  assert.equal(canAccessScopedTeachingResource(stale, { kind: "teaching_track", track: "arabic" }, {
+    cycle: "primary", subjectId: bothId,
+  }), false);
 });

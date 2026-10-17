@@ -8,7 +8,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import Link from "next/link";
+import { SchoolContextLink as Link, SchoolNavigationBar } from "@/components/admin/SchoolNavigationProvider";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   Menu,
@@ -529,6 +529,7 @@ export default function AdminShell({
           {/* Contenu principal */}
           <main className="mx-auto max-w-7xl px-4 py-6 pb-20 md:pb-8">
             <AdminRoleContext.Provider value={role}>
+              <SchoolNavigationBar />
               {children}
             </AdminRoleContext.Provider>
           </main>

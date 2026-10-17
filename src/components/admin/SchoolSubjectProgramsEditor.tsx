@@ -14,6 +14,7 @@ type Response = {
   configuration?: SchoolCyclesSettings;
   subjects?: Subject[];
   error?: string;
+  revision?: string;
 };
 
 /** All curricular choices belong to the school admin; not platform billing. */
@@ -24,6 +25,7 @@ export default function SchoolSubjectProgramsEditor({ onSaved }: { onSaved: () =
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [revision, setRevision] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -39,6 +41,7 @@ export default function SchoolSubjectProgramsEditor({ onSaved }: { onSaved: () =
         }
         if (!active) return;
         setConfiguration(data.configuration);
+        setRevision(data.revision || "");
         setSubjects(data.subjects || []);
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : "Chargement impossible.");
@@ -78,6 +81,7 @@ export default function SchoolSubjectProgramsEditor({ onSaved }: { onSaved: () =
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          revision,
           subjectTracksByCycle: configuration.subjectTracksByCycle,
         }),
       });
@@ -86,6 +90,7 @@ export default function SchoolSubjectProgramsEditor({ onSaved }: { onSaved: () =
         throw new Error(data.error || "Impossible d'enregistrer les disciplines.");
       }
       setConfiguration(data.configuration);
+      setRevision(data.revision || "");
       setNotice("Disciplines de l'établissement enregistrées.");
       onSaved();
     } catch (err) {
@@ -104,12 +109,12 @@ export default function SchoolSubjectProgramsEditor({ onSaved }: { onSaved: () =
     <h2 className="text-xl font-bold text-slate-900">Matières proposées par votre établissement</h2>
     <p className="mt-2 text-sm text-slate-600">
       Activez les disciplines réellement enseignées dans chaque cycle.
-      Pour une école franco-arabe, choisissez également l'enseignement concerné.
+      Pour une école franco-arabe, choisissez également l’enseignement concerné.
       Les matières et coefficients seront ensuite précisés par niveau dans les paramètres du bulletin.
     </p>
     {!subjects.length && (
       <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
-        Aucun enseignement ne peut être configuré tant qu'aucune discipline n'est activée dans votre établissement.
+        Aucun enseignement ne peut être configuré tant qu’aucune discipline n’est activée dans votre établissement.
       </p>
     )}
     <div className="mt-4 space-y-4">

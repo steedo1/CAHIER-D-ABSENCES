@@ -31,6 +31,8 @@ export function canAccessScopedTeachingResource(
 
   if (scope.kind === "school_wide") return true;
 
+  if (!settings.teachingTracksByCycle[resource.cycle]?.includes(scope.track)) return false;
+
   // Never infer a subject's teaching track from its display name/language.
   // An unmapped subject is inaccessible to all track-scoped directors.
   return (settings.subjectTracksByCycle[resource.cycle]?.[resource.subjectId] || [])
@@ -40,4 +42,20 @@ export function canAccessScopedTeachingResource(
 /** Aggregated school finances and registrations are school-wide by default. */
 export function canAccessSchoolWideAdministration(scope: SchoolDirectorScope): boolean {
   return scope.kind === "school_wide";
+}
+
+/** Requires a principal resolved from verified server identity and assignments.
+ * A teaching-track query parameter must never be used as that assignment.
+ * This policy is separate from legacy role grants and does not activate accounts.
+ */
+export function canAccessDirectorProgramResource(
+  settings: SchoolCyclesSettings,
+  principal: { institutionId: string; scope: SchoolDirectorScope },
+  resource: ScopedTeachingResource & { institutionId: string; track: TeachingTrack },
+): boolean {
+  if (!principal.institutionId || principal.institutionId !== resource.institutionId) return false;
+  if (!settings.enabled || !settings.teachingTracksByCycle[resource.cycle]?.includes(resource.track)) return false;
+  if (!settings.subjectTracksByCycle[resource.cycle]?.[resource.subjectId]?.includes(resource.track)) return false;
+  if (principal.scope.kind === "teaching_track" && principal.scope.track !== resource.track) return false;
+  return canAccessScopedTeachingResource(settings, principal.scope, resource);
 }

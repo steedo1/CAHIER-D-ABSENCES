@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import {
   SCHOOL_CYCLE_OPTIONS,
@@ -23,9 +24,12 @@ type DetailsResponse = {
   classes?: CycleClass[];
   academicYear?: string | null;
   error?: string;
+  revision?: string;
 };
 
 export default function CycleConfigClient() {
+  const searchParams = useSearchParams();
+  const requestedInstitution = searchParams.get("inst") || "";
   const [schools, setSchools] = useState<Institution[]>([]);
   const [schoolId, setSchoolId] = useState("");
   const [settings, setSettings] = useState<SchoolCyclesSettings>(getDefaultSchoolCyclesSettings);
@@ -36,6 +40,7 @@ export default function CycleConfigClient() {
   const [loadedSchoolId, setLoadedSchoolId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [revision, setRevision] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -47,7 +52,8 @@ export default function CycleConfigClient() {
         if (!alive) return;
         const rows = data.items || [];
         setSchools(rows);
-        if (rows.length) setSchoolId(rows[0].id);
+        if (requestedInstitution) setSchoolId(requestedInstitution);
+        else if (rows.length) setSchoolId(rows[0].id);
         else setLoading(false);
       } catch (err) {
         if (alive) {
@@ -57,7 +63,7 @@ export default function CycleConfigClient() {
       }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [requestedInstitution]);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -80,6 +86,9 @@ export default function CycleConfigClient() {
         }
         if (alive) {
           setSettings(data.configuration);
+          setRevision(data.revision || "");
+          if (data.institution) setSchools(current => current.some(row => row.id === data.institution!.id)
+            ? current : [...current, data.institution!]);
           setClasses(data.classes || []);
           setAcademicYear(data.academicYear || null);
           setLoadedSchoolId(schoolId);
@@ -183,11 +192,11 @@ export default function CycleConfigClient() {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            revision,
             enabled: settings.enabled,
             enabledCycles: settings.enabledCycles,
             teachingTracksByCycle: nextTracks,
             classCycleById: settings.classCycleById,
-            subjectTracksByCycle: settings.subjectTracksByCycle,
             defaultView: settings.defaultView,
             preferredLanguage: settings.preferredLanguage,
           }),
@@ -198,6 +207,7 @@ export default function CycleConfigClient() {
         throw new Error(data.error || "Enregistrement impossible.");
       }
       setSettings(data.configuration);
+      setRevision(data.revision || "");
       setNotice("Configuration enregistrée pour cet établissement uniquement.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Enregistrement impossible.");
@@ -227,7 +237,7 @@ export default function CycleConfigClient() {
           ))}
         </select>
         <p className="mt-2 text-xs text-slate-500">
-          La configuration est propre à l'établissement choisi, jamais globale.
+          La configuration est propre à l’établissement choisi, jamais globale.
         </p>
       </section>
 
@@ -242,7 +252,7 @@ export default function CycleConfigClient() {
               <div>
                 <h2 className="font-bold text-slate-900">Activer plusieurs cycles</h2>
                 <p className="text-sm text-slate-600">
-                  Laissez désactivé pour préserver l'interface habituelle.
+                  Laissez désactivé pour préserver l’interface habituelle.
                 </p>
               </div>
               <input
@@ -264,6 +274,7 @@ export default function CycleConfigClient() {
                       <label className="flex cursor-pointer items-center gap-3 font-semibold">
                         <input
                           type="checkbox"
+                          id={`configuration-cycle-${cycle.id}`}
                           className="h-5 w-5 accent-violet-600"
                           checked={enabled}
                           onChange={() => toggleCycle(cycle.id)}
@@ -276,6 +287,7 @@ export default function CycleConfigClient() {
                             <label key={track.id} className="flex items-center gap-2 text-sm text-slate-700">
                               <input
                                 type="checkbox"
+                                id={`configuration-track-${cycle.id}-${track.id}`}
                                 className="h-4 w-4 accent-violet-600"
                                 checked={(settings.teachingTracksByCycle[cycle.id] || ["french"])
                                   .includes(track.id)}
@@ -302,7 +314,7 @@ export default function CycleConfigClient() {
                     }))}
                     className="min-h-11 w-full rounded-lg border px-3 py-2"
                   >
-                    <option value="all">Direction générale — toute l'école</option>
+                    <option value="all">Direction générale — toute l’école</option>
                     {SCHOOL_CYCLE_OPTIONS.filter((cycle) => settings.enabledCycles.includes(cycle.id))
                       .map((cycle) => (
                         <option key={cycle.id} value={cycle.id}>{cycle.label}</option>
@@ -311,7 +323,7 @@ export default function CycleConfigClient() {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-semibold" htmlFor="ui-language">
-                    Langue préférée pour l'interface (préparation)
+                    Langue préférée pour l’interface (préparation)
                   </label>
                   <select
                     id="ui-language"
@@ -339,7 +351,7 @@ export default function CycleConfigClient() {
               </p>
               {!classes.length ? (
                 <p className="mt-3 text-sm text-slate-500">
-                  Aucune classe trouvée pour l'année active. La configuration des cycles
+                  Aucune classe trouvée pour l’année active. La configuration des cycles
                   peut être sauvegardée avant la création des classes.
                 </p>
               ) : (

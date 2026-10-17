@@ -1,16 +1,16 @@
 "use client";
 
-import Link from "next/link";
+import { SchoolContextLink as Link, useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import { useEffect, useMemo, useState } from "react";
 import {
   SCHOOL_CYCLE_OPTIONS,
   TEACHING_TRACK_OPTIONS,
-  isSchoolCycle,
   type SchoolCycle,
   type TeachingTrack,
 } from "@/lib/school-cycles";
 
 type SchoolClass = { id: string; label: string; level: string | null };
+const EMPTY_CYCLES: SchoolCycle[] = [];
 type CycleSummary = { classes: SchoolClass[]; count: number; students: number; teachers: number };
 type Data = {
   ok?: boolean;
@@ -36,8 +36,12 @@ type Data = {
 };
 
 export default function CycleOverviewClient({ initialCycle }: { initialCycle: SchoolCycle | null }) {
+  const navigation = useSchoolNavigation();
   const [data, setData] = useState<Data | null>(null);
-  const [cycle, setCycle] = useState<SchoolCycle | "all">(initialCycle || "all");
+  const [localCycle, setLocalCycle] = useState<SchoolCycle | "all">(initialCycle || "all");
+  const cycle = navigation?.selection.cycle || localCycle;
+  const setCycle = (next: SchoolCycle | "all") => navigation
+    ? navigation.change({ cycle: next, level: "", classId: "" }) : setLocalCycle(next);
   const [programForCycle, setProgramForCycle] = useState<Partial<Record<SchoolCycle, TeachingTrack | "all">>>({});
   const [error, setError] = useState("");
 
@@ -53,10 +57,12 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
         if (!res.ok || !payload.ok) throw new Error(payload.error || "Chargement indisponible.");
         if (!active) return;
         setData(payload);
-        if (!initialCycle && payload.configuration?.defaultView) {
-          setCycle(payload.configuration.defaultView);
+        if (payload.configuration?.enabledCycles.length === 1) {
+          setLocalCycle(payload.configuration.enabledCycles[0]);
+        } else if (!initialCycle && payload.configuration?.defaultView) {
+          setLocalCycle(payload.configuration.defaultView);
         } else if (initialCycle && !payload.configuration?.enabledCycles.includes(initialCycle)) {
-          setCycle("all");
+          setLocalCycle("all");
         }
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : "Erreur de chargement.");
@@ -65,7 +71,7 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
     return () => { active = false; controller.abort(); };
   }, [initialCycle]);
 
-  const enabledCycles = data?.configuration?.enabledCycles || [];
+  const enabledCycles = data?.configuration?.enabledCycles || EMPTY_CYCLES;
   const shownCycles = useMemo(
     () => cycle === "all" ? enabledCycles : enabledCycles.filter((id) => id === cycle),
     [cycle, enabledCycles],
@@ -79,7 +85,7 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
   );
   if (!data.enabled) return (
     <div className="rounded-xl bg-white p-5">
-      <p className="text-slate-700">Le mode multicyle n'est pas activé pour cet établissement.</p>
+      <p className="text-slate-700">Le mode multicyle n’est pas activé pour cet établissement.</p>
       <Link href="/admin/dashboard" className="mt-2 inline-block font-semibold text-sky-700">Retour au tableau de bord</Link>
     </div>
   );
@@ -98,13 +104,13 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
           {data.uniqueStudents ?? "—"} élèves distincts · {data.uniqueTeachers ?? "—"} enseignants distincts
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          <button
+          {enabledCycles.length > 1 && <button
             type="button"
             onClick={() => setCycle("all")}
             className={`rounded-xl px-4 py-2 text-sm font-semibold ${cycle === "all" ? "bg-sky-700 text-white" : "bg-slate-100 text-slate-700"}`}
           >
-            Toute l'école
-          </button>
+            Toute l’école
+          </button>}
           {enabledCycles.map((id) => (
             <button
               type="button"
@@ -132,7 +138,7 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
         <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
           <p className="font-bold">{data.reviewNeeded?.length} classe(s) à vérifier</p>
           <p className="mt-1">
-            Leur intitulé de niveau n'est pas reconnu automatiquement.
+            Leur intitulé de niveau n’est pas reconnu automatiquement.
             Un rattachement explicite dans Super Admin évitera un mauvais classement.
           </p>
           <p className="mt-2">{data.reviewNeeded?.map((c) => c.label).join(", ")}</p>
@@ -141,9 +147,13 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
 
       {shownCycles.map((id) => {
         const cycleName = SCHOOL_CYCLE_OPTIONS.find((option) => option.id === id)?.label || id;
-        const classes = data.cycles?.[id]?.classes || [];
+        const classes = (data.cycles?.[id]?.classes || []).filter(row =>
+          (!navigation?.selection.level || navigation.selection.level === row.level) &&
+          (!navigation?.selection.classId || navigation.selection.classId === row.id));
         const programs = data.configuration?.teachingTracksByCycle[id] || ["french"];
-        const selectedProgram = programForCycle[id] || "all";
+        const contextTrack = navigation?.selection.track;
+        const selectedProgram = contextTrack && contextTrack !== "all" && programs.includes(contextTrack)
+          ? contextTrack : programForCycle[id] || "all";
         const teachingData = selectedProgram === "all" ? null : data.programs?.[id]?.[selectedProgram];
         return (
           <section key={id} className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -152,7 +162,7 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
                 <h2 className="text-xl font-bold">{cycleName}</h2>
                 <p className="mt-1 text-sm text-slate-600">{classes.length} classe(s) · {data.cycles?.[id]?.students ?? "—"} élèves · {data.cycles?.[id]?.teachers ?? "—"} enseignants</p>
               </div>
-              <Link href="/admin/classes" className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white">
+              <Link href={`/admin/classes?school_cycle=${id}`} className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white">
                 Gérer les classes
               </Link>
             </div>
@@ -161,7 +171,8 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
                 type="button"
                 className={`rounded-lg px-3 py-2 text-sm font-semibold ${selectedProgram === "all"
                   ? "bg-sky-700 text-white" : "bg-slate-100 text-slate-700"}`}
-                onClick={() => setProgramForCycle((current) => ({ ...current, [id]: "all" }))}
+                onClick={() => navigation ? navigation.change({ cycle: id, track: "all" })
+                  : setProgramForCycle((current) => ({ ...current, [id]: "all" }))}
               >
                 Tous les enseignements
               </button>
@@ -169,7 +180,8 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
                 <button
                   key={program}
                   type="button"
-                  onClick={() => setProgramForCycle((current) => ({ ...current, [id]: program }))}
+                  onClick={() => navigation ? navigation.change({ cycle: id, track: program })
+                    : setProgramForCycle((current) => ({ ...current, [id]: program }))}
                   className={`rounded-lg px-3 py-2 text-sm font-semibold ${selectedProgram === program
                     ? "bg-sky-700 text-white" : "bg-slate-100 text-slate-700"}`}
                 >
@@ -193,7 +205,7 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
                 ) : (
                   <p className="mt-2 text-sm text-amber-900">
                     Aucune discipline encore classée pour cet enseignement.
-                    La configuration se fait dans Super Admin.
+                    La direction pédagogique les configure dans les paramètres des bulletins.
                   </p>
                 )}
                 <p className="mt-3 text-xs text-slate-600">
@@ -209,7 +221,7 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
 
             {classes.length === 0 ? (
               <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
-                Aucune classe enregistrée pour l'année scolaire active.
+                Aucune classe enregistrée pour l’année scolaire active.
               </p>
             ) : (
               <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">

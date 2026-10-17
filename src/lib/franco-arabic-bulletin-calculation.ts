@@ -25,6 +25,8 @@ export type OfficialEvaluationScore = {
   scale: number;
   evaluationCoefficient: number;
   isCurrentPublished: boolean;
+  /** Server-resolved program identity; mandatory for any shared subject. */
+  teachingTrack?: TeachingTrack | null;
 };
 
 export type SubjectBulletinPolicy = {
@@ -68,13 +70,16 @@ export function buildProgramBulletinDraft(params: {
   school: SchoolCyclesSettings;
   reports: FrancoArabicReportsSettings;
   officialScores: readonly OfficialEvaluationScore[];
+  /** Resolved on the server from the selected single coefficient authority. */
+  resolvedPolicies?: readonly SubjectBulletinPolicy[];
+  configurationProblems?: readonly string[];
 }): ProgramBulletinDraft {
   const { studentId, cycle, level, track, school, reports, officialScores } = params;
   // Source of coefficient truth: this institution’s validated, program-specific
   // report settings. Do not trust arbitrary client-supplied coefficients.
   const subjectPolicies: readonly SubjectBulletinPolicy[] =
-    getConfiguredSubjectCoefficients(reports, cycle, level, track);
-  const problems: string[] = [];
+    params.resolvedPolicies ?? getConfiguredSubjectCoefficients(reports, cycle, level, track);
+  const problems: string[] = [...(params.configurationProblems || [])];
   const mapped = school.subjectTracksByCycle[cycle] || {};
   // The PRIMARY curriculum can differ between CP1, CP2, CE1, CE2, CM1
   // and CM2. Only a level's explicitly configured subject/coefficient entries
@@ -101,9 +106,6 @@ export function buildProgramBulletinDraft(params: {
   // Current evaluations do not identify a French/Arabic teaching track.
   // A shared subject cannot be assigned to both bulletins without an explicit
   // link from each evaluation to its program.
-  if (subjectIds.some((subjectId) => (mapped[subjectId] || []).length > 1)) {
-    problems.push("shared_subject_requires_program_specific_evaluations");
-  }
 
   const policiesById = new Map<string, SubjectBulletinPolicy>();
   const duplicatePolicyIds = new Set<string>();
@@ -121,6 +123,11 @@ export function buildProgramBulletinDraft(params: {
   const allowed = new Set(subjectIds);
   for (const row of officialScores) {
     if (!row.isCurrentPublished || row.studentId !== studentId || !allowed.has(row.subjectId)) continue;
+    if (row.teachingTrack != null && row.teachingTrack !== track) continue;
+    if ((mapped[row.subjectId] || []).length > 1 && !row.teachingTrack) {
+      problems.push("shared_subject_requires_program_specific_evaluations");
+      continue;
+    }
     if (!row.evaluationId || !row.subjectId) {
       problems.push("invalid_evaluation_id");
       continue;
@@ -149,7 +156,8 @@ export function buildProgramBulletinDraft(params: {
   for (const subjectId of subjectIds) {
     const rule = policiesById.get(subjectId);
     if (!rule || duplicatePolicyIds.has(subjectId) ||
-        !strictlyPositive(rule.coefficient) ||
+        !Number.isFinite(rule.coefficient) || rule.coefficient < 0 ||
+        (rule.includeInAverage && rule.coefficient === 0) ||
         typeof rule.includeInAverage !== "boolean") {
       problems.push("subject_policy_missing_or_invalid");
       subjects.push({

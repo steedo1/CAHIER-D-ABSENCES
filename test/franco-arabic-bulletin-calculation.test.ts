@@ -58,6 +58,24 @@ const calc = (track: "french" | "arabic", input = scores, config = reports) =>
     track, school, reports: config, officialScores: input,
   });
 
+test("a shared subject uses explicit evaluation programs and never merges French and Arabic scores", () => {
+  const sharedSchool = structuredClone(school);
+  sharedSchool.subjectTracksByCycle.primary![math] = ["french", "arabic"];
+  const sharedReports = structuredClone(reports);
+  sharedReports.coefficients.push({ cycle: "primary", level: "CP1", track: "arabic", subjectId: math, coefficient: 1, includeInAverage: true });
+  const tagged: OfficialEvaluationScore[] = scores.map(row => row.subjectId === math ? { ...row, teachingTrack: "french" } : row);
+  tagged.push({ studentId: "A", evaluationId: "arabic-math", subjectId: math, score: 4, scale: 10,
+    evaluationCoefficient: 1, isCurrentPublished: true, teachingTrack: "arabic" });
+  const build = (track: "french" | "arabic") => buildProgramBulletinDraft({ studentId: "A", cycle: "primary", level: "CP1",
+    track, school: sharedSchool, reports: sharedReports, officialScores: tagged });
+  const fr = build("french"), ar = build("arabic");
+  assert.equal(fr.generalAverage, 7.4);
+  assert.equal(ar.generalAverage, 11.5);
+  assert.equal(fr.status, "ready");
+  assert.equal(ar.status, "ready");
+  assert.equal(combineProgramBulletins(fr, ar)?.combinedAverage, null);
+});
+
 test("two programs use the same student identity but entirely different subjects", () => {
   const fr = calc("french");
   const ar = calc("arabic");

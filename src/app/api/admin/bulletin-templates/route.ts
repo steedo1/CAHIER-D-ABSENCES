@@ -4,7 +4,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
 import {
   FRANCO_ARABIC_REPORTS_SETTINGS_KEY,
-  parseFrancoArabicReportsSettings,
+  readFrancoArabicReportsForEditing,
   validateFrancoArabicReportsInput,
 } from "@/lib/franco-arabic-reporting";
 import {
@@ -15,6 +15,7 @@ import {
   type SchoolCyclesSettings,
   type TeachingTrack,
 } from "@/lib/school-cycles";
+import { schoolSettingsRevision, writeSchoolSettings } from "@/lib/school-settings-write";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -76,7 +77,8 @@ export async function GET() {
     ok: true,
     institution: { name: institution.name, code: institution.code || institution.code_unique },
     configuration,
-    reporting: parseFrancoArabicReportsSettings(institution.settings_json),
+    reporting: readFrancoArabicReportsForEditing(institution.settings_json),
+    revision: schoolSettingsRevision(institution.settings_json),
     subjects,
   });
 }
@@ -88,13 +90,17 @@ export async function PUT(req: NextRequest) {
   if (origin && origin !== req.nextUrl.origin) return json({ error: "invalid_origin" }, 403);
   if (!req.headers.get("content-type")?.includes("application/json")) return json({ error: "expected_json" }, 415);
 
-  const incoming = validateFrancoArabicReportsInput(await req.json().catch(() => null));
+  const body = await req.json().catch(() => null);
+  const incoming = validateFrancoArabicReportsInput(body);
   if (!incoming) return json({ error: "invalid_bulletin_settings" }, 400);
 
   const { data: school, error } = await auth.service.from("institutions")
     .select("settings_json").eq("id", auth.institutionId).maybeSingle();
   if (error) return json({ error: "institution_load_failed" }, 503);
   if (!school) return json({ error: "institution_not_found" }, 404);
+  if (body?.revision !== schoolSettingsRevision(school.settings_json)) {
+    return json({ error: "settings_changed_reload_required" }, 409);
+  }
   const oldSettings = asSettingsJson(school.settings_json);
   const cycles = parseSchoolCyclesSettings(oldSettings);
 
@@ -127,13 +133,12 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  const updated = await auth.service.from("institutions")
-    .update({
-      settings_json: { ...oldSettings, [FRANCO_ARABIC_REPORTS_SETTINGS_KEY]: incoming },
-    })
-    .eq("id", auth.institutionId).select("id").single();
-  if (updated.error) return json({ error: "save_failed" }, 503);
-  return json({ ok: true, reporting: incoming });
+  const reporting = incoming.enabled ? incoming
+    : { ...readFrancoArabicReportsForEditing(oldSettings), enabled: false };
+  const next = { ...oldSettings, [FRANCO_ARABIC_REPORTS_SETTINGS_KEY]: reporting };
+  const updated = await writeSchoolSettings(auth.service, auth.institutionId, school.settings_json, next);
+  if ("error" in updated) return json({ error: updated.error }, updated.status);
+  return json({ ok: true, reporting, revision: updated.revision });
 }
 
 /**
@@ -162,6 +167,9 @@ export async function PATCH(req: NextRequest) {
     .select("settings_json").eq("id", auth.institutionId).maybeSingle();
   if (error) return json({ error: "institution_load_failed" }, 503);
   if (!school) return json({ error: "institution_not_found" }, 404);
+  if ((body as Record<string, unknown>).revision !== schoolSettingsRevision(school.settings_json)) {
+    return json({ error: "settings_changed_reload_required" }, 409);
+  }
   const stored = asSettingsJson(school.settings_json);
   const current = parseSchoolCyclesSettings(stored);
   if (!current.enabled) return json({ error: "school_cycles_not_enabled" }, 409);
@@ -174,7 +182,7 @@ export async function PATCH(req: NextRequest) {
   const referenced = new Set<string>();
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   for (const cycle of current.enabledCycles) {
-    const perCycle = supplied[cycle] ?? {};
+    const perCycle = supplied[cycle] ?? current.subjectTracksByCycle[cycle] ?? {};
     if (!perCycle || typeof perCycle !== "object" || Array.isArray(perCycle)) {
       return json({ error: "invalid_cycle_subjects" }, 400);
     }
@@ -206,11 +214,12 @@ export async function PATCH(req: NextRequest) {
   }
 
   // Maintain stable cycle provision, class assignments and unrelated settings.
-  const updated: SchoolCyclesSettings = { ...current, subjectTracksByCycle: mapping };
-  const write = await auth.service.from("institutions")
-    .update({ settings_json: { ...stored, [SCHOOL_CYCLES_SETTINGS_KEY]: updated } })
-    .eq("id", auth.institutionId).select("id").single();
-  if (write.error) return json({ error: "save_failed" }, 503);
+  const rawCycles = asSettingsJson(stored[SCHOOL_CYCLES_SETTINGS_KEY]);
+  const savedMapping = asSettingsJson(rawCycles.subjectTracksByCycle);
+  const updated = { ...rawCycles, ...current, subjectTracksByCycle: { ...savedMapping, ...mapping } };
+  const next = { ...stored, [SCHOOL_CYCLES_SETTINGS_KEY]: updated };
+  const write = await writeSchoolSettings(auth.service, auth.institutionId, school.settings_json, next);
+  if ("error" in write) return json({ error: write.error }, write.status);
 
-  return json({ ok: true, configuration: updated });
+  return json({ ok: true, configuration: parseSchoolCyclesSettings(next), revision: write.revision });
 }

@@ -6,10 +6,11 @@ export const dynamic = "force-dynamic";
 export default async function CyclesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cycle?: string }>;
+  searchParams: Promise<{ cycle?: string; school_cycle?: string }>;
 }) {
   const params = await searchParams;
-  const selected = isSchoolCycle(params.cycle) ? params.cycle : null;
+  const requested = params.school_cycle || params.cycle;
+  const selected = isSchoolCycle(requested) ? requested : null;
 
   return <CycleOverviewClient initialCycle={selected} />;
 }

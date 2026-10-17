@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { isEducationType, type EducationType } from "@/lib/education-organization";
+import { requireInstitutionRole } from "@/lib/auth/server-context";
+import { validateSchoolClassCycle } from "@/lib/school-class-levels";
 
 type OfficialTrackCode =
   | "6eme"
@@ -39,6 +41,7 @@ type Body = {
   formationCode?: string | null;
   formation_level_code?: string | null;
   formationLevelCode?: string | null;
+  school_cycle?: string;
 };
 
 const OFFICIAL_TRACK_CODES = new Set<string>([
@@ -234,6 +237,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no_institution" }, { status: 400 });
 
   const institution_id = me.institution_id as string;
+  if (body.school_cycle !== undefined) {
+    const service = getSupabaseServiceClient();
+    const access = await requireInstitutionRole(supabaseAuth, service, ["admin"]);
+    if ("error" in access || access.instId !== institution_id) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+    const school = await service.from("institutions").select("settings_json").eq("id", institution_id).maybeSingle();
+    if (school.error || !school.data) return NextResponse.json({ error: "school_load_failed" }, { status: 503 });
+    const cycleError = validateSchoolClassCycle(school.data.settings_json, body.school_cycle, level);
+    if (cycleError) return NextResponse.json({ error: cycleError }, { status: 400 });
+    if (body.school_cycle !== "secondary" && (education_type !== "general_secondary" || official_track_code ||
+        Object.values(body.official_tracks_by_label || body.officialTracksByLabel || {}).some(Boolean))) {
+      return NextResponse.json({ error: "secondary_series_not_applicable" }, { status: 400 });
+    }
+  }
   const academic_year =
     requestedAcademicYear ||
     (await getCurrentAcademicYear(institution_id)) ||

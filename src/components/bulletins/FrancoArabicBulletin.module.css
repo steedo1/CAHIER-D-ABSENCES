@@ -205,6 +205,9 @@
     overflow: visible;
   }
   .marks tr { break-inside: avoid; page-break-inside: avoid; }
+  .marks thead { display: table-header-group; }
+  .program { overflow: visible; }
+  .summary, .appreciation, .signatures { break-inside: avoid; }
 }
 
 /* A standard primary school keeps the elegant A4 identity, not an

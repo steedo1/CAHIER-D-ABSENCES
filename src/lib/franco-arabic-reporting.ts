@@ -6,7 +6,7 @@ import {
 /**
  * Francophone / Arabic report preparation contract. Does not alter grades,
  * coefficients, the legacy bulletin engine or any existing school.
- * Enabled only by a super admin for an explicitly configured school.
+ * Configured by the pedagogical administrator of an explicitly activated school.
  */
 export const FRANCO_ARABIC_REPORTS_SETTINGS_KEY = "franco_arabic_reports_v1" as const;
 export const REPORT_FORMATS = ["separate", "combined", "both"] as const;
@@ -37,6 +37,10 @@ export type FrancoArabicReportsSettings = {
   scales: LevelScoringScale[];
   /** Each coefficient belongs to a cycle + level + teaching program + subject. */
   coefficients: SubjectReportCoefficient[];
+  /** Absent in previously saved templates: keep the historical engine. */
+  engine?: "legacy" | "specialized";
+  /** Exactly one authority for a specialized context; never merge weights. */
+  coefficientSource?: "institution" | "program";
 };
 
 export function defaultFrancoArabicReportsSettings(): FrancoArabicReportsSettings {
@@ -76,6 +80,8 @@ export function validateFrancoArabicReportsInput(
   if (!data || typeof data.enabled !== "boolean" ||
       !isReportFormat(data.format) || !Array.isArray(data.scales) ||
       data.scales.length > 120) return null;
+  if (data.engine !== undefined && data.engine !== "legacy" && data.engine !== "specialized") return null;
+  if (data.coefficientSource !== undefined && data.coefficientSource !== "institution" && data.coefficientSource !== "program") return null;
   if (!data.enabled) return defaultFrancoArabicReportsSettings();
   const seen = new Set<string>();
   const scales: LevelScoringScale[] = [];
@@ -129,7 +135,19 @@ export function validateFrancoArabicReportsInput(
       includeInAverage: entry.includeInAverage,
     });
   }
-  return { version: 1, enabled: true, format: data.format, scales, coefficients };
+  return { version: 1, enabled: true, format: data.format, scales, coefficients,
+    ...(data.engine !== undefined ? { engine: data.engine } : {}),
+    ...(data.coefficientSource !== undefined ? { coefficientSource: data.coefficientSource } : {}),
+  };
+}
+
+/** Editors can restore suspended policies; calculations still use the runtime parser. */
+export function readFrancoArabicReportsForEditing(settingsJson: unknown): FrancoArabicReportsSettings {
+  const outer = asObject(settingsJson);
+  const stored = outer && asObject(outer[FRANCO_ARABIC_REPORTS_SETTINGS_KEY]);
+  if (!stored || stored.version !== 1) return defaultFrancoArabicReportsSettings();
+  const validated = validateFrancoArabicReportsInput({ ...stored, enabled: true });
+  return validated ? { ...validated, enabled: stored.enabled === true } : defaultFrancoArabicReportsSettings();
 }
 
 export function getConfiguredScoringScale(

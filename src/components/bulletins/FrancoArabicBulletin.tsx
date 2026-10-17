@@ -98,7 +98,7 @@ function Head({ model, variant }: { model: BulletinDocument; variant: BulletinVa
         <div className={styles.schoolIdentity}>
           <div className={styles.schoolName}>{model.school.name}</div>
           {model.school.subtitle && <div className={styles.schoolSubtitle}>{model.school.subtitle}</div>}
-          <div className={styles.schoolMotto}>{model.school.motto || "Savoir · Excellence · Valeurs"}</div>
+          {model.school.motto && <div className={styles.schoolMotto}>{model.school.motto}</div>}
         </div>
         <div className={styles.schoolCode}>
           <span>Établissement</span>
@@ -157,7 +157,7 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
     <tbody>
       {program.subjects.map(row => <tr key={row.id}>
         <td className={styles.subjectCell}>
-          <span>{row.name}</span>
+          <span dir="auto">{row.name}</span>
           {row.arabicName && <small lang="ar" dir="rtl">{row.arabicName}</small>}
         </td>
         <td>{number(row.coefficient, row.coefficient !== null && row.coefficient % 1 !== 0 ? 1 : 0)}</td>

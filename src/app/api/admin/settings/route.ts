@@ -2,30 +2,45 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireInstitutionRole } from "@/lib/auth/server-context";
+import { mergeGeneralSchoolSettings, writeSchoolSettings } from "@/lib/school-settings-write";
+
+export const dynamic = "force-dynamic";
+
+const reply = (body: unknown, status = 200) => NextResponse.json(body, {
+  status, headers: { "Cache-Control": "private, no-store" },
+});
+
+async function context() {
+  const client = await getSupabaseServerClient();
+  const service = getSupabaseServiceClient();
+  const access = await requireInstitutionRole(client, service, ["admin"]);
+  if ("error" in access) return { error: reply({ error: access.error }, access.error === "unauthorized" ? 401 : 403) };
+  const school = await service.from("institutions").select("settings_json")
+    .eq("id", access.instId).maybeSingle();
+  if (school.error) return { error: reply({ error: "settings_load_failed" }, 503) };
+  if (!school.data) return { error: reply({ error: "institution_not_found" }, 404) };
+  return { service, institutionId: access.instId, previous: school.data.settings_json };
+}
 
 export async function GET() {
-  const supa = await getSupabaseServerClient();
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error:"unauthorized" }, { status: 401 });
-  const { data: me } = await supa.from("profiles").select("institution_id").eq("id", user.id).maybeSingle();
-  const { data } = await supa.from("institutions").select("settings_json").eq("id", me?.institution_id).maybeSingle();
-  return NextResponse.json({ settings: data?.settings_json || {} });
+  const auth = await context();
+  if ("error" in auth) return auth.error;
+  return reply({ settings: auth.previous || {} });
 }
 
 export async function POST(req: NextRequest) {
-  const supa = await getSupabaseServerClient();
-  const srv  = getSupabaseServiceClient();
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error:"unauthorized" }, { status: 401 });
-  const { data: me } = await supa.from("profiles").select("institution_id").eq("id", user.id).maybeSingle();
-
-  const { settings_json } = await req.json();
-  const { error } = await srv.from("institutions")
-    .update({ settings_json: settings_json ?? {} })
-    .eq("id", me?.institution_id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  return NextResponse.json({ ok: true });
+  const auth = await context();
+  if ("error" in auth) return auth.error;
+  const origin = req.headers.get("origin");
+  if (origin && origin !== req.nextUrl.origin) return reply({ error: "invalid_origin" }, 403);
+  if (!req.headers.get("content-type")?.includes("application/json")) return reply({ error: "expected_json" }, 415);
+  const body = await req.json().catch(() => null);
+  const next = mergeGeneralSchoolSettings(auth.previous, body?.settings_json);
+  if (!next) return reply({ error: "invalid_or_reserved_settings" }, 400);
+  const result = await writeSchoolSettings(auth.service, auth.institutionId, auth.previous, next);
+  if ("error" in result) return reply({ error: result.error }, result.status);
+  return reply({ ok: true });
 }
 
 

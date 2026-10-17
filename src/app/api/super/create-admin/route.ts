@@ -23,6 +23,10 @@ export async function POST(req: NextRequest) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
+  if ((body.role !== undefined && body.role !== "admin") || body.teaching_track !== undefined ||
+    body.director_scope !== undefined || body.teachingTrack !== undefined) {
+    return NextResponse.json({ error: "restricted_director_accounts_not_available" }, { status: 409 });
+  }
   const institution_id = typeof body.institution_id === "string" ? body.institution_id.trim() : "";
   const email = typeof body.email === "string" ? body.email.trim() : "";
   const phone = typeof body.phone === "string" ? body.phone.trim() : null;

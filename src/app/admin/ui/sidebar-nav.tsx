@@ -1,7 +1,7 @@
 //src/app/admin/ui/sidebar-nav.tsx
 "use client";
 
-import Link from "next/link";
+import { SchoolContextLink as Link } from "@/components/admin/SchoolNavigationProvider";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard,

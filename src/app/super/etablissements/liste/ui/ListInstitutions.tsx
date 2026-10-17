@@ -108,6 +108,9 @@ export default function ListInstitutions() {
                   <Link href={`/super/parametres?inst=${i.id}`} className="text-violet-700 hover:underline">
                     Modifier
                   </Link>
+                  <Link href={`/super/cycles?inst=${i.id}`} className="inline-block text-violet-700 hover:underline">
+                    Cycles et enseignements
+                  </Link>
                   <button onClick={() => onDelete(i.id)} className="text-red-600 hover:underline">
                     Supprimer
                   </button>

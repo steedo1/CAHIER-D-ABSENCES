@@ -44,6 +44,10 @@ export async function requireInstitutionRole(
   if (profile.error || roleRows.error) return { error: "forbidden" };
   const profileInstitution = String(profile.data?.institution_id || "");
   const applicable = (roleRows.data || []).filter((row) => allowedRoles.includes(row.role));
+  // Never choose an arbitrary school when the authenticated profile has none.
+  if (!profileInstitution && new Set(applicable.map(row => row.institution_id).filter(Boolean)).size > 1) {
+    return { error: "forbidden" };
+  }
   const instId = profileInstitution || String(applicable.find((row) => row.institution_id)?.institution_id || "");
   if (!instId) return { error: "no_institution" };
   const allowed = applicable.some((row) =>

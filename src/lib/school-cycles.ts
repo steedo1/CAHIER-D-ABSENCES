@@ -171,6 +171,8 @@ export function inferSchoolCycleFromLevel(level: unknown): SchoolCycle | null {
     return "secondary";
   }
   if (/^(1RE|1ERE|PREMIERE)([A-E0-9]*)$/.test(normalized)) return "secondary";
+  // Existing Mon Cahier/CSCA aliases: 1D, 1eD, 2ndeC, TA, TC, etc.
+  if (/^(2(NDE|DE)?[AC]|1(ERE|RE|E)?[ACD][12]?|T(LE)?[ACD][12]?)$/.test(normalized)) return "secondary";
   return null;
 }
 

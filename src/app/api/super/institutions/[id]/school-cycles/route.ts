@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSuperAdminAccess } from "@/lib/super-admin-access";
+import { mergeSchoolCycleProvisioning, readSchoolCycleProvisioning } from "@/lib/school-cycle-provisioning";
+import { schoolSettingsRevision, writeSchoolSettings } from "@/lib/school-settings-write";
 import {
-  SCHOOL_CYCLES_SETTINGS_KEY,
   getDefaultSchoolCyclesSettings,
   isSchoolCycle,
   isTeachingTrack,
-  parseSchoolCyclesSettings,
   type SchoolCycle,
   type SchoolCyclesSettings,
   type TeachingTrack,
@@ -68,7 +68,8 @@ export async function GET(_req: NextRequest, context: Params) {
   return reply({
     ok: true,
     institution: { id: data.id, name: data.name, code_unique: data.code_unique },
-    configuration: parseSchoolCyclesSettings(data.settings_json),
+    configuration: readSchoolCycleProvisioning(data.settings_json),
+    revision: schoolSettingsRevision(data.settings_json),
     academicYear: academicYear || null,
     classes: classRows,
   });
@@ -196,6 +197,9 @@ export async function PUT(req: NextRequest, context: Params) {
     .maybeSingle();
   if (readError) return reply({ error: "institution_load_failed" }, 503);
   if (!institution) return reply({ error: "institution_not_found" }, 404);
+  if (body?.revision !== schoolSettingsRevision(institution.settings_json)) {
+    return reply({ error: "settings_changed_reload_required" }, 409);
+  }
 
   const oldJson = institution.settings_json &&
     typeof institution.settings_json === "object" &&
@@ -219,27 +223,8 @@ export async function PUT(req: NextRequest, context: Params) {
   // Super Admin provisions available cycles only. Assignment of subjects to
   // French/Arabic teaching programs is a PEDAGOGICAL school-admin decision.
   // Ignore any subject classification submitted via this Super Admin route.
-  const previous = parseSchoolCyclesSettings(oldJson);
-  const subjectTracksByCycle: SchoolCyclesSettings["subjectTracksByCycle"] = {};
-  for (const cycle of incoming.enabledCycles) {
-    const supported = incoming.teachingTracksByCycle[cycle] || [];
-    subjectTracksByCycle[cycle] = Object.fromEntries(
-      Object.entries(previous.subjectTracksByCycle[cycle] || {})
-        .map(([subjectId, tracks]) => [
-          subjectId, tracks.filter(track => supported.includes(track)),
-        ]).filter(([, tracks]) => (tracks as TeachingTrack[]).length > 0),
-    ) as Record<string, TeachingTrack[]>;
-  }
-  const updated: SchoolCyclesSettings = { ...incoming, subjectTracksByCycle };
-  const settings_json = { ...oldJson, [SCHOOL_CYCLES_SETTINGS_KEY]: updated };
-
-  const { error: writeError } = await access.srv
-    .from("institutions")
-    .update({ settings_json })
-    .eq("id", id)
-    .select("id")
-    .single();
-  if (writeError) return reply({ error: "save_failed" }, 503);
-
-  return reply({ ok: true, configuration: updated });
+  const settingsJson = mergeSchoolCycleProvisioning(oldJson, incoming);
+  const written = await writeSchoolSettings(access.srv, id, institution.settings_json, settingsJson);
+  if ("error" in written) return reply({ error: written.error }, written.status);
+  return reply({ ok: true, configuration: readSchoolCycleProvisioning(settingsJson), revision: written.revision });
 }

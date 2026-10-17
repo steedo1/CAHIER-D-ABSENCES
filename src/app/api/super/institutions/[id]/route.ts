@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getSupabaseActionClient } from "@/lib/supabase-server";
 import { requireSuperAdminAccess } from "@/lib/super-admin-access";
+import { mergeGeneralSchoolSettings } from "@/lib/school-settings-write";
 
 export const dynamic = "force-dynamic";
 
@@ -36,20 +37,34 @@ export async function PATCH(
     if (body.code_unique !== undefined) update.code_unique = body.code_unique;
     if (body.subscription_expires_at !== undefined)
       update.subscription_expires_at = body.subscription_expires_at;
-    if (body.settings_json !== undefined) update.settings_json = body.settings_json;
+    let previousSettings: unknown;
+    if (body.settings_json !== undefined) {
+      const current = await supabase.from("institutions").select("settings_json")
+        .eq("id", id).maybeSingle();
+      if (current.error) return NextResponse.json({ error: "settings_load_failed" }, { status: 503 });
+      if (!current.data) return NextResponse.json({ error: "institution_not_found" }, { status: 404 });
+      previousSettings = current.data.settings_json;
+      const merged = mergeGeneralSchoolSettings(previousSettings, body.settings_json);
+      if (!merged) return NextResponse.json({ error: "use_dedicated_settings_editor" }, { status: 400 });
+      update.settings_json = merged;
+    }
 
     if (!Object.keys(update).length) {
       return NextResponse.json({ error: "Aucun champ à mettre à jour" }, { status: 400 });
     }
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("institutions")
       .update(update)
-      .eq("id", id)
-      .select("id")
-      .single();
+      .eq("id", id);
+    if (body.settings_json !== undefined) {
+      query = previousSettings == null ? query.is("settings_json", null)
+        : query.eq("settings_json", JSON.stringify(previousSettings));
+    }
+    const { data, error } = await query.select("id").maybeSingle();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    if (!data) return NextResponse.json({ error: "settings_changed_reload_required" }, { status: 409 });
 
     return NextResponse.json({ ok: true, item: { id: data.id } });
   } catch (e: any) {
