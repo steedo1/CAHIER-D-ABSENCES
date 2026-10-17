@@ -6,6 +6,7 @@ import {
   FRANCO_ARABIC_REPORTS_SETTINGS_KEY,
   readFrancoArabicReportsForEditing,
   validateFrancoArabicReportsInput,
+  validateNewCycleScoringRules,
 } from "@/lib/franco-arabic-reporting";
 import {
   SCHOOL_CYCLES_SETTINGS_KEY,
@@ -107,6 +108,9 @@ export async function PUT(req: NextRequest) {
   // The new templates are opt-in only; legacy CSCA/other schools stay unchanged.
   if (!cycles.enabled) return json({ error: "school_cycles_not_enabled" }, 409);
   if (incoming.enabled) {
+    const oldReporting = readFrancoArabicReportsForEditing(oldSettings);
+    const validity = validateNewCycleScoringRules(oldReporting, incoming);
+    if (validity !== "ok") return json({ error: validity }, 400);
     const hasArabic = cycles.enabledCycles.some(cycle =>
       cycles.teachingTracksByCycle[cycle]?.includes("arabic"));
     if (!hasArabic && incoming.format !== "separate") {
