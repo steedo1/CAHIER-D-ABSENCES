@@ -84,8 +84,11 @@ const options: { id: BulletinVariant; label: string }[] = [
 ];
 
 export default function DemoBulletinClient({
-  hasArabic, schoolName, schoolCode, enabledCycles,
-}: { hasArabic: boolean; schoolName: string; schoolCode: string; enabledCycles: SchoolCycle[] }) {
+  hasArabic, schoolName, schoolCode, enabledCycles, tracksByCycle,
+}: { hasArabic: boolean; schoolName: string; schoolCode: string;
+  enabledCycles: SchoolCycle[];
+  tracksByCycle: Partial<Record<SchoolCycle, TeachingTrack[]>>;
+}) {
   const [variant, setVariant] = useState<BulletinVariant>(hasArabic ? "combined" : "ordinary");
   const [cycle, setCycle] = useState<SchoolCycle>(enabledCycles.includes("primary") ? "primary" : enabledCycles[0] || "secondary");
   const label = cycle === "secondary" ? "Secondaire" : "Primaire";
