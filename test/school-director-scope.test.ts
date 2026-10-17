@@ -4,6 +4,7 @@ import {
   canAccessScopedTeachingResource,
   canAccessSchoolWideAdministration,
   canAccessDirectorProgramResource,
+  mustDeferBilingualAdminProvisioning,
 } from "../src/lib/school-director-scope";
 import {
   parseSchoolCyclesSettings,
@@ -92,4 +93,15 @@ test("a stale subject mapping cannot re-enable a disabled teaching program", () 
   assert.equal(canAccessScopedTeachingResource(stale, { kind: "teaching_track", track: "arabic" }, {
     cycle: "primary", subjectId: bothId,
   }), false);
+});
+
+test("bilingual schools defer additional unrestricted administrator grants until API isolation", () => {
+  assert.equal(mustDeferBilingualAdminProvisioning(settings, "admin"), true);
+  assert.equal(mustDeferBilingualAdminProvisioning(settings, "teacher"), false);
+  assert.equal(mustDeferBilingualAdminProvisioning(parseSchoolCyclesSettings({}), "admin"), false);
+  const ordinary = parseSchoolCyclesSettings({ school_cycles_v1: {
+    version: 1, enabled: true, enabledCycles: ["primary"],
+    teachingTracksByCycle: { primary: ["french"] },
+  } });
+  assert.equal(mustDeferBilingualAdminProvisioning(ordinary, "admin"), false);
 });
