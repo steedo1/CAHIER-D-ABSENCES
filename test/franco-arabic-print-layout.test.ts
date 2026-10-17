@@ -4,10 +4,25 @@ import { readFileSync, existsSync } from "node:fs";
 import {
   printableAverageFields,
   selectPrintablePrograms,
+  isSpecializedBulletinPrintable,
 } from "../src/lib/franco-arabic-print-layout";
 
 const french = { track: "french" as const, generalAverage: 14.55, label: "Français" };
 const arabic = { track: "arabic" as const, generalAverage: 15.75, label: "Arabe" };
+
+test("official print eligibility is independent per program and requires explicit server validation", () => {
+  const model = { french: { ...french, denominator: 20 }, arabic: { ...arabic, denominator: 20 } };
+  const readiness = { french: true, arabic: false };
+  assert.equal(isSpecializedBulletinPrintable(model, readiness, "french"), true);
+  assert.equal(isSpecializedBulletinPrintable(model, readiness, "ordinary"), true);
+  assert.equal(isSpecializedBulletinPrintable(model, readiness, "arabic"), false);
+  assert.equal(isSpecializedBulletinPrintable(model, readiness, "combined"), false);
+  assert.equal(isSpecializedBulletinPrintable(model, {}, "french"), false);
+  assert.equal(isSpecializedBulletinPrintable({ ...model, sample: true }, readiness, "french"), false);
+  assert.equal(isSpecializedBulletinPrintable({ ...model, draft: true }, readiness, "french"), false);
+  for (const value of [null, NaN, Infinity, -1, 21]) assert.equal(isSpecializedBulletinPrintable({ french: { ...model.french, generalAverage: value } }, readiness, "french"), false);
+  assert.equal(isSpecializedBulletinPrintable({ french: { ...model.french, generalAverage: 0 } }, readiness, "french"), true);
+});
 
 test("combined A4 bulletin keeps TWO program averages without calculating a third", () => {
   const sections = selectPrintablePrograms({ french, arabic }, "combined");

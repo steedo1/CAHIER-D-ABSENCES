@@ -1,4 +1,5 @@
 import { getSchoolAdminNavigation, isSchoolCycle, isTeachingTrack, type SchoolCycle, type SchoolCyclesSettings, type TeachingTrack } from "./school-cycles";
+import { normalizeSchoolLevel, sameSchoolLevel } from "./school-levels";
 
 export type SchoolNavigationClass = { id: string; label: string; level: string | null; cycle: SchoolCycle };
 export type SchoolNavigationContext = {
@@ -31,8 +32,9 @@ export function resolveSchoolNavigation(
   const track = requested.track && requested.track !== "all" && navigation.availableTracks.includes(requested.track)
     ? requested.track : navigation.availableTracks.length === 1 ? navigation.availableTracks[0] : "all";
   const candidates = classes.filter(row => settings.enabledCycles.includes(row.cycle) && (cycle === "all" || row.cycle === cycle));
-  const level = requested.level && candidates.some(row => row.level === requested.level) ? requested.level : "";
-  const classId = candidates.some(row => row.id === requested.classId && (!level || row.level === level))
+  const matchingLevel = requested.level ? candidates.find(row => sameSchoolLevel(row.level, requested.level, row.cycle)) : undefined;
+  const level = matchingLevel ? normalizeSchoolLevel(matchingLevel.level, matchingLevel.cycle) : "";
+  const classId = candidates.some(row => row.id === requested.classId && (!level || sameSchoolLevel(row.level, level, row.cycle)))
     ? requested.classId || "" : "";
   return { cycle, track, level, classId };
 }

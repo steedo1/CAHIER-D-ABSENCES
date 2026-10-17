@@ -58,7 +58,7 @@ test("explicit program authority is the sole authority for its complete context"
   assert.equal(result.source, "program");
   assert.deepEqual(result.problems, []);
 });
-test("secondary contexts reuse the existing official-series normalization and canonical precedence", () => {
+test("secondary contexts preserve official series and canonical coefficient precedence", () => {
   const stored = settings();
   stored.school_cycles_v1.enabledCycles = ["secondary"];
   Object.assign(stored.school_cycles_v1.teachingTracksByCycle, { secondary: ["french"] });
@@ -71,6 +71,15 @@ test("secondary contexts reuse the existing official-series normalization and ca
       { level: "1ereD", subject_id: frenchId, coeff: 4, include_in_average: true },
     ] });
   assert.deepEqual(result.problems, []); assert.equal(result.policies[0].coefficient, 4);
+});
+
+test("a configured catalog for another level cannot fall back to general or unrelated coefficients", () => {
+  const result = resolveProgramCoefficients({ cycle: "primary", level: "CP1", track: "french", settingsJson: settings(),
+    activeSubjectIds: [frenchId], levelSubjectIds: [], hasLevelCurriculumCatalog: true,
+    institutionCoefficients: [{ level: "CP1", subject_id: frenchId, coeff: 3, include_in_average: true },
+      { level: null, subject_id: frenchId, coeff: 4, include_in_average: true }] });
+  assert.deepEqual(result.policies, []);
+  assert.ok(result.problems.includes("level_curriculum_not_configured"));
 });
 test("an explicit zero coefficient excluded from the mean is preserved", () => {
   const result = resolveProgramCoefficients({ cycle: "primary", level: "CP1", track: "french", settingsJson: settings(),

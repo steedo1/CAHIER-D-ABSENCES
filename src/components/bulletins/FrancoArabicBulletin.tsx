@@ -60,6 +60,8 @@ export type BulletinDocument = {
   arabic?: BulletinProgram | null;
   /** For preview only: never present demo results as official data. */
   sample?: boolean;
+  /** Real results awaiting complete configuration/publication. */
+  draft?: boolean;
 };
 
 const trackLabels: Record<BulletinTrack, string> = {
@@ -223,6 +225,7 @@ function Footer({ model, programs, ordinary }: {
     <div className={styles.footerLine}>
       <span>Mon Cahier · Document scolaire</span>
       {model.sample && <strong>MAQUETTE · DONNÉES FICTIVES</strong>}
+      {model.draft && <strong>BROUILLON · NON VALIDÉ</strong>}
       <span>Édition A4</span>
     </div>
   </footer>;
@@ -248,6 +251,7 @@ export default function FrancoArabicBulletin({
     <Head model={model} variant={variant}/>
     <div className={styles.body}>
       {model.sample && <div className={styles.sampleTag}>MAQUETTE · DONNÉES FICTIVES</div>}
+      {model.draft && <div className={styles.sampleTag} role="status">BROUILLON · NON VALIDÉ</div>}
       <Identity model={model} context={context}/>
       <div className={`${styles.panels} ${compact ? styles.twoPanels : ""}`}>
         {programs.map(p=><Panel key={p.track} program={p} compact={compact} ordinary={variant === "ordinary"}/>)}

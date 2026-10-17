@@ -360,7 +360,7 @@ export default function ClassesPage() {
 
     const firstLevel = nextFormation.levels[0]?.value || nextFormation.shortCode || nextFormation.name;
     setLevel(firstLevel);
-  }, [classEducationType, formationsForCurrentType, selectedFormationId]);
+  }, [classEducationType, formationsForCurrentType, selectedFormationId, earlySchoolCycle]);
 
   useEffect(() => {
     if (!selectedFormation || isGeneralMode) return;

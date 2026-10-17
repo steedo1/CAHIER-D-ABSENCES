@@ -6,6 +6,7 @@
   size: A4 portrait;
   margin: 0;
 }
+.specialized-print-denied { display: none; }
 @media print {
   body:has(.fa-report-print-root),
   html:has(.fa-report-print-root) {
@@ -39,5 +40,18 @@
   .specialized-print-root > article:last-child {
     break-after: auto;
     page-break-after: auto;
+  }
+  /* Covers the browser menu and Ctrl+P, even when the app button is disabled. */
+  body:has(.specialized-print-blocked) .specialized-print-blocked {
+    display: none !important;
+  }
+  body:has(.specialized-print-blocked) .specialized-print-denied {
+    visibility: visible !important;
+    display: block !important;
+    position: absolute;
+    top: 20mm;
+    left: 20mm;
+    width: 170mm;
+    font: 16px/1.6 sans-serif;
   }
 }

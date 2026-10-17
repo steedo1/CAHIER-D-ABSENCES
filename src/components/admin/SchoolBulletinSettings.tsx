@@ -1,4 +1,5 @@
 "use client";
+import { schoolLevelKey, sameSchoolLevel } from "@/lib/school-levels";
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -160,7 +161,7 @@ export default function SchoolBulletinSettings() {
     const seen = new Set<string>();
     for (const item of settings.scales) {
       const level = item.level.trim();
-      const key = `${item.cycle}|${item.track}|${level.toLocaleLowerCase("fr")}`;
+      const key = `${item.cycle}|${item.track}|${schoolLevelKey(level, item.cycle)}`;
       if (!level || seen.has(key) || !Number.isInteger(item.maxScore) ||
         item.maxScore < 1 || item.maxScore > 100 ||
         !allowedKeys.has(`${item.cycle}|${item.track}`)) {
@@ -172,12 +173,12 @@ export default function SchoolBulletinSettings() {
     const coefficientKeys = new Set<string>();
     for (const policy of settings.coefficients) {
       const key = [
-        policy.cycle, policy.track, policy.level.toLocaleLowerCase("fr"),
+        policy.cycle, policy.track, schoolLevelKey(policy.level, policy.cycle),
         policy.subjectId,
       ].join("|");
       const scaleAvailable = settings.scales.some((entry) =>
         entry.cycle === policy.cycle && entry.track === policy.track &&
-        entry.level.toLocaleLowerCase("fr") === policy.level.toLocaleLowerCase("fr"));
+        sameSchoolLevel(entry.level, policy.level, policy.cycle));
       if (!scaleAvailable || !availableSubjects(policy.cycle, policy.track)
         .some((subject) => subject.id === policy.subjectId) ||
         !Number.isFinite(policy.coefficient) ||

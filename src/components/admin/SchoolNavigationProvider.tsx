@@ -1,4 +1,5 @@
 "use client";
+import { normalizeSchoolLevel, sameSchoolLevel } from "@/lib/school-levels";
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -71,12 +72,12 @@ export function SchoolNavigationBar() {
   const context = useSchoolNavigation();
   const levels = useMemo(() => context ? Array.from(new Set(context.classes
     .filter(row => context.selection.cycle === "all" || row.cycle === context.selection.cycle)
-    .map(row => row.level).filter((level): level is string => Boolean(level))))
+    .map(row => normalizeSchoolLevel(row.level, row.cycle)).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b, "fr", { numeric: true })) : [], [context]);
   if (!context) return null;
   const { settings, selection, classes, change } = context;
   const options = getSchoolAdminNavigation(settings, selection.cycle);
-  const shownClasses = classes.filter(row => (selection.cycle === "all" || row.cycle === selection.cycle) && (!selection.level || row.level === selection.level));
+  const shownClasses = classes.filter(row => (selection.cycle === "all" || row.cycle === selection.cycle) && (!selection.level || sameSchoolLevel(row.level, selection.level, row.cycle)));
   const field = "mt-1 min-h-11 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm";
   return <nav aria-label="Contexte pédagogique" className="mb-5 rounded-2xl border bg-white p-4 shadow-sm">
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

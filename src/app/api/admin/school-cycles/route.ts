@@ -27,7 +27,7 @@ function reply(body: unknown, status = 200) {
   });
 }
 
-export async function GET(request?: NextRequest) {
+export async function GET(request: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
   const access = await requireInstitutionRole(supa, srv, ALLOWED_ROLES);

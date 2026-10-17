@@ -51,6 +51,54 @@ test("shared subjects are blocked rather than counted in both program results", 
   assert.equal(student.document.arabic.generalAverage, null);
   assert.ok(student.problems.includes("shared_subject_requires_program_specific_evaluations"));
 });
+
+test("real secondary curriculum, scales and coefficients match level aliases without adding unrelated subjects", async () => {
+  const db = setup(), settings = db.tables.institutions[0].settings_json;
+  settings.school_cycles_v1.enabledCycles = ["secondary"];
+  settings.school_cycles_v1.teachingTracksByCycle = { secondary: ["french", "arabic"] };
+  settings.school_cycles_v1.subjectTracksByCycle = { secondary: settings.school_cycles_v1.subjectTracksByCycle.primary };
+  settings.franco_arabic_reports_v1.scales.forEach(row => { row.cycle = "secondary"; row.level = "6ème"; });
+  db.tables.classes[0].level = "6e";
+  db.tables.institution_level_subjects.forEach(row => { row.level_code = "6EME"; });
+  db.tables.institution_subject_coeffs.forEach(row => { row.level = "6eme"; });
+  const unrelated = "55555555-5555-4555-8555-555555555555";
+  db.tables.institution_subjects.push({ id: "unrelated", institution_id: db.legacyId, subject_id: unrelated, is_active: true, subjects: { name: "Autre programme" } });
+  db.tables.institution_subject_coeffs.push({ institution_id: db.legacyId, level: null, subject_id: unrelated, coeff: 99, include_in_average: true });
+  settings.school_cycles_v1.subjectTracksByCycle.secondary[unrelated] = ["french"];
+  const response = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url());
+  const data = await response.json(); assert.equal(response.status, 200, JSON.stringify(data));
+  const row = data.specialized.documents[0];
+  assert.equal(row.ready, true); assert.equal(row.document.french.generalAverage, 8);
+  assert.deepEqual(row.document.french.subjects.map(subject => subject.id), [french]);
+  assert.deepEqual(row.programReadiness, { french: true, arabic: true });
+  db.tables.institution_level_subjects.forEach(item => { item.level_code = "5eme"; });
+  const missing = await (await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url())).json();
+  assert.equal(missing.specialized.documents[0].ready, false);
+  assert.equal(missing.specialized.documents[0].document.french.generalAverage, null);
+  assert.deepEqual(missing.specialized.documents[0].document.french.subjects, []);
+});
+
+test("program rankings preserve independent ties and exclude incomplete results", async () => {
+  const db = setup({ count: 5 });
+  db.tables.grade_published_scores.forEach(row => {
+    const index = Number(row.student_id.split("-")[1]);
+    row.score = row.subject_id === french ? [9, 8, 8, 6, null][index] : [12, 18, 12, 6, 0][index];
+  });
+  const data = await (await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url())).json();
+  const rows = data.specialized.documents.sort((a, b) => a.studentId.localeCompare(b.studentId));
+  assert.deepEqual(rows.map(row => row.document.french.rank), [1, 2, 2, 4, null]);
+  assert.deepEqual(rows.map(row => row.document.arabic.rank), [2, 1, 2, 4, 5]);
+  assert.deepEqual(rows[4].programReadiness, { french: false, arabic: true });
+});
+
+test("invalid explicitly specialized settings cannot silently fall back to an official historical bulletin", async () => {
+  const db = setup(), reports = db.tables.institutions[0].settings_json.franco_arabic_reports_v1;
+  reports.scales.push({ ...reports.scales[0], level: "cp1", maxScore: 20 });
+  const response = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url());
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error, "SPECIALIZED_CONFIGURATION_INVALID");
+  assert.equal(db.calls.some(call => call.table === "grade_published_scores"), false);
+});
 test("drafts, old publication versions and foreign periods never feed specialized results", async () => {
   for (const change of [db => { db.tables.grade_evaluations[0].is_published = false; },
     db => { db.tables.grade_published_scores[0].publication_version = 1; },

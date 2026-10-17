@@ -2918,11 +2918,16 @@ export default function BulletinsPage() {
   }, [classes]);
 
   const handlePrint = async () => {
-    if (!items.length) return;
+    if (!items.length && !bulletinRaw?.specialized) return;
     if (typeof window === "undefined") return;
+    if (bulletinRaw?.specialized && !navigator.onLine) {
+      setErrorMsg("Reconnectez-vous pour vérifier les notes publiées avant l’impression.");
+      return;
+    }
 
     if (navigator.onLine) {
       try {
+        setErrorMsg(null);
         setPrintPreparing(true);
         const params = new URLSearchParams({
           class_id: selectedClassId,
@@ -2961,7 +2966,8 @@ export default function BulletinsPage() {
   };
 
   if (bulletinRaw?.specialized) {
-    return <SpecializedBulletinPanel data={bulletinRaw.specialized} onBack={() => setBulletinRaw(null)} />;
+    return <SpecializedBulletinPanel data={bulletinRaw.specialized} onBack={() => setBulletinRaw(null)}
+      onPrint={handlePrint} printPreparing={printPreparing} error={errorMsg} />;
   }
 
   return (

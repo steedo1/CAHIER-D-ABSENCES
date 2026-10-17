@@ -32,6 +32,18 @@ test("the historical secondary class creation payload is still accepted", async 
   assert.equal(db.tables.classes.length, 2);
   assert.ok(db.tables.classes.every(row => row.official_track_code === "6eme"));
 });
+
+test("multicycle creation stores a canonical level while preserving distinct class labels", async () => {
+  const db = setup();
+  const response = await createFixtureRouteLoader(db, db.legacyAdminId)(route).POST(request({ school_cycle: "secondary", level: "6ème" }));
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  assert.deepEqual(db.tables.classes.map(row => row.level), ["6eme", "6eme"]);
+  assert.deepEqual(db.tables.classes.map(row => row.label), ["6èmeA", "6èmeB"]);
+  const listed = await createFixtureRouteLoader(db, db.legacyAdminId)("src/app/api/admin/classes/route.ts").GET(
+    new NextRequest("https://example.invalid/api/admin/classes?academic_year=2026-2027&school_cycle=secondary&school_level=6e"));
+  const data = await listed.json(); assert.equal(listed.status, 200, JSON.stringify(data));
+  assert.equal(data.items.length, 2); assert.notEqual(data.items[0].id, data.items[1].id);
+});
 test("an opt-in school keeps primary classes and secondary alias resolution in the existing listing", async () => {
   const db = setup();
   db.tables.classes = [{ id: "class-1", institution_id: db.legacyId, academic_year: "2026-2027", label: "CP1A", level: "CP1" },

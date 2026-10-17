@@ -5,11 +5,13 @@ import { buildProgramBulletinDraft, type OfficialEvaluationScore } from "@/lib/f
 import { normalizePedagogicalLevel, resolveEvaluationTeachingTrack, resolvePedagogicalEngine, resolveProgramCoefficients, type InstitutionCoefficient } from "@/lib/pedagogical-engine";
 import type { BulletinDocument, BulletinProgram } from "@/components/bulletins/FrancoArabicBulletin";
 import { SCHOOL_CYCLE_OPTIONS, type SchoolCycle, type TeachingTrack } from "@/lib/school-cycles";
+import { buildPedagogicalRanks } from "@/lib/pedagogical-ranking";
 
 export type SpecializedBulletinPayload = {
   engine: "specialized"; cycle: SchoolCycle; format: "separate" | "combined" | "both";
   coefficientSource: "institution" | "program"; programs: TeachingTrack[];
-  documents: Array<{ studentId: string; document: BulletinDocument; ready: boolean; problems: string[] }>;
+  documents: Array<{ studentId: string; document: BulletinDocument; ready: boolean;
+    programReadiness: Partial<Record<TeachingTrack, boolean>>; problems: string[] }>;
 };
 type SchoolClass = { id: string; institution_id?: string | null; level?: string | null; label?: string | null; academic_year?: string | null; education_type?: string | null; formation_code?: string | null };
 type Student = { id: string; institution_id: string; full_name: string | null; first_name: string | null; last_name: string | null; matricule: string | null; birthdate: string | null };
@@ -39,6 +41,8 @@ export async function loadSpecializedBulletin(input: {
 }): Promise<NextResponse | null> {
   const selected = resolvePedagogicalEngine(input.settingsJson, input.schoolClass);
   if (selected.engine === "legacy") return null;
+  if (selected.engine === "invalid") return json({ ok: false, error: "SPECIALIZED_CONFIGURATION_INVALID",
+    message: "La configuration des bulletins spécialisés contient des valeurs contradictoires ou invalides. Vérifiez les niveaux, barèmes et coefficients avant l’édition." }, 409);
   if (input.schoolClass.institution_id !== input.institutionId) return json({ ok: false, error: "CLASS_FORBIDDEN" }, 403);
   // Restricted directors are not provisioned until every grade route is scoped.
   if (input.role !== "admin") return json({ ok: false, error: "FORBIDDEN" }, 403);
@@ -90,6 +94,8 @@ export async function loadSpecializedBulletin(input: {
       students.set(student.id, student);
     }
     const evaluationById = new Map(evaluations.map(row => [row.id, row]));
+    const trackBySubject = new Map(activeSubjects.map(row => [row.subject_id,
+      resolveEvaluationTeachingTrack(input.settingsJson, cycle, row.subject_id)]));
     const officialScores: OfficialEvaluationScore[] = [];
     const publicationProblems: string[] = [];
     for (const row of published) {
@@ -104,19 +110,29 @@ export async function loadSpecializedBulletin(input: {
       if (row.score === null || !row.subject_id) continue;
       officialScores.push({ studentId: row.student_id, evaluationId: row.evaluation_id, subjectId: row.subject_id,
         score: row.score, scale: row.scale, evaluationCoefficient: row.coeff, isCurrentPublished: true,
-        teachingTrack: resolveEvaluationTeachingTrack(input.settingsJson, cycle, row.subject_id) });
+        teachingTrack: trackBySubject.get(row.subject_id) ?? null });
     }
     const programs = school.teachingTracksByCycle[cycle] || [];
     const resolved = programs.map(track => ({ track, ...resolveProgramCoefficients({
       cycle, level, track, settingsJson: input.settingsJson,
       activeSubjectIds: activeSubjects.map(row => row.subject_id),
-      levelSubjectIds: curriculum.filter(row => normalizePedagogicalLevel(row.level_code) === normalizePedagogicalLevel(level)).map(row => row.subject_id),
+      hasLevelCurriculumCatalog: curriculum.length > 0,
+      levelSubjectIds: curriculum.filter(row => normalizePedagogicalLevel(row.level_code, cycle) === normalizePedagogicalLevel(level, cycle)).map(row => row.subject_id),
       institutionCoefficients: coefficientRows,
     }) }));
+    const scoresByStudent = new Map<string, OfficialEvaluationScore[]>();
+    for (const score of officialScores) {
+      const rows = scoresByStudent.get(score.studentId) || [];
+      rows.push(score); scoresByStudent.set(score.studentId, rows);
+    }
     const results = [...students.values()].map(student => ({ student, drafts: resolved.map(policy => buildProgramBulletinDraft({
-      studentId: student.id, cycle, level, track: policy.track, school, reports, officialScores,
+      studentId: student.id, cycle, level, track: policy.track, school, reports, officialScores: scoresByStudent.get(student.id) || [],
       resolvedPolicies: policy.policies, configurationProblems: [...policy.problems, ...publicationProblems],
     })) }));
+    const ranksByProgram = new Map(programs.map(track => [track, buildPedagogicalRanks(results.map(row => {
+      const draft = row.drafts.find(item => item.track === track);
+      return { studentId: row.student.id, average: draft?.generalAverage ?? null, complete: draft?.status === "ready" };
+    }))]));
     const subjectNames = new Map(activeSubjects.map(row => {
       const subject = Array.isArray(row.subjects) ? row.subjects[0] : row.subjects;
       return [row.subject_id, row.custom_name || subject?.name || row.subject_id];
@@ -128,8 +144,7 @@ export async function loadSpecializedBulletin(input: {
           matricule: student.matricule, birthDate: student.birthdate },
       };
       for (const draft of drafts) {
-        const other = results.map(row => row.drafts.find(item => item.track === draft.track)).filter(item => item?.status === "ready");
-        const rank = draft.generalAverage === null ? null : 1 + other.filter(item => (item?.generalAverage ?? -Infinity) > draft.generalAverage!).length;
+        const rank = ranksByProgram.get(draft.track)?.get(student.id) ?? null;
         const program: BulletinProgram = { track: draft.track, cycle: SCHOOL_CYCLE_OPTIONS.find(option => option.id === cycle)?.label || cycle, level, className: schoolClass.label || level,
           year, period: period.label || period.code || "", denominator: draft.maximumScore || 0,
           subjects: draft.subjects.map(subject => ({ id: subject.subjectId, name: subjectNames.get(subject.subjectId) || subject.subjectId,
@@ -140,6 +155,7 @@ export async function loadSpecializedBulletin(input: {
         document[draft.track] = program;
       }
       return { studentId: student.id, document, ready: drafts.length > 0 && drafts.every(row => row.status === "ready"),
+        programReadiness: Object.fromEntries(drafts.map(draft => [draft.track, draft.status === "ready"])),
         problems: [...new Set(drafts.flatMap(row => row.problems))] };
     });
     return json({ ok: true, class: { ...schoolClass, label: schoolClass.label || level },

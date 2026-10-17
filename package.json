@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:multicycle": "node --import tsx --test --test-concurrency=2 test/school-cycles.test.ts test/school-cycle-roster.test.ts test/school-director-scope.test.ts test/franco-arabic-reporting.test.ts test/franco-arabic-bulletin-calculation.test.ts test/franco-arabic-print-layout.test.ts test/school-settings-write.test.ts test/school-navigation.test.ts test/school-teaching-import.test.ts test/preschool-assessments.test.ts test/super-school-creation.test.mjs test/pedagogical-engine.test.ts test/specialized-bulletin-integration.test.mjs test/school-class-creation.test.mjs",
+    "test:multicycle": "node --import tsx --test --test-concurrency=2 test/school-cycles.test.ts test/school-cycle-roster.test.ts test/school-director-scope.test.ts test/franco-arabic-reporting.test.ts test/franco-arabic-bulletin-calculation.test.ts test/franco-arabic-print-layout.test.ts test/school-settings-write.test.ts test/school-navigation.test.ts test/school-teaching-import.test.ts test/preschool-assessments.test.ts test/super-school-creation.test.mjs test/pedagogical-engine.test.ts test/specialized-bulletin-integration.test.mjs test/school-class-creation.test.mjs test/school-levels.test.ts test/specialized-bulletin-print-ui.test.mjs",
+    "test:multicycle:print": "node scripts/verify-specialized-print.mjs",
     "test:multicycle:e2e": "node scripts/verify-multicycle-e2e.mjs",
     "test:mon-cahier-ai": "node --test test/mon-cahier-ai-chat.test.mjs test/mon-cahier-ai-api.test.mjs test/mon-cahier-ai-server.test.mjs",
     "test:parent-connect": "node --test test/parent-connect-navigation.test.mjs && node --import tsx --test test/parent-connect-server.test.ts && node --test test/parent-connect-db.test.mjs && node --test test/parent-connect-super.test.mjs && node --test test/parent-connect-sms.test.mjs"

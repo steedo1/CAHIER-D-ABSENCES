@@ -5,6 +5,8 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { isEducationType, type EducationType } from "@/lib/education-organization";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
 import { validateSchoolClassCycle } from "@/lib/school-class-levels";
+import { normalizeSchoolLevel } from "@/lib/school-levels";
+import { isSchoolCycle } from "@/lib/school-cycles";
 
 type OfficialTrackCode =
   | "6eme"
@@ -172,7 +174,8 @@ function cleanTrackByLabel(value: unknown) {
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as Body;
 
-  const level = (body.level ?? "").trim();
+  const labelPrefix = (body.level ?? "").trim();
+  const level = isSchoolCycle(body.school_cycle) ? normalizeSchoolLevel(labelPrefix, body.school_cycle) : labelPrefix;
   const format = body.format;
   const count = Number(body.count ?? 0);
   const requestedAcademicYear = String(body.academic_year || "").trim();
@@ -268,16 +271,16 @@ export async function POST(req: NextRequest) {
   let labels: string[] = [];
 
   if (format === "none") {
-    labels = [level];
+    labels = [labelPrefix];
   } else if (format === "numeric") {
     labels = Array.from(
       { length: effectiveCount },
-      (_, i) => `${level}${i + 1}`,
+      (_, i) => `${labelPrefix}${i + 1}`,
     );
   } else {
     labels = Array.from(
       { length: effectiveCount },
-      (_, i) => `${level}${String.fromCharCode(65 + i)}`,
+      (_, i) => `${labelPrefix}${String.fromCharCode(65 + i)}`,
     );
   }
 

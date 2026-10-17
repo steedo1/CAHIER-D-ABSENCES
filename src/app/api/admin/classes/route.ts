@@ -7,6 +7,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { isEducationType } from "@/lib/education-organization";
 import { dedupeEquivalentGeneralSecondaryClasses } from "@/lib/general-secondary-class-equivalence";
 import { inferSchoolCycleFromLevel, isSchoolCycle, isTeachingTrack, parseSchoolCyclesSettings, type SchoolCyclesSettings } from "@/lib/school-cycles";
+import { sameSchoolLevel } from "@/lib/school-levels";
 
 const READ_ALLOWED_ROLES = new Set([
   "admin",
@@ -287,7 +288,7 @@ export async function GET(req: NextRequest) {
       const cycle = settings.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level);
       return (cycle ? settings.enabledCycles.includes(cycle) : !requestedCycle || requestedCycle === "all") &&
         (!requestedCycle || requestedCycle === "all" || cycle === requestedCycle) &&
-        (!requestedLevel || row.level === requestedLevel) && (!requestedClass || row.id === requestedClass);
+        (!requestedLevel || sameSchoolLevel(row.level, requestedLevel, cycle || undefined)) && (!requestedClass || row.id === requestedClass);
     }).slice(0, Math.min(1000, limit));
   } else {
     const result = await ordered.limit(limit);

@@ -2,6 +2,7 @@ import {
   isSchoolCycle, isTeachingTrack,
   type SchoolCycle, type TeachingTrack,
 } from "@/lib/school-cycles";
+import { normalizeSchoolLevel, schoolLevelKey } from "./school-levels";
 
 /**
  * Francophone / Arabic report preparation contract. Does not alter grades,
@@ -56,9 +57,9 @@ export function isReportFormat(value: unknown): value is ReportFormat {
   return value === "separate" || value === "combined" || value === "both";
 }
 
-function normalizedLevel(value: unknown): string | null {
+function normalizedLevel(value: unknown, cycle: SchoolCycle): string | null {
   if (typeof value !== "string") return null;
-  const level = value.trim().replace(/\s+/g, " ");
+  const level = normalizeSchoolLevel(value, cycle);
   return level.length >= 1 && level.length <= 60 ? level : null;
 }
 
@@ -91,9 +92,9 @@ export function validateFrancoArabicReportsInput(
         !isTeachingTrack(entry.track) ||
         !Number.isInteger(entry.maxScore) ||
         (entry.maxScore as number) < 1 || (entry.maxScore as number) > 100) return null;
-    const level = normalizedLevel(entry.level);
+    const level = normalizedLevel(entry.level, entry.cycle);
     if (!level) return null;
-    const key = [entry.cycle, level.toLocaleLowerCase("fr"), entry.track].join("|");
+    const key = [entry.cycle, schoolLevelKey(level, entry.cycle), entry.track].join("|");
     if (seen.has(key)) return null;
     seen.add(key);
     scales.push({
@@ -116,14 +117,14 @@ export function validateFrancoArabicReportsInput(
         typeof entry.coefficient !== "number" ||
         !Number.isFinite(entry.coefficient) ||
         entry.coefficient <= 0 || entry.coefficient > 100) return null;
-    const level = normalizedLevel(entry.level);
+    const level = normalizedLevel(entry.level, entry.cycle);
     if (!level) return null;
     const scalePresent = scales.some((scale) =>
       scale.cycle === entry.cycle &&
       scale.track === entry.track &&
-      scale.level.toLocaleLowerCase("fr") === level.toLocaleLowerCase("fr"));
+      schoolLevelKey(scale.level, entry.cycle as SchoolCycle) === schoolLevelKey(level, entry.cycle as SchoolCycle));
     if (!scalePresent) return null;
-    const key = [entry.cycle, level.toLocaleLowerCase("fr"), entry.track, entry.subjectId].join("|");
+    const key = [entry.cycle, schoolLevelKey(level, entry.cycle), entry.track, entry.subjectId].join("|");
     if (policySeen.has(key)) return null;
     policySeen.add(key);
     coefficients.push({
@@ -157,11 +158,11 @@ export function getConfiguredScoringScale(
   track: TeachingTrack,
 ): number | null {
   if (!settings.enabled) return null;
-  const normalized = normalizedLevel(level);
+  const normalized = normalizedLevel(level, cycle);
   if (!normalized) return null;
   return settings.scales.find((entry) =>
     entry.cycle === cycle && entry.track === track &&
-    entry.level.toLocaleLowerCase("fr") === normalized.toLocaleLowerCase("fr"))?.maxScore ?? null;
+    schoolLevelKey(entry.level, cycle) === schoolLevelKey(normalized, cycle))?.maxScore ?? null;
 }
 
 /** No default coefficient is inferred from language, cycle or subject name. */
@@ -172,11 +173,11 @@ export function getConfiguredSubjectCoefficients(
   track: TeachingTrack,
 ): SubjectReportCoefficient[] {
   if (!settings.enabled) return [];
-  const normalized = normalizedLevel(level)?.toLocaleLowerCase("fr");
+  const normalized = normalizedLevel(level, cycle);
   if (!normalized) return [];
   return settings.coefficients.filter((policy) =>
     policy.cycle === cycle && policy.track === track &&
-    policy.level.toLocaleLowerCase("fr") === normalized);
+    schoolLevelKey(policy.level, cycle) === schoolLevelKey(normalized, cycle));
 }
 
 /**

@@ -40,3 +40,22 @@ export function printableAverageFields<
   for (const section of sections) result[section.track] = section.generalAverage;
   return result;
 }
+
+/** Readiness belongs to each server-calculated program, not to the selected
+ * layout. A ready French report may be printed while Arabic is incomplete. */
+export function isSpecializedBulletinPrintable(
+  model: {
+    french?: (PrintableProgramBase & { denominator: number }) | null;
+    arabic?: (PrintableProgramBase & { denominator: number }) | null;
+    sample?: boolean;
+    draft?: boolean;
+  },
+  readiness: Partial<Record<PrintableTeachingTrack, boolean>> = {},
+  variant: PrintableBulletinVariant,
+): boolean {
+  const programs = selectPrintablePrograms(model, variant);
+  return !model.sample && !model.draft && !!programs?.length && programs.every(program =>
+    readiness[program.track] === true && Number.isFinite(program.denominator) && program.denominator > 0 &&
+    program.generalAverage !== null && Number.isFinite(program.generalAverage) &&
+    program.generalAverage >= 0 && program.generalAverage <= program.denominator);
+}

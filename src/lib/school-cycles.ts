@@ -8,6 +8,8 @@
  * behavior, so this module cannot reclassify CSCA or other current schools.
  * This contract is deliberately independent of database writes.
  */
+import { normalizeSchoolLevel } from "./school-levels";
+
 export const SCHOOL_CYCLES_SETTINGS_KEY = "school_cycles_v1" as const;
 
 export const SCHOOL_CYCLE_OPTIONS = [
@@ -155,7 +157,7 @@ export function parseSchoolCyclesSettings(settingsJson: unknown): SchoolCyclesSe
  * For nonstandard/franco-Arabic levels, configure classCycleById explicitly.
  */
 export function inferSchoolCycleFromLevel(level: unknown): SchoolCycle | null {
-  const normalized = String(level || "")
+  const normalized = normalizeSchoolLevel(level)
     .trim()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
