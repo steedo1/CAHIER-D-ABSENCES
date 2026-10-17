@@ -17,6 +17,7 @@ export type CycleDashboardSummary = {
   }>>;
   programs?: Partial<Record<SchoolCycle, Partial<Record<TeachingTrack, {
     uniqueTeachers: number;
+    subjects?: Array<{ id: string; name: string }>;
   }>>>>;
 };
 
@@ -60,6 +61,8 @@ export function resolveScopedDashboardCounts(
   return {
     classes: null,
     students: null,
-    teachers: countOrUnknown(summary.programs?.[selection.cycle]?.[selection.track]?.uniqueTeachers),
+    teachers: summary.programs?.[selection.cycle]?.[selection.track]?.subjects?.length
+      ? countOrUnknown(summary.programs[selection.cycle]?.[selection.track]?.uniqueTeachers)
+      : null,
   };
 }
