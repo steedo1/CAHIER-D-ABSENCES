@@ -95,15 +95,21 @@ export default function DemoBulletinClient({
     },
     french: demo.french ? {
       ...demo.french,
+      // The primary cycle is assessed with score scales, not subject coefficients.
+      subjects: demo.french.subjects.map(subject => ({ ...subject, coefficient: null })),
       directorName: hasArabic ? demo.french.directorName : "Direction de l’établissement",
+    } : undefined,
+    arabic: demo.arabic ? {
+      ...demo.arabic,
+      subjects: demo.arabic.subjects.map(subject => ({ ...subject, coefficient: null })),
     } : undefined,
   };
   const visibleOptions = hasArabic ? options : [{ id: "ordinary" as BulletinVariant, label: "Bulletin de notes" }];
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-5 rounded-2xl border bg-white p-5 shadow-sm print:hidden">
-        <Link href="/admin/bulletins" className="text-sm font-semibold text-emerald-800">
-          ← Retour aux bulletins
+        <Link href="/admin/parametres?tab=bulletin-models" className="text-sm font-semibold text-emerald-800">
+          ← Retour aux paramètres des bulletins
         </Link>
         <h1 className="mt-2 text-2xl font-bold text-slate-900">Maquettes de bulletins A4</h1>
         <p className="mt-1 text-sm leading-6 text-slate-600">
