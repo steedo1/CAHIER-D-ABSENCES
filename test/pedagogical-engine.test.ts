@@ -31,31 +31,31 @@ test("navigation and pre-existing templates cannot opt a school into the special
   assert.equal(resolvePedagogicalEngine(stored, { id: "class", level: "CP1" }).engine, "specialized");
   assert.equal(resolvePedagogicalEngine(stored, { id: "class", level: "6e" }).engine, "legacy");
 });
-test("institution authority uses real level coefficients and ignores stale template weights", () => {
+test("primary uses configured level subjects and barèmes without subject coefficients", () => {
   const result = resolveProgramCoefficients({ cycle: "primary", level: "CP1", track: "french", settingsJson: settings(),
     activeSubjectIds: [frenchId], levelSubjectIds: [frenchId], institutionCoefficients: [
       { level: "CP1", subject_id: frenchId, coeff: 3, include_in_average: true },
       { level: "CM2", subject_id: frenchId, coeff: 7, include_in_average: true },
     ] });
   assert.deepEqual(result.problems, []);
-  assert.equal(result.source, "institution");
-  assert.equal(result.policies[0].coefficient, 3);
+  assert.equal(result.source, "barèmes");
+  assert.equal(result.policies[0].coefficient, 1);
 });
-test("missing/ambiguous level coefficients do not silently become 1 or another level's weights", () => {
+test("primary disregards missing and conflicting subject coefficients", () => {
   for (const rows of [[], [{ level: "CM2", subject_id: frenchId, coeff: 8, include_in_average: true }],
     [{ level: "CP1", subject_id: frenchId, coeff: 2, include_in_average: true }, { level: "cp1", subject_id: frenchId, coeff: 4, include_in_average: true }]]) {
     const result = resolveProgramCoefficients({ cycle: "primary", level: "CP1", track: "french", settingsJson: settings(),
       activeSubjectIds: [frenchId], levelSubjectIds: [frenchId], institutionCoefficients: rows });
-    assert.ok(result.problems.length);
-    assert.equal(result.policies.length, 0);
+    assert.deepEqual(result.problems, []);
+    assert.equal(result.policies[0].coefficient, 1);
   }
 });
-test("explicit program authority is the sole authority for its complete context", () => {
+test("primary never uses a stored program coefficient, regardless of selected source", () => {
   const stored = settings(); stored.franco_arabic_reports_v1.coefficientSource = "program";
   const result = resolveProgramCoefficients({ cycle: "primary", level: "CP1", track: "french", settingsJson: stored,
-    activeSubjectIds: [frenchId], levelSubjectIds: [], institutionCoefficients: [{ level: "CP1", subject_id: frenchId, coeff: 3, include_in_average: true }] });
-  assert.equal(result.policies[0].coefficient, 99);
-  assert.equal(result.source, "program");
+    activeSubjectIds: [frenchId], levelSubjectIds: [frenchId], institutionCoefficients: [{ level: "CP1", subject_id: frenchId, coeff: 3, include_in_average: true }] });
+  assert.equal(result.policies[0].coefficient, 1);
+  assert.equal(result.source, "barèmes");
   assert.deepEqual(result.problems, []);
 });
 test("secondary contexts preserve official series and canonical coefficient precedence", () => {
@@ -81,11 +81,11 @@ test("a configured catalog for another level cannot fall back to general or unre
   assert.deepEqual(result.policies, []);
   assert.ok(result.problems.includes("level_curriculum_not_configured"));
 });
-test("an explicit zero coefficient excluded from the mean is preserved", () => {
+test("zero coefficients do not exclude subjects in primary", () => {
   const result = resolveProgramCoefficients({ cycle: "primary", level: "CP1", track: "french", settingsJson: settings(),
-    activeSubjectIds: [frenchId], levelSubjectIds: [], institutionCoefficients: [{ level: "CP1", subject_id: frenchId, coeff: 0, include_in_average: false }] });
+    activeSubjectIds: [frenchId], levelSubjectIds: [frenchId], institutionCoefficients: [{ level: "CP1", subject_id: frenchId, coeff: 0, include_in_average: false }] });
   assert.deepEqual(result.problems, []);
-  assert.equal(result.policies[0].coefficient, 0); assert.equal(result.policies[0].includeInAverage, false);
+  assert.equal(result.policies[0].coefficient, 1); assert.equal(result.policies[0].includeInAverage, true);
 });
 test("one student receives independent French and Arabic results and no combined average", () => {
   const stored = settings();
