@@ -94,3 +94,20 @@ test("exact French/Arabic student counters activate only when the entire cycle r
   withPrograms.studentPrograms!.primary!.french!.complete = false;
   assert.equal(resolveScopedDashboardCounts({ ...all, cycle: "primary", track: "french" }, withPrograms).students, null);
 });
+
+test("whole-school teaching filter uses unique school totals, not a sum of cycle averages", () => {
+  const withPrograms: CycleDashboardSummary = {
+    ...summary,
+    studentProgramTotals: {
+      arabic: { students: 33, classes: 5, complete: true, unclassifiedStudents: 0 },
+      french: { students: 45, classes: 6, complete: false, unclassifiedStudents: 2 },
+    },
+    programTeacherTotals: {
+      arabic: { uniqueTeachers: 8 }, french: { uniqueTeachers: 12 },
+    },
+  };
+  assert.deepEqual(resolveScopedDashboardCounts({ ...all, track: "arabic" }, withPrograms),
+    { classes: 5, students: 33, teachers: 8 });
+  assert.deepEqual(resolveScopedDashboardCounts({ ...all, track: "french" }, withPrograms),
+    { classes: null, students: null, teachers: 12 });
+});
