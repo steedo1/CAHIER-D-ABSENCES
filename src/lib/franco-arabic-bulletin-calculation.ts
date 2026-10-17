@@ -75,6 +75,12 @@ export function buildProgramBulletinDraft(params: {
   configurationProblems?: readonly string[];
 }): ProgramBulletinDraft {
   const { studentId, cycle, level, track, school, reports, officialScores } = params;
+  // Preschool must never be forced through a numeric grade engine.
+  if (cycle === "preschool") return {
+    studentId, cycle, level, track, maximumScore: null,
+    status: "not_configured" as const, generalAverage: null,
+    subjects: [], problems: ["preschool_uses_competency_booklet"],
+  };
   // Source of coefficient truth: this institution’s validated, program-specific
   // report settings. Do not trust arbitrary client-supplied coefficients.
   const subjectPolicies: readonly SubjectBulletinPolicy[] =
@@ -168,19 +174,21 @@ export function buildProgramBulletinDraft(params: {
     }
 
     const evaluations = selectedBySubject.get(subjectId) || [];
-    const totalEvaluationCoefficient = evaluations.reduce(
-      (sum, row) => sum + row.evaluationCoefficient, 0,
-    );
+    const totalEvaluationCoefficient = cycle === "primary"
+      ? evaluations.length
+      : evaluations.reduce((sum, row) => sum + row.evaluationCoefficient, 0);
     const preciseAverage = targetScale !== null && evaluations.length > 0 &&
       totalEvaluationCoefficient > 0
       ? evaluations.reduce((sum, row) =>
-          sum + row.score / row.scale * targetScale * row.evaluationCoefficient, 0,
+          sum + row.score / row.scale * targetScale *
+          (cycle === "primary" ? 1 : row.evaluationCoefficient), 0,
         ) / totalEvaluationCoefficient
       : null;
     const average = preciseAverage === null ? null : round2(preciseAverage);
 
     subjects.push({
-      subjectId, coefficient: rule.coefficient, includeInAverage: rule.includeInAverage,
+      subjectId, coefficient: cycle === "secondary" ? rule.coefficient : null,
+      includeInAverage: rule.includeInAverage,
       average, evaluatedCount: evaluations.length,
     });
     if (rule.includeInAverage) {
