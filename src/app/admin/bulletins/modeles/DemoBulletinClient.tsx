@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { SchoolCycle } from "@/lib/school-cycles";
+import type { SchoolCycle, TeachingTrack } from "@/lib/school-cycles";
 import PreschoolBookletDemo from "./PreschoolBookletDemo";
 import "./print.css";
 import Link from "next/link";
