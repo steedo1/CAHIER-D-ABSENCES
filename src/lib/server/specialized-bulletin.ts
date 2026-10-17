@@ -8,6 +8,7 @@ import { SCHOOL_CYCLE_OPTIONS, type SchoolCycle, type TeachingTrack } from "@/li
 import { buildPedagogicalRanks } from "@/lib/pedagogical-ranking";
 import { programsForStudent, readStudentProgramSettings } from "@/lib/school-student-programs";
 import { sameSchoolLevel } from "@/lib/school-levels";
+import { selectedBulletinFormat } from "@/lib/franco-arabic-reporting";
 import { inferSchoolCycleFromLevel } from "@/lib/school-cycles";
 import { classSubjectIds } from "@/lib/school-class-subjects";
 
@@ -214,7 +215,7 @@ export async function loadSpecializedBulletin(input: {
     });
     return json({ ok: true, class: { ...schoolClass, label: schoolClass.label || level },
       period: { from: period.start_date, to: period.end_date, label: period.label, academic_year: year },
-      subjects: [], items: [], specialized: { engine: "specialized", cycle, format: reports.format,
+      subjects: [], items: [], specialized: { engine: "specialized", cycle, format: selectedBulletinFormat(reports, cycle),
         coefficientSource: reports.coefficientSource === "program" ? "program" : "institution", programs, documents },
     });
   } catch (error) {

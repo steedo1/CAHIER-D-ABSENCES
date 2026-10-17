@@ -41,6 +41,19 @@ test("one identity has independent means and ranks without cloning students or s
   assert.equal(data.specialized.documents.length, 2);
   assert.equal(db.calls.some(call => call.op !== "read"), false);
 });
+test("the saved model for one cycle drives real printable variants, never grades", async () => {
+  const db = setup();
+  const reports = db.tables.institutions[0].settings_json.franco_arabic_reports_v1;
+  reports.formatsByCycle = { primary: "combined", secondary: "separate" };
+  const response = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url());
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.specialized.format, "combined");
+  assert.equal(body.specialized.documents[0].document.french.generalAverage, 8);
+  assert.equal(body.specialized.documents[0].document.arabic.generalAverage, 12);
+  assert.equal(db.calls.some(call => call.op !== "read"), false);
+});
+
 test("shared subjects are blocked rather than counted in both program results", async () => {
   const db = setup();
   db.tables.institutions[0].settings_json.school_cycles_v1.subjectTracksByCycle.primary[french] = ["french", "arabic"];

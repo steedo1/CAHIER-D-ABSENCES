@@ -448,7 +448,7 @@ export default function SchoolBulletinSettings({
               </select>
               <p className="text-sm text-slate-600">Une seule règle est utilisée au secondaire. Le primaire utilise ses barèmes et le préscolaire ses compétences sans coefficients.</p>
               </>}
-              {hasArabic ? (
+              {mode === "full" && hasArabic ? (
               <div>
                 <label htmlFor="report-format" className="mb-1 block text-sm font-medium">
                   Présentation souhaitée des bulletins
@@ -467,12 +467,12 @@ export default function SchoolBulletinSettings({
                   même sur un document regroupé.
                 </p>
               </div>
-              ) : (
+              ) : mode === "full" ? (
                 <p className="rounded-xl border bg-slate-50 p-3 text-sm text-slate-700">
                   École ordinaire : bulletin de notes classique, sans mention
                   « Programme français » et sans option bilingue.
                 </p>
-              )}
+              ) : null}
               <div className="border-t pt-4">
                 <h3 className="font-semibold text-slate-900">Barèmes par niveau — primaire</h3>
                 <p className="mt-1 text-xs text-slate-600">Au secondaire, la notation et les coefficients suivent le modèle déjà déployé dans Mon Cahier. Au préscolaire, seules les compétences et les observations sont évaluées.</p>
