@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   SCHOOL_CYCLES_SETTINGS_KEY,
   getDefaultSchoolCyclesSettings,
+  getSchoolAdminNavigation,
   groupScopedClassesByCycle,
   inferSchoolCycleFromLevel,
   parseSchoolCyclesSettings,
@@ -171,4 +172,40 @@ test("schools without subject mappings remain safely empty", () => {
   });
   assert.deepEqual(settings.subjectTracksByCycle.primary, {});
   assert.equal(getDefaultSchoolCyclesSettings().subjectTracksByCycle.primary, undefined);
+});
+
+test("single-cycle schools bypass cycle selection and hide unused tracks", () => {
+  const settings = parseSchoolCyclesSettings({
+    [SCHOOL_CYCLES_SETTINGS_KEY]: {
+      version: 1, enabled: true, enabledCycles: ["primary"],
+      teachingTracksByCycle: { primary: ["arabic"] },
+      defaultView: "all",
+    },
+  });
+  assert.deepEqual(getSchoolAdminNavigation(settings), {
+    showCycleSelector: false, landingCycle: "primary",
+    availableCycles: ["primary"], availableTracks: ["arabic"],
+    showTrackSelector: false,
+  });
+});
+
+test("multicycle school filters tracks to the selected cycle", () => {
+  const settings = parseSchoolCyclesSettings({
+    [SCHOOL_CYCLES_SETTINGS_KEY]: {
+      version: 1, enabled: true, enabledCycles: ["primary", "secondary"],
+      teachingTracksByCycle: { primary: ["french", "arabic"], secondary: ["arabic"] },
+    },
+  });
+  assert.equal(getSchoolAdminNavigation(settings).landingCycle, "all");
+  assert.deepEqual(getSchoolAdminNavigation(settings, "secondary").availableTracks, ["arabic"]);
+  assert.equal(getSchoolAdminNavigation(settings, "secondary").showTrackSelector, false);
+  assert.equal(getSchoolAdminNavigation(settings, "primary").showTrackSelector, true);
+  assert.equal(getSchoolAdminNavigation(settings, "preschool").landingCycle, "all");
+});
+
+test("legacy school retains direct secondary navigation", () => {
+  const navigation = getSchoolAdminNavigation(getDefaultSchoolCyclesSettings(), "all");
+  assert.equal(navigation.showCycleSelector, false);
+  assert.equal(navigation.landingCycle, "secondary");
+  assert.equal(navigation.showTrackSelector, false);
 });
