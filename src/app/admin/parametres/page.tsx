@@ -17,7 +17,6 @@ import SchoolStudentProgramsEditor from "@/components/admin/SchoolStudentProgram
 import SchoolClassSubjectsEditor from "@/components/admin/SchoolClassSubjectsEditor";
 import { isBilingualSchool } from "@/lib/school-student-programs";
 import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
-import SchoolProgramPeriodsEditor from "@/components/admin/SchoolProgramPeriodsEditor";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
 } from "@/components/admin/EducationScopeSwitcher";
@@ -2613,6 +2612,9 @@ export default function AdminSettingsPage() {
     0,
   );
   const activeEvalPeriods = evalPeriods.filter((row) => row.is_active).length;
+  // Coefficients des périodes : affichage uniquement pour le secondaire
+  // dans les écoles multicycles. Les valeurs existantes restent préservées.
+  const showEvalPeriodCoeff = !hasSpecializedSettings || schoolNavigation?.selection.cycle === "secondary";
   const currentAcademicYearRow = academicYears.find(
     (row) => row.code === selectedAcademicYear,
   );
@@ -3783,13 +3785,14 @@ export default function AdminSettingsPage() {
 
         {activeTab === "grading-periods" && (
           <>
-            {hasSpecializedSettings && <SchoolProgramPeriodsEditor />}
-            <EducationScopeSwitcher
-              value={gradingPeriodsScope}
-              onChange={setGradingPeriodsScope}
-              enabledEducationTypes={settingsEducationTypes}
-            />
-            {gradingPeriodsScope === "common" ? (
+            {!hasSpecializedSettings && (
+              <EducationScopeSwitcher
+                value={gradingPeriodsScope}
+                onChange={setGradingPeriodsScope}
+                enabledEducationTypes={settingsEducationTypes}
+              />
+            )}
+            {(hasSpecializedSettings || gradingPeriodsScope === "common") ? (
               <>
                 {/* =======================
                 5) Périodes d'évaluation (bulletins)
@@ -3798,7 +3801,7 @@ export default function AdminSettingsPage() {
               id="grading-periods"
               eyebrow="Bulletins"
               title="Périodes d'évaluation"
-              description="Trimestres, semestres, compositions : chaque période garde son ordre, son coefficient et sa plage de dates."
+              description="Définissez librement les périodes de l'année scolaire : nom, dates et ordre, sans modèle ni nombre imposé."
               actions={
                 <button
                   onClick={() => loadEvalPeriods()}
@@ -3809,6 +3812,14 @@ export default function AdminSettingsPage() {
                 </button>
               }
             >
+              {hasSpecializedSettings && (
+                <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  Cet écran affiche les périodes réellement utilisées actuellement par la saisie des notes.
+                  Elles sont encore communes aux cycles et aux enseignements : le filtre du menu latéral
+                  ne les sépare pas. La distinction par cycle et par enseignement ne sera proposée
+                  que lorsqu'elle fonctionnera aussi dans les évaluations et les bulletins.
+                </p>
+              )}
               {msgEvalPeriods && (
                 <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                   {msgEvalPeriods}
@@ -3823,9 +3834,11 @@ export default function AdminSettingsPage() {
                       <th className="px-3 py-2 text-left">Code</th>
                       <th className="px-3 py-2 text-left">Libellé complet</th>
                       <th className="px-3 py-2 text-left">Libellé bulletin</th>
-                      <th className="w-24 px-3 py-2 text-right">
-                        Coeff. période
-                      </th>
+                      {showEvalPeriodCoeff && (
+                        <th className="w-24 px-3 py-2 text-right">
+                          Coeff. période
+                        </th>
+                      )}
                       <th className="w-32 px-3 py-2 text-left">Début</th>
                       <th className="w-32 px-3 py-2 text-left">Fin</th>
                       <th className="w-24 px-3 py-2 text-center">Actif</th>
@@ -3835,13 +3848,13 @@ export default function AdminSettingsPage() {
                   <tbody className="divide-y">
                     {loadingEvalPeriods ? (
                       <tr>
-                        <td className="px-3 py-3 text-slate-500" colSpan={9}>
+                        <td className="px-3 py-3 text-slate-500" colSpan={showEvalPeriodCoeff ? 9 : 8}>
                           Chargement des périodes…
                         </td>
                       </tr>
                     ) : evalPeriods.length === 0 ? (
                       <tr>
-                        <td className="px-3 py-3 text-slate-500" colSpan={9}>
+                        <td className="px-3 py-3 text-slate-500" colSpan={showEvalPeriodCoeff ? 9 : 8}>
                           Aucune période définie. Cliquez sur « Ajouter une
                           période » pour commencer.
                         </td>
@@ -3886,22 +3899,24 @@ export default function AdminSettingsPage() {
                               placeholder="Trim. 1 / Juin"
                             />
                           </td>
-                          <td className="px-3 py-2 text-right">
-                            <input
-                              type="number"
-                              min={0}
-                              step="0.5"
-                              className="w-20 rounded-lg border px-2 py-1 text-right text-sm"
-                              value={p.weight}
-                              onChange={(e) => {
-                                const raw = e.target.value.replace(",", ".");
-                                const num = parseFloat(raw);
-                                updateEvalPeriod(p.id, {
-                                  weight: isNaN(num) ? 1 : Math.max(0, num),
-                                });
-                              }}
-                            />
-                          </td>
+                          {showEvalPeriodCoeff && (
+                            <td className="px-3 py-2 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.5"
+                                className="w-20 rounded-lg border px-2 py-1 text-right text-sm"
+                                value={p.weight}
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(",", ".");
+                                  const num = parseFloat(raw);
+                                  updateEvalPeriod(p.id, {
+                                    weight: isNaN(num) ? 1 : Math.max(0, num),
+                                  });
+                                }}
+                              />
+                            </td>
+                          )}
                           <td className="px-3 py-2">
                             <input
                               type="date"
@@ -3998,12 +4013,6 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
 
-              <div className="mt-2 text-[11px] text-slate-500">
-                Exemple : trois périodes « 1er trimestre », « 2e trimestre », «
-                3e trimestre » avec des coefficients 1, 2, 2 ; ou deux lignes «
-                Semestre 1 » et « Semestre 2 ». Pour le primaire, vous pouvez
-                définir « Composition de mars », « Composition de juin », etc.
-              </div>
                 </SectionCard>
               </>
             ) : (
@@ -4708,7 +4717,6 @@ export default function AdminSettingsPage() {
 
         {hasSpecializedSettings && activeTab === "bulletin-models" && (
           <section className="space-y-5">
-            <SchoolProgramPeriodsEditor />
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <h2 className="text-xl font-bold text-slate-900">
                 Modèles de bulletins par cycle et enseignement
