@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { SchoolCycle, TeachingTrack } from "@/lib/school-cycles";
+import type { ReportFormat } from "@/lib/franco-arabic-reporting";
 import PreschoolBookletDemo from "./PreschoolBookletDemo";
 import "./print.css";
 import Link from "next/link";
@@ -85,15 +86,24 @@ const options: { id: BulletinVariant; label: string }[] = [
 
 export default function DemoBulletinClient({
   hasArabic, schoolName, schoolCode, enabledCycles, tracksByCycle,
+  embedded = false, previewCycle, previewFormat,
 }: { hasArabic: boolean; schoolName: string; schoolCode: string;
   enabledCycles: SchoolCycle[];
   tracksByCycle: Partial<Record<SchoolCycle, TeachingTrack[]>>;
+  embedded?: boolean; previewCycle?: SchoolCycle; previewFormat?: ReportFormat;
 }) {
   const [variant, setVariant] = useState<BulletinVariant>(hasArabic ? "combined" : "ordinary");
-  const [cycle, setCycle] = useState<SchoolCycle>(enabledCycles.includes("primary") ? "primary" : enabledCycles[0] || "secondary");
-  // Authorized teaching programs are cycle-specific, not globally interchangeable.
-  const cycleHasArabic = hasArabic && tracksByCycle[cycle]?.includes("arabic") === true;
-  const selectedVariant: BulletinVariant = cycleHasArabic ? variant : "ordinary";
+  const [localCycle, setCycle] = useState<SchoolCycle>(enabledCycles.includes("primary") ? "primary" : enabledCycles[0] || "secondary");
+  const cycle = embedded && previewCycle ? previewCycle : localCycle;
+  // Both programs must exist in the selected cycle before a bilingual template applies.
+  const cycleHasArabic = hasArabic && tracksByCycle[cycle]?.includes("arabic") === true &&
+    tracksByCycle[cycle]?.includes("french") === true;
+  const allowedVariants: BulletinVariant[] = !cycleHasArabic ? ["ordinary"]
+    : embedded && previewFormat === "combined" ? ["combined"]
+    : embedded && previewFormat === "separate" ? ["french", "arabic"]
+    : ["combined", "french", "arabic"];
+  const selectedVariant: BulletinVariant = allowedVariants.includes(variant)
+    ? variant : allowedVariants[0];
   const label = cycle === "secondary" ? "Secondaire" : "Primaire";
   const preview: BulletinDocument = {
     ...demo,
@@ -123,14 +133,17 @@ export default function DemoBulletinClient({
       generalAverage: cycle === "secondary" ? demo.arabic.generalAverage : 16,
     } : undefined,
   };
-  const visibleOptions = cycleHasArabic ? options : [{ id: "ordinary" as BulletinVariant, label: "Bulletin de notes" }];
+  const visibleOptions = options.filter(option => allowedVariants.includes(option.id));
+  if (!cycleHasArabic) visibleOptions.push({ id: "ordinary", label: "Bulletin de notes" });
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-5 rounded-2xl border bg-white p-5 shadow-sm print:hidden">
-        <Link href="/admin/parametres?tab=bulletin-models" className="text-sm font-semibold text-emerald-800">
+        {!embedded && <Link href="/admin/parametres?tab=bulletin-models" className="text-sm font-semibold text-emerald-800">
           ← Retour aux paramètres des bulletins
-        </Link>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">Maquettes de bulletins A4</h1>
+        </Link>}
+        <h1 className="mt-2 text-2xl font-bold text-slate-900">
+          {embedded ? "Aperçu A4 du modèle sélectionné" : "Maquettes de bulletins A4"}
+        </h1>
         <p className="mt-1 text-sm leading-6 text-slate-600">
           {cycleHasArabic
             ? "Bulletins français, arabe et regroupé ; les résultats ne sont jamais fusionnés."
@@ -139,7 +152,7 @@ export default function DemoBulletinClient({
           Le primaire présente des barèmes sans coefficients et le préscolaire un livret de compétences.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <label className="flex items-center gap-2 text-sm font-semibold">
+          {!embedded && <label className="flex items-center gap-2 text-sm font-semibold">
             Cycle
             <select value={cycle} onChange={event => setCycle(event.target.value as SchoolCycle)}
               className="rounded-lg border px-3 py-2">
@@ -147,8 +160,8 @@ export default function DemoBulletinClient({
                 {item === "preschool" ? "Préscolaire" : item === "primary" ? "Primaire" : "Secondaire"}
               </option>)}
             </select>
-          </label>
-          {visibleOptions.map(option => (
+          </label>}
+          {visibleOptions.length > 1 && visibleOptions.map(option => (
             <button key={option.id} type="button"
               aria-pressed={selectedVariant === option.id}
               className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${selectedVariant === option.id
