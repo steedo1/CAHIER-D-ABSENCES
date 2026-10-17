@@ -247,8 +247,9 @@ export function getSchoolAdminNavigation(
       ? requestedCycle
       : fallback === "all" && !showCycleSelector ? availableCycles[0] : fallback;
   const cycles = landingCycle === "all" ? availableCycles : [landingCycle];
+  const fallbackTracks: TeachingTrack[] = ["french"];
   const availableTracks = Array.from(new Set(cycles.flatMap(
-    (cycle) => settings.teachingTracksByCycle[cycle] ?? ["french"],
+    (cycle) => settings.teachingTracksByCycle[cycle] ?? fallbackTracks,
   )));
   return {
     showCycleSelector,
