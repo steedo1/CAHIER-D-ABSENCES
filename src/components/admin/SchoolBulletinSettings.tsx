@@ -283,7 +283,7 @@ export default function SchoolBulletinSettings() {
                 <h3 className="font-semibold text-slate-900">Barèmes par niveau</h3>
                 <p className="mt-1 text-sm text-slate-600">
                   Laissez vide tant que l’établissement n’a pas confirmé ses barèmes.
-                  Un CP1 peut utiliser /10 et un CM1 /20 : rien n’est imposé automatiquement.
+                  Aucun barème national n’est deviné : confirmez chaque valeur avec l’établissement avant de l’utiliser.
                 </p>
                 <div className="mt-3 space-y-3">
                   {settings.scales.map((scale, index) => {
