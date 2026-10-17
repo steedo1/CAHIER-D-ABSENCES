@@ -3,8 +3,8 @@ import type { SchoolCycle, TeachingTrack } from "./school-cycles";
 
 /**
  * The school-cycles endpoint returns authoritative per-cycle unique people,
- * but has NO track-specific student enrollment relation. Never re-label a
- * cycle-wide count as a French/Arabic count.
+ * and the independently configured school-student program memberships.
+ * Never re-label a cycle-wide count as a French/Arabic count.
  */
 export type CycleDashboardSummary = {
   ok?: boolean;
@@ -19,6 +19,16 @@ export type CycleDashboardSummary = {
     uniqueTeachers: number;
     subjects?: Array<{ id: string; name: string }>;
   }>>>>;
+  studentPrograms?: Partial<Record<SchoolCycle, Partial<Record<TeachingTrack, {
+    students: number;
+    classes: number;
+    complete: boolean;
+    unclassifiedStudents: number;
+  }>>>>;
+  studentProgramTotals?: Partial<Record<TeachingTrack, {
+    students: number; classes: number; complete: boolean; unclassifiedStudents: number;
+  }>>;
+  programTeacherTotals?: Partial<Record<TeachingTrack, { uniqueTeachers: number | null }>>;
 };
 
 export type ScopedDashboardCounts = {
@@ -44,8 +54,17 @@ export function resolveScopedDashboardCounts(
 ): ScopedDashboardCounts {
   const unknown = { classes: null, students: null, teachers: null };
   if (!summary?.ok || !summary.enabled) return unknown;
-  // The cycle aggregate cannot be filtered by level or administrative class.
-  if (selection.classId || selection.level || selection.cycle === "all") return unknown;
+  // A cycle aggregate cannot be filtered further by level or class.
+  if (selection.classId || selection.level) return unknown;
+  if (selection.cycle === "all") {
+    if (selection.track === "all") return unknown; // Original school-wide dashboard owns those numbers.
+    const total = summary.studentProgramTotals?.[selection.track];
+    return {
+      students: total?.complete ? countOrUnknown(total.students) : null,
+      classes: total?.complete ? countOrUnknown(total.classes) : null,
+      teachers: countOrUnknown(summary.programTeacherTotals?.[selection.track]?.uniqueTeachers),
+    };
+  }
 
   const cycle = summary.cycles?.[selection.cycle];
   if (!cycle) return unknown;
@@ -56,12 +75,14 @@ export function resolveScopedDashboardCounts(
       teachers: countOrUnknown(cycle.teachers),
     };
   }
-  // Class identity and enrollment can be shared across both teachings.
-  // A teacher is counted only when a mapped subject assignment exists.
+  // A student can follow both programs; each program count comes only
+  // from explicitly configured active memberships for this academic year.
+  // If one student is not classified, do not claim a complete total.
   const program = summary.programs?.[selection.cycle]?.[selection.track];
+  const students = summary.studentPrograms?.[selection.cycle]?.[selection.track];
   return {
-    classes: null,
-    students: null,
+    classes: students?.complete ? countOrUnknown(students.classes) : null,
+    students: students?.complete ? countOrUnknown(students.students) : null,
     teachers: program?.subjects?.length ? countOrUnknown(program.uniqueTeachers) : null,
   };
 }
