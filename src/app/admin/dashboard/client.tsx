@@ -295,14 +295,15 @@ export default function AdminDashboardClient() {
   const [loadingInstitution, setLoadingInstitution] = useState(true);
   const role = useAdminRole();
   const schoolNavigation = useSchoolNavigation();
-  const multicycleEnabled = Boolean(schoolNavigation);
+  const specializedViewSelected = schoolNavigation
+    ? isScopedDashboardSelection(schoolNavigation.selection) : false;
   const [cycleSummary, setCycleSummary] = useState<CycleDashboardSummary | null>(null);
   const [cycleLoading, setCycleLoading] = useState(false);
   const [cycleError, setCycleError] = useState("");
   const [dataSource, setDataSource] = useState<LocalDataSource>("cloud");
 
   useEffect(() => {
-    if (!multicycleEnabled) return;
+    if (!specializedViewSelected) return;
     const controller = new AbortController();
     let live = true;
     setCycleLoading(true);
@@ -322,7 +323,7 @@ export default function AdminDashboardClient() {
       })
       .finally(() => { if (live) setCycleLoading(false); });
     return () => { live = false; controller.abort(); };
-  }, [multicycleEnabled]);
+  }, [specializedViewSelected]);
 
   const nfmt = useMemo(() => new Intl.NumberFormat(), []);
   void nfmt;
