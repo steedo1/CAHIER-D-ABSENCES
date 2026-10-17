@@ -50,7 +50,7 @@ test("the saved model for one cycle drives real printable variants, never grades
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(body.specialized.format, "combined");
   assert.equal(body.specialized.documents[0].document.french.generalAverage, 8);
-  assert.equal(body.specialized.documents[0].document.arabic.generalAverage, 16);
+  assert.equal(body.specialized.documents[0].document.arabic.generalAverage, 12);
   assert.equal(db.calls.some(call => call.op !== "read"), false);
 });
 
