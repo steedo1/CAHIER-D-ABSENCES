@@ -212,9 +212,16 @@ export async function listApplicableGradePeriods(
     const scoped = await listSchoolProgramPeriods(
       srv, institutionId, academicYear, program.cycle, program.track,
     );
-    // Never display another teaching's periods. Unconfigured programs have
-    // no selectable periods until their own calendar is saved.
-    return { items: scoped, context, resolvedScope: "program", fallbackToCommon: false };
+    // No new scoped period yet? Preserve previously functional common periods
+    // until the school configures this specific teaching. Once any scoped row
+    // exists for that program, ONLY its own period IDs can be selected.
+    if (scoped.length > 0) {
+      return { items: scoped, context, resolvedScope: "program", fallbackToCommon: false };
+    }
+    return {
+      items: await listCommonPeriods(srv, institutionId, academicYear),
+      context, resolvedScope: "common", fallbackToCommon: true,
+    };
   }
 
   const usesCommon = await classUsesCommonGradingPeriods(
