@@ -53,6 +53,30 @@ export function resolveProgramCoefficients(input: {
   const mapped = school.subjectTracksByCycle[cycle] || {};
   if (!school.enabled || !reports.enabled || !school.enabledCycles.includes(cycle) ||
       !school.teachingTracksByCycle[cycle]?.includes(track)) problems.push("program_not_configured");
+
+  // Preschool uses observations of competency attainment, never numerical
+  // averages. The historic secondary coefficient engine is not applicable.
+  if (cycle === "preschool") return {
+    source: "competencies" as const,
+    policies: [], problems: [...new Set([...problems, "preschool_uses_competency_booklet"])],
+  };
+
+  // Primary subjects are determined by the *explicit* level/class curriculum
+  // and teaching track, NOT by coefficients or their precedence. Unit weights
+  // are internal arithmetic only; no disciplinary coefficient is configured,
+  // shown or accepted from institution_subject_coeffs at the primary level.
+  if (cycle === "primary") {
+    const levelSubjects = classCatalog !== null ? [...classCatalog] : input.levelSubjectIds;
+    const selected = [...new Set(levelSubjects)].filter(id =>
+      active.has(id) && mapped[id]?.includes(track));
+    if (!selected.length) problems.push("level_curriculum_not_configured");
+    for (const subjectId of selected) {
+      policies.push({ cycle, level, track, subjectId, coefficient: 1, includeInAverage: true });
+    }
+    if (!policies.length) problems.push("level_subjects_not_configured");
+    return { source: "barèmes" as const, policies, problems: [...new Set(problems)] };
+  }
+
   if (source === "program") {
     for (const policy of getConfiguredSubjectCoefficients(reports, cycle, level, track)) {
       if (classCatalog && !classCatalog.has(policy.subjectId)) continue;
