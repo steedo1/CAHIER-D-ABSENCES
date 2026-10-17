@@ -119,7 +119,10 @@ export function aggregateStudentProgramRoster(
     const record = members.get(cycle)!;
     let byStudent = record.get(row.student_id);
     if (!byStudent) { byStudent = new Set(); record.set(row.student_id, byStudent); }
-    tracks.forEach(track => byStudent!.add(track));
+    tracks.forEach(track => {
+      byStudent!.add(track);
+      classifiedClass.get(cycle)?.get(track)?.add(row.class_id);
+    });
     if (!tracks.length) unassigned.get(cycle)!.add(row.student_id);
   }
   const out = {} as ProgramRoster;
