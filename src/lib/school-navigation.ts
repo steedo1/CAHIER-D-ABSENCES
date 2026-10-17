@@ -27,7 +27,7 @@ export function resolveSchoolNavigation(
   requested: Partial<SchoolNavigationContext>,
   classes: readonly SchoolNavigationClass[],
 ): SchoolNavigationContext {
-  const navigation = getSchoolAdminNavigation(settings, requested.cycle);
+  const navigation = getSchoolAdminNavigation(settings, requested.cycle ?? (settings.enabledCycles.length > 1 ? "all" : undefined));
   const cycle = navigation.landingCycle;
   const track = requested.track && requested.track !== "all" && navigation.availableTracks.includes(requested.track)
     ? requested.track : navigation.availableTracks.length === 1 ? navigation.availableTracks[0] : "all";

@@ -41,3 +41,11 @@ test("explicit cycle destinations clear incompatible level/class; unrelated path
     assert.equal(withSchoolNavigation(href, context), href);
   }
 });
+
+test("multicycle administrators land on whole-school view by default", () => {
+  const selection = resolveSchoolNavigation(settings, {}, classes);
+  assert.deepEqual(selection, { cycle: "all", track: "all", level: "", classId: "" });
+  const arabic = resolveSchoolNavigation(settings, { cycle: "primary", track: "arabic" }, classes);
+  assert.equal(arabic.track, "arabic");
+  assert.equal(resolveSchoolNavigation(settings, { cycle: "secondary", track: "arabic" }, classes).track, "french");
+});

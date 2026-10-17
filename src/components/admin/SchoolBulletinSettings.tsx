@@ -283,7 +283,7 @@ export default function SchoolBulletinSettings() {
                 <h3 className="font-semibold text-slate-900">Barèmes par niveau</h3>
                 <p className="mt-1 text-sm text-slate-600">
                   Laissez vide tant que l’établissement n’a pas confirmé ses barèmes.
-                  Un CP1 peut utiliser /10 et un CM1 /20 : rien n’est imposé automatiquement.
+                  Aucun barème national n’est deviné : confirmez chaque valeur avec l’établissement avant de l’utiliser.
                 </p>
                 <div className="mt-3 space-y-3">
                   {settings.scales.map((scale, index) => {
@@ -413,7 +413,7 @@ export default function SchoolBulletinSettings() {
                   className="mt-3 min-h-10 rounded-xl border px-4 py-2 text-sm font-semibold">
                   + Ajouter un coefficient
                 </button>
-              </div> : <a href="/admin/parametres#subject-coeffs" className="block text-sm font-semibold text-sky-800 underline">Configurer les coefficients dans les paramètres existants de l’établissement</a>}
+              </div> : <a href="/admin/parametres?tab=coefficients#subject-coeffs" className="block text-sm font-semibold text-sky-800 underline">Configurer les coefficients dans les paramètres existants de l’établissement</a>}
               {settings.scales.length > 0 && (() => {
                 const first = settings.scales[0];
                 const scale = getConfiguredScoringScale(settings,

@@ -1,7 +1,7 @@
 //src/app/admin/ui/sidebar-nav.tsx
 "use client";
 
-import { SchoolContextLink as Link } from "@/components/admin/SchoolNavigationProvider";
+import { SchoolContextLink as Link, SchoolNavigationSidebarSelector, useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard,
@@ -440,6 +440,12 @@ const SETTINGS_ITEMS: NavItem[] = [
     Icon: FileSpreadsheet,
     matchTab: "coefficients",
   },
+  {
+    href: "/admin/parametres?tab=bulletin-models",
+    label: "Modèles de bulletins",
+    Icon: FileText,
+    matchTab: "bulletin-models",
+  },
 ];
 
 /* =========================
@@ -786,6 +792,8 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const currentTab = searchParams.get("tab");
+  const schoolNavigation = useSchoolNavigation();
+  const specializedSettingsEnabled = Boolean(schoolNavigation);
 
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
   const isResizingRef = React.useRef(false);
@@ -1119,11 +1127,12 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
       isInfirmier || isFinanceManager || isFinanceOnlyShell
         ? []
         : SETTINGS_ITEMS.filter(
-            (item) => isFileCorrespondent
-              ? isFileCorrespondentPathAllowed(item.href)
-              : relayEnabled || item.href !== "/admin/relais",
+            (item) => (item.matchTab !== "bulletin-models" || (isAdmin && specializedSettingsEnabled)) &&
+              (isFileCorrespondent
+                ? isFileCorrespondentPathAllowed(item.href)
+                : relayEnabled || item.href !== "/admin/relais"),
           ),
-    [isFileCorrespondent, isInfirmier, isFinanceManager, isFinanceOnlyShell, relayEnabled],
+    [isFileCorrespondent, isInfirmier, isFinanceManager, isFinanceOnlyShell, relayEnabled, isAdmin, specializedSettingsEnabled],
   );
 
   const infirmaryActive = groupHasActiveItem(
@@ -1296,6 +1305,8 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
             </div>
           </div>
         </div>
+
+        {isAdmin && <SchoolNavigationSidebarSelector />}
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 pr-4">
           <ul className="space-y-1">

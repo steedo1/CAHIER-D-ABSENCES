@@ -148,3 +148,29 @@ jamais un identifiant d'établissement depuis le navigateur.
 - Il revient au même contexte après ajout, consultation et retour.
 - Le nombre d'élèves de l'école et les créances ne doublent pas selon les programmes.
 - Un admin du CSCA garde exactement l'expérience actuelle.
+
+---
+## Décisions métier validées le 17 octobre 2026 — priorité sur les maquettes précédentes
+
+**Périmètre :** écoles expressément activées en multicycle/franco-arabe. Les établissements historiques (CSCA, Notre Dame, Dieudonné...) et leur moteur officiel restent inchangés. Aucune DDL, aucun `db push` ni modification de données de production.
+
+### Navigation retenue
+- L'entrée admin reste **/admin/dashboard**, avec le tableau de bord existant et ses cadres. La vue initiale d'une école multicycle à plusieurs cycles est **Toute l'école** ; ne jamais forcer la page /admin/cycles à la connexion.
+- Le sélecteur **Espace de travail** est visible en haut de la **sidebar** : Toute l'école, enseignement français ou enseignement arabe ; filtre cycle en second ; niveau/classe en affinage. Sur mobile, il est accessible dans le menu latéral. Ne pas ajouter de bandeau de filtre au-dessus du dashboard. L'en-tête avec le nom de l'établissement reste à sa place habituelle.
+- Le directeur général a une visibilité agrégée ; le directeur d'un enseignement ne doit accéder qu'à son périmètre **après validation serveur de tous les droits**. La sélection client n'est jamais une autorisation.
+- Les modules et parcours existants restent les points d'entrée : Utilisateurs & rôles pour créer les directions ; Correspondant Fichier → Liste des classes → Liste PDF → Inscrire un élève ; affectations et enseignants depuis leurs menus historiques. Plusieurs directeurs par enseignement sont possibles et un élève inscrit dans deux enseignements doit garder une identité unique.
+- Les pages de configuration de la branche fusionnée sont regroupées dans **/admin/parametres**, au lieu d'un second accès : matières (onglet Coefficients & sous-matières), modèles de bulletins (onglet Modèles de bulletins). Les aperçus A4 sont des documents fictifs, consultables séparément, sans éditeur en double.
+- Les écoles non activées ne voient ni sélecteur ni onglet spécialisés ; tous leurs parcours d'origine restent disponibles.
+
+### Pédagogie
+- **Secondaire** (français ou arabe) : coefficients pédagogiques par matière. **Primaire** : matières et barèmes adaptés aux niveaux, sans imposer des coefficients secondaires. **Préscolaire** : observations/compétences et livret adapté. Ne pas inventer de barèmes officiels non validés.
+- La liste PDF CEIFAD (2026-2027) est un **catalogue local enseignant–matière–classe**, pas un référentiel national ni une source de coefficients. Elle ne justifie aucune modification automatique des autres établissements.
+- Réutiliser les matières déjà actives pour l'établissement. Ne pas réintroduire un deuxième catalogue indépendant ; respecter l'affectation des enseignants/classes et la publication officielle des notes.
+- Les nouveaux bulletins peuvent être spécifiques à l'école franco-arabe, y compris au secondaire français, **uniquement après activation explicite du moteur dédié**. Les moyennes françaises et arabes restent indépendantes ; un document commun n'est pas une moyenne commune.
+
+### Travaux encore nécessaires
+1. Audit des permissions serveur de chaque direction sur l'ensemble des modules et exports ; aucun accès fictif fondé sur le seul sélecteur.
+2. Raccordement effectif du filtre d'enseignement/cycle aux requêtes et inscriptions, ainsi qu'aux enseignants, notes et effectifs du tableau de bord ; le sélecteur ne transforme pas à lui seul les sources métier.
+3. Préconfiguration officielle des matières et barèmes primaire/prescolaire après validation métier et raccordement à la saisie, aux publications et aux bulletins ; le document CEIFAD ne fournit pas ces règles.
+4. Vérification du périmètre unique des coefficients secondaires français/arabe, de la gestion des matières communes et des flux d'affectation.
+5. Recette navigateur PC et mobile, tests historiques et nouvelle école, puis décision de livraison. **Ne pas déclarer ces points terminés à la seule réussite de la navigation.**

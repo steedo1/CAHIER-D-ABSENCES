@@ -161,8 +161,14 @@ try {
   await fill("input[type=email]", "school-admin@example.invalid"); await fill("input[type=password]", "FixtureOnly2026!");
   await evaluate("document.querySelector('form button[type=submit]').click()");
   await until(() => evaluate("location.pathname.startsWith('/admin/')"), "school admin login");
-  await go("/admin/bulletins/modeles"); await visible("Modèles et paramètres des bulletins");
+  await go("/admin/dashboard"); await visible("Espace de travail");
+  await go("/admin/parametres?tab=bulletin-models");
+  await visible("Modèles de bulletins par cycle et enseignement");
+  await go("/admin/parametres?tab=coefficients");
+  await click("Répartition des matières entre les enseignements et les cycles");
   await visible("Matières proposées par votre établissement");
+  await go("/admin/bulletins/modeles?preview=1");
+  await visible("Prévisualisation des modèles de bulletins");
   const forbidden = await evaluate("fetch('/api/super/institutions', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Forbidden',code_unique:'NO'})}).then(response => response.status)");
   assert.equal(forbidden, 403);
   await screenshot("school-admin-models.png");

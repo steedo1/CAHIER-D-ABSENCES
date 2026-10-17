@@ -111,3 +111,70 @@ export function SchoolNavigationBar() {
     {context.error && <p role="status" className="mt-2 text-xs text-amber-900">{context.error}</p>}
   </nav>;
 }
+
+/**
+ * Persistent working-context selector in the existing sidebar.
+ * This changes only URL/presentation state; school permissions stay server-side.
+ * It does not render for schools using the historical engine.
+ */
+export function SchoolNavigationSidebarSelector() {
+  const context = useSchoolNavigation();
+  if (!context) return null;
+
+  const { settings, selection, classes, change, error } = context;
+  const options = getSchoolAdminNavigation(settings, selection.cycle);
+  const levels = Array.from(new Set(classes
+    .filter(row => selection.cycle === "all" || row.cycle === selection.cycle)
+    .map(row => normalizeSchoolLevel(row.level, row.cycle))
+    .filter(Boolean))).sort((a, b) => a.localeCompare(b, "fr", { numeric: true }));
+  const availableClasses = classes.filter(row =>
+    (selection.cycle === "all" || row.cycle === selection.cycle) &&
+    (!selection.level || sameSchoolLevel(row.level, selection.level, row.cycle)),
+  );
+  const field = "mt-1 w-full min-h-10 rounded-lg border border-white/20 bg-slate-800 px-2 text-sm text-white focus:border-emerald-400";
+  return (
+    <section aria-label="Espace de travail" className="shrink-0 border-b border-white/10 px-4 pb-4">
+      <div className="rounded-xl border border-emerald-400/25 bg-emerald-400/10 p-3">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-emerald-200">Espace de travail</h2>
+        <label className="mt-3 block text-xs font-semibold text-slate-200">
+          Enseignement
+          <select className={field} value={selection.track}
+            onChange={event => change({ track: event.target.value as SchoolNavigationContext["track"], classId: "" })}>
+            {options.showTrackSelector && <option value="all">Toute l’école</option>}
+            {options.availableTracks.map(track =>
+              <option key={track} value={track}>{TEACHING_TRACK_OPTIONS.find(item => item.id === track)?.label || track}</option>)}
+          </select>
+        </label>
+        <label className="mt-3 block text-xs font-semibold text-slate-200">
+          Cycle
+          <select className={field} value={selection.cycle}
+            onChange={event => change({ cycle: event.target.value as SchoolNavigationContext["cycle"], level: "", classId: "" })}>
+            {options.showCycleSelector && <option value="all">Tous les cycles</option>}
+            {options.availableCycles.map(cycle =>
+              <option key={cycle} value={cycle}>{SCHOOL_CYCLE_OPTIONS.find(item => item.id === cycle)?.label || cycle}</option>)}
+          </select>
+        </label>
+        <details className="mt-3 text-xs text-slate-200">
+          <summary className="cursor-pointer font-semibold">Affiner par niveau et classe</summary>
+          <label className="mt-2 block">
+            Niveau
+            <select className={field} value={selection.level}
+              onChange={event => change({ level: event.target.value, classId: "" })}>
+              <option value="">Tous les niveaux</option>
+              {levels.map(level => <option key={level} value={level}>{level}</option>)}
+            </select>
+          </label>
+          <label className="mt-2 block">
+            Classe
+            <select className={field} value={selection.classId}
+              onChange={event => change({ classId: event.target.value })}>
+              <option value="">Toutes les classes</option>
+              {availableClasses.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
+            </select>
+          </label>
+        </details>
+        {error && <p role="status" className="mt-2 text-xs text-amber-200">{error}</p>}
+      </div>
+    </section>
+  );
+}

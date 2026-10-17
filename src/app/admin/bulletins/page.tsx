@@ -4076,7 +4076,7 @@ function BulletinsPageContent() {
                 Charger une classe + période, puis ouvrir l’aperçu A4.
               </p>
               {institution?.settings_json?.school_cycles_v1?.enabled === true && (
-                <Link href="/admin/bulletins/modeles"
+                <Link href="/admin/parametres?tab=bulletin-models"
                   className="mt-2 inline-flex rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-100">
                   Modèles et paramètres des bulletins
                 </Link>
