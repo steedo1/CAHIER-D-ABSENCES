@@ -78,6 +78,14 @@ export default function SchoolProgramPeriodsEditor() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The Director General's navigation filter chooses the active editing context.
+  // Never interpret that client-side filter as a permission grant.
+  useEffect(() => {
+    const selection = navigation?.selection;
+    const match = programs.find(p => p.cycle === selection?.cycle && p.track === selection?.track);
+    if (match) setSelected(`${match.cycle}|${match.track}`);
+  }, [navigation?.selection.cycle, navigation?.selection.track, programs]);
+
   const choice = useMemo(() => programs.find(p => `${p.cycle}|${p.track}` === selected), [programs, selected]);
   const isSecondary = choice?.cycle === "secondary";
 
