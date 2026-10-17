@@ -58,11 +58,10 @@ export function resolveScopedDashboardCounts(
   }
   // Class identity and enrollment can be shared across both teachings.
   // A teacher is counted only when a mapped subject assignment exists.
+  const program = summary.programs?.[selection.cycle]?.[selection.track];
   return {
     classes: null,
     students: null,
-    teachers: summary.programs?.[selection.cycle]?.[selection.track]?.subjects?.length
-      ? countOrUnknown(summary.programs[selection.cycle]?.[selection.track]?.uniqueTeachers)
-      : null,
+    teachers: program?.subjects?.length ? countOrUnknown(program.uniqueTeachers) : null,
   };
 }
