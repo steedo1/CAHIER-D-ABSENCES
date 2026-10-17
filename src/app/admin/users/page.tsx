@@ -1,4 +1,6 @@
 "use client";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import { mustDeferBilingualAdminProvisioning } from "@/lib/school-director-scope";
 
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -225,9 +227,13 @@ function canonicalSubjectKey(value: string | null | undefined) {
 }
 
 export default function UsersPage() {
+  const navigation = useSchoolNavigation();
   const [authErr, setAuthErr] = useState(false);
 
   const [createRole, setCreateRole] = useState<CreateRole>("teacher");
+  const restrictedDirectorPending = navigation
+    ? mustDeferBilingualAdminProvisioning(navigation.settings, createRole)
+    : false;
 
   const [tEmail, setTEmail] = useState("");
   const [tPhone, setTPhone] = useState("");
@@ -705,6 +711,11 @@ export default function UsersPage() {
     setMsg(null);
 
     const rawRole = createRole;
+    if (restrictedDirectorPending) {
+      setSubmitting(false);
+      setMsg("Création de directeurs français/arabe suspendue : les droits par enseignement ne sont pas encore sécurisés.");
+      return;
+    }
     const rawPhone = tPhone.trim();
     const rawName = tName.trim();
     const rawSubject = tSubject.trim();
@@ -1088,10 +1099,18 @@ export default function UsersPage() {
             >
               <option value="teacher">Enseignant</option>
               <option value="educator">Éducateur</option>
-              <option value="admin">Admin d’établissement</option>
+              <option value="admin">Admin d’établissement (accès général)</option>
               <option value="finance_manager">Gestionnaire financier</option>
               <option value="infirmier">Infirmier / Infirmerie</option>
             </Select>
+            {restrictedDirectorPending && (
+              <p role="alert" className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                La création des directeurs français/arabe reste verrouillée tant que leurs
+                permissions ne sont pas appliquées sur tous les modules.
+                Le rôle Admin actuel donne accès à toute l’école : il ne sera pas
+                attribué à un directeur limité à un enseignement.
+              </p>
+            )}
           </div>
 
           <div>
@@ -1338,6 +1357,7 @@ export default function UsersPage() {
             onClick={createUser}
             disabled={
               submitting ||
+              restrictedDirectorPending ||
               !tPhone.trim() ||
               (createRole === "educator" && !educatorLevel.trim()) ||
               (createRole === "educator" &&
