@@ -45,6 +45,7 @@ export default async function AdminBulletinTemplatesPage() {
     <DemoBulletinClient
       hasArabic={hasArabic}
       enabledCycles={school.enabledCycles}
+      tracksByCycle={school.teachingTracksByCycle}
       schoolName={institution.name || "Établissement"
       schoolCode={institution.code || institution.code_unique || "—"}
     />
