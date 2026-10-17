@@ -4229,6 +4229,10 @@ export default function AdminSettingsPage() {
 
         {activeTab === "coefficients" && (
           <>
+            {hasSpecializedSettings ? (
+              <SchoolBulletinSettings mode="coefficients" />
+            ) : (
+              <>
             <EducationScopeSwitcher
               value={coeffSettingsScope}
               onChange={setCoeffSettingsScope}
@@ -4696,6 +4700,8 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
             </SectionCard>
+              </>
+            )}
             {hasSpecializedSettings && (
               <details className="rounded-2xl border border-slate-200 bg-white p-5">
                 <summary className="cursor-pointer text-base font-semibold text-slate-900">
