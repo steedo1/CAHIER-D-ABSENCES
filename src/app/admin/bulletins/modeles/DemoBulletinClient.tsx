@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import type { SchoolCycle } from "@/lib/school-cycles";
+import PreschoolBookletDemo from "./PreschoolBookletDemo";
 import "./print.css";
 import Link from "next/link";
 import FrancoArabicBulletin, {
@@ -82,9 +84,11 @@ const options: { id: BulletinVariant; label: string }[] = [
 ];
 
 export default function DemoBulletinClient({
-  hasArabic, schoolName, schoolCode,
-}: { hasArabic: boolean; schoolName: string; schoolCode: string }) {
+  hasArabic, schoolName, schoolCode, enabledCycles,
+}: { hasArabic: boolean; schoolName: string; schoolCode: string; enabledCycles: SchoolCycle[] }) {
   const [variant, setVariant] = useState<BulletinVariant>(hasArabic ? "combined" : "ordinary");
+  const [cycle, setCycle] = useState<SchoolCycle>(enabledCycles.includes("primary") ? "primary" : enabledCycles[0] || "secondary");
+  const label = cycle === "secondary" ? "Secondaire" : "Primaire";
   const preview: BulletinDocument = {
     ...demo,
     school: {
@@ -95,13 +99,20 @@ export default function DemoBulletinClient({
     },
     french: demo.french ? {
       ...demo.french,
-      // The primary cycle is assessed with score scales, not subject coefficients.
-      subjects: demo.french.subjects.map(subject => ({ ...subject, coefficient: null })),
+      cycle: label, level: cycle === "secondary" ? "6ème" : "CM1",
+      className: cycle === "secondary" ? "6ème" : "CM1",
+      subjects: demo.french.subjects.map(subject => ({
+        ...subject, coefficient: cycle === "secondary" ? subject.coefficient : null,
+      })),
       directorName: hasArabic ? demo.french.directorName : "Direction de l’établissement",
     } : undefined,
     arabic: demo.arabic ? {
       ...demo.arabic,
-      subjects: demo.arabic.subjects.map(subject => ({ ...subject, coefficient: null })),
+      cycle: label, level: cycle === "secondary" ? "6ème" : "CM1",
+      className: cycle === "secondary" ? "6ème" : "CM1",
+      subjects: demo.arabic.subjects.map(subject => ({
+        ...subject, coefficient: cycle === "secondary" ? subject.coefficient : null,
+      })),
     } : undefined,
   };
   const visibleOptions = hasArabic ? options : [{ id: "ordinary" as BulletinVariant, label: "Bulletin de notes" }];
@@ -116,9 +127,19 @@ export default function DemoBulletinClient({
           {hasArabic
             ? "Bulletins français, arabe et regroupé ; les résultats ne sont jamais fusionnés."
             : "Bulletin ordinaire, sans étiquette « Programme français ». Aucun enseignement arabe n'est ajouté."
-          } Les élèves, notes, classements et coefficients présentés ci-dessous sont fictifs.
+          } Toutes les données de démonstration présentées ci-dessous sont fictives.
+          Le primaire présente des barèmes sans coefficients et le préscolaire un livret de compétences.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            Cycle
+            <select value={cycle} onChange={event => setCycle(event.target.value as SchoolCycle)}
+              className="rounded-lg border px-3 py-2">
+              {enabledCycles.map(item => <option value={item} key={item}>
+                {item === "preschool" ? "Préscolaire" : item === "primary" ? "Primaire" : "Secondaire"}
+              </option>)}
+            </select>
+          </label>
           {visibleOptions.map(option => (
             <button key={option.id} type="button"
               aria-pressed={variant === option.id}
@@ -136,7 +157,9 @@ export default function DemoBulletinClient({
         </div>
       </div>
       <div className="w-full overflow-x-auto pb-8 print:overflow-visible print:p-0">
-        <FrancoArabicBulletin model={preview} variant={variant} printRoot />
+        {cycle === "preschool"
+          ? <PreschoolBookletDemo variant={variant} schoolName={schoolName} schoolCode={schoolCode} hasArabic={hasArabic} />
+          : <FrancoArabicBulletin model={preview} variant={variant} printRoot />}
       </div>
     </div>
   );
