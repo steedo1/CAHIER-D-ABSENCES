@@ -3916,7 +3916,7 @@ export default function AdminSettingsPage() {
                                 }}
                               />
                             </td>
-                          )>
+                          )}
                           <td className="px-3 py-2">
                             <input
                               type="date"
