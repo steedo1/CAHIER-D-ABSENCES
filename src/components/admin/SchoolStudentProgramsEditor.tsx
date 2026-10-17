@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { SchoolCycle, TeachingTrack } from "@/lib/school-cycles";
 
-type SchoolClass = { id: string; label: string; level: string | null; cycle: SchoolCycle };
+type SchoolClass = { id: string; label: string; level: string | null; cycle: SchoolCycle | null };
 type Student = {
   id: string;
   name: string;
@@ -132,12 +132,18 @@ export default function SchoolStudentProgramsEditor() {
             onChange={event => { setMessage(""); void load(event.target.value); }}>
             <option value="">Choisir une classe</option>
             {classes.map(row => <option value={row.id} key={row.id}>
-              {CYCLE_LABEL[row.cycle]} — {row.label}
+              {row.cycle ? CYCLE_LABEL[row.cycle] : "Cycle à configurer"} — {row.label}
             </option>)}
           </select>
         </label>
         {loading && <p role="status" className="text-sm text-slate-600">Chargement des inscriptions…</p>}
-        {!loading && classId && <div className="space-y-4">
+        {!loading && classId && !available.length && (
+          <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+            Le cycle de cette classe n’est pas défini ou aucun enseignement n’est activé.
+            Précisez d’abord son cycle dans la configuration pédagogique de l’établissement.
+          </p>
+        )}
+        {!loading && classId && available.length > 0 && <div className="space-y-4">
           <fieldset className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
             <legend className="px-1 text-sm font-semibold">Enseignements proposés à la classe</legend>
             <div className="mt-2 flex flex-wrap gap-5">
