@@ -35,6 +35,7 @@ test("generic settings cannot activate, erase or change reserved settings", () =
   assert.equal(mergeGeneralSchoolSettings(stored, { [key]: null }), null);
   assert.equal(mergeGeneralSchoolSettings(stored, { school_directors_v1: {} }), null);
   assert.equal(mergeGeneralSchoolSettings(stored, { school_student_programs_v1: { version: 1, years: {} } }), null);
+  assert.equal(mergeGeneralSchoolSettings(stored, { school_class_subjects_v1: { version: 1, years: {} } }), null);
   assert.equal(mergeGeneralSchoolSettings(stored, { franco_arabic_reports_v1: {} }), null);
   assert.deepEqual(mergeGeneralSchoolSettings(stored, { theme: "light" }), { ...stored, theme: "light" });
   assert.deepEqual(mergeGeneralSchoolSettings(stored, stored), stored);
