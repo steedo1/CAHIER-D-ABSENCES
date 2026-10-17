@@ -13,6 +13,7 @@ import { getRelayConfig, syncRelayBootstrap } from "@/lib/local-relay";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import SchoolSubjectProgramsEditor from "@/components/admin/SchoolSubjectProgramsEditor";
+import SchoolStudentProgramsEditor from "@/components/admin/SchoolStudentProgramsEditor";
 import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
@@ -4693,6 +4694,7 @@ export default function AdminSettingsPage() {
                 </div>
               </details>
             )}
+            {hasSpecializedSettings && <SchoolStudentProgramsEditor />}
           </>
         )}
 
