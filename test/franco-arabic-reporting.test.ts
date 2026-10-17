@@ -8,6 +8,7 @@ import {
   getConfiguredSubjectCoefficients,
   parseFrancoArabicReportsSettings,
   validateFrancoArabicReportsInput,
+  validateNewCycleScoringRules,
 } from "../src/lib/franco-arabic-reporting";
 
 test("existing schools never inherit reporting format or a 20-point barème", () => {
@@ -115,4 +116,43 @@ test("invalid or duplicate teaching coefficients are rejected", () => {
   assert.equal(validateFrancoArabicReportsInput({
     ...valid, coefficients: [{ ...valid.coefficients[0], subjectId: "outside" }],
   }), null);
+});
+
+test("new cycle rules permit primary barèmes but forbid primary coefficients and numeric preschool scales", () => {
+  const subject = "11111111-1111-4111-8111-111111111111";
+  const previous = defaultFrancoArabicReportsSettings();
+  const primary = validateFrancoArabicReportsInput({
+    enabled: true, format: "separate",
+    scales: [{ cycle: "primary", level: "CP1", track: "french", maxScore: 10 }],
+    coefficients: [],
+  });
+  assert.ok(primary);
+  assert.equal(validateNewCycleScoringRules(previous, primary), "ok");
+  const preschool = validateFrancoArabicReportsInput({
+    enabled: true, format: "separate",
+    scales: [{ cycle: "preschool", level: "Maternelle", track: "arabic", maxScore: 20 }],
+    coefficients: [],
+  });
+  assert.ok(preschool);
+  assert.equal(validateNewCycleScoringRules(previous, preschool), "preschool_numeric_scale_forbidden");
+  const primaryWithCoefficient = validateFrancoArabicReportsInput({
+    ...primary, coefficients: [{
+      cycle: "primary", level: "CP1", track: "french", subjectId: subject,
+      coefficient: 5, includeInAverage: true,
+    }],
+  });
+  assert.ok(primaryWithCoefficient);
+  assert.equal(validateNewCycleScoringRules(previous, primaryWithCoefficient), "nonsecondary_coefficient_forbidden");
+  const secondary = validateFrancoArabicReportsInput({
+    enabled: true, format: "separate",
+    scales: [{ cycle: "secondary", level: "6ème", track: "french", maxScore: 20 }],
+    coefficients: [{
+      cycle: "secondary", level: "6ème", track: "french", subjectId: subject,
+      coefficient: 5, includeInAverage: true,
+    }],
+  });
+  assert.ok(secondary);
+  assert.equal(validateNewCycleScoringRules(previous, secondary), "ok");
+  // Existing legacy policies may be retained unchanged, but the new UI cannot edit them.
+  assert.equal(validateNewCycleScoringRules(primaryWithCoefficient, primaryWithCoefficient), "ok");
 });
