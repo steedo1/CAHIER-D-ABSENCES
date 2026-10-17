@@ -128,7 +128,7 @@ export function aggregateStudentProgramRoster(
     // If a person attends two classes, one unresolved membership is not
     // grounds for claiming complete classification of that person's courses.
     const missing = unassigned.get(cycle) || new Set<string>();
-    const unknown = [...missing].filter(id => !(byStudent.get(id)?.size)).length;
+    const unknown = missing.size; // An unresolved enrollment stays unresolved even if another class is assigned.
     const perTrack = {} as ProgramRoster[SchoolCycle];
     for (const track of ["french", "arabic"] as const) {
       perTrack[track] = {
