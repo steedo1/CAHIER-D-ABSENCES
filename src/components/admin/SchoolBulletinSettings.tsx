@@ -48,6 +48,7 @@ export default function SchoolBulletinSettings({
   const [focusedProgram, setFocusedProgram] = useState("");
   const [teachingClasses, setTeachingClasses] = useState<TeachingClass[]>([]);
   const [focusedClassId, setFocusedClassId] = useState("");
+  const [refreshClasses, setRefreshClasses] = useState(0);
   const [classSubjectIds, setClassSubjectIds] = useState<string[] | null>(null);
   const [loadingClassSubjects, setLoadingClassSubjects] = useState(false);
   const [classError, setClassError] = useState("");
@@ -153,6 +154,10 @@ export default function SchoolBulletinSettings({
   const activeProgram = scopedPrograms[0];
   const classesForProgram = teachingClasses.filter(row =>
     row.cycle === activeProgram?.cycle && row.track === activeProgram?.track);
+  const activeTeachingClass = classesForProgram.find(row => row.id === focusedClassId);
+  const belongsToSelectedLevel = (level: string, cycle: SchoolCycle) =>
+    mode !== "coefficients" || !activeTeachingClass?.level ||
+    sameSchoolLevel(level, activeTeachingClass.level, cycle);
 
   useEffect(() => {
     if (mode !== "coefficients") return;
@@ -191,7 +196,7 @@ export default function SchoolBulletinSettings({
       }
     })();
     return () => { active = false; controller.abort(); };
-  }, [mode, focusedClassId]);
+  }, [mode, focusedClassId, refreshClasses]);
   const visibleProgram = (cycle: SchoolCycle, track: TeachingTrack) =>
     scopedPrograms.some(p => p.cycle === cycle && p.track === track);
   const firstProgram = scopedPrograms.find(row => row.cycle === "primary") ||
@@ -215,7 +220,7 @@ export default function SchoolBulletinSettings({
       scales: [...old.scales, {
         cycle: firstProgram.cycle,
         track: firstProgram.track,
-        level: "",
+        level: mode === "coefficients" ? (activeTeachingClass?.level || "") : "",
         maxScore: 0,
       }],
     }));
@@ -228,7 +233,7 @@ export default function SchoolBulletinSettings({
 
   const displayedSubjects = activeProgram
     ? availableSubjects(activeProgram.cycle, activeProgram.track).filter(subject =>
-        !focusedClassId || (classSubjectIds !== null && classSubjectIds.includes(subject.id)))
+        !focusedClassId || (activeTeachingClass && classSubjectIds !== null && classSubjectIds.includes(subject.id)))
     : [];
 
   function updateCoefficient(index: number, update: Partial<SubjectReportCoefficient>) {
@@ -244,12 +249,19 @@ export default function SchoolBulletinSettings({
     if (settings.coefficients.length >= 500) return;
     const scale = settings.scales.find((entry) =>
       visibleProgram(entry.cycle, entry.track) && entry.cycle === "secondary" &&
-      entry.level.trim() && availableSubjects(entry.cycle, entry.track).length > 0);
+      entry.level.trim() && belongsToSelectedLevel(entry.level, entry.cycle) &&
+      (mode !== "coefficients" || displayedSubjects.length > 0) &&
+      availableSubjects(entry.cycle, entry.track).length > 0);
     if (!scale) {
       setError("Définissez un barème puis rattachez des disciplines à cet enseignement.");
       return;
     }
-    const subject = availableSubjects(scale.cycle, scale.track)[0];
+    const allowed = mode === "coefficients"
+      ? displayedSubjects : availableSubjects(scale.cycle, scale.track);
+    const subject = allowed.find(item => !settings.coefficients.some(policy =>
+      policy.cycle === scale.cycle && policy.track === scale.track &&
+      sameSchoolLevel(policy.level, scale.level, scale.cycle) &&
+      policy.subjectId === item.id));
     if (!subject) return;
     setError("");
     setSettings((old) => ({
@@ -369,9 +381,17 @@ export default function SchoolBulletinSettings({
                 Aucune matière affectée à cette classe : utilisez « Matières par classe » ci-dessous.
               </p>
             )}
-            <p className="mt-2 text-sm text-slate-700">
-              {displayedSubjects.length} matière(s) dans le périmètre affiché.
-            </p>
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <p className="text-sm text-slate-700">
+                {displayedSubjects.length} matière(s) dans le périmètre affiché.
+              </p>
+              {focusedClassId && (
+                <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold"
+                  onClick={() => setRefreshClasses(value => value + 1)}>
+                  Rafraîchir les matières
+                </button>
+              )}
+            </div>
             <ul className="mt-2 grid gap-1 sm:grid-cols-2">
               {displayedSubjects.map(subject => (
                 <li key={subject.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
@@ -464,7 +484,8 @@ export default function SchoolBulletinSettings({
                   {settings.scales.map((scale, index) => {
                     // Historical preschool scoring rules are left in stored settings
                     // for compatibility, but cannot be edited or added here.
-                    if (scale.cycle === "preschool" || !visibleProgram(scale.cycle, scale.track)) return null;
+                    if (scale.cycle === "preschool" || !visibleProgram(scale.cycle, scale.track) ||
+                      !belongsToSelectedLevel(scale.level, scale.cycle)) return null;
                     const availableTracks = scopedPrograms.filter((p) => p.cycle === scale.cycle);
                     return (
                       <div key={index} className="grid gap-2 rounded-xl border bg-slate-50 p-3 sm:grid-cols-5">
@@ -509,7 +530,12 @@ export default function SchoolBulletinSettings({
                   })}
                 </div>
                 <button type="button" onClick={appendScale}
-                  disabled={blocked || !firstProgram || settings.scales.length >= 120}
+                  disabled={blocked || !firstProgram || settings.scales.length >= 120 ||
+                    (mode === "coefficients" && activeTeachingClass?.level
+                      ? settings.scales.some(entry =>
+                          entry.cycle === firstProgram.cycle && entry.track === firstProgram.track &&
+                          sameSchoolLevel(entry.level, activeTeachingClass.level, entry.cycle))
+                      : false)}
                   className="mt-3 min-h-10 rounded-xl border px-4 py-2 text-sm font-semibold">
                   + Ajouter un barème
                 </button>
@@ -525,11 +551,13 @@ export default function SchoolBulletinSettings({
                 </p>
                 <div className="mt-3 space-y-3">
                   {settings.coefficients.map((policy, index) => {
-                    if (policy.cycle !== "secondary" || !visibleProgram(policy.cycle, policy.track)) return null;
+                    if (policy.cycle !== "secondary" || !visibleProgram(policy.cycle, policy.track) ||
+                      !belongsToSelectedLevel(policy.level, policy.cycle)) return null;
                     const selectedKey = [
                       policy.cycle, policy.track, policy.level,
                     ].join("|");
-                    const possibleSubjects = availableSubjects(policy.cycle, policy.track);
+                    const possibleSubjects = mode === "coefficients"
+                        ? displayedSubjects : availableSubjects(policy.cycle, policy.track);
                     return (
                       <div key={index} className="grid gap-2 rounded-xl border bg-slate-50 p-3 sm:grid-cols-5">
                         <select
@@ -548,7 +576,8 @@ export default function SchoolBulletinSettings({
                           }}
                         >
                           {settings.scales.filter((entry) => entry.cycle === "secondary" &&
-                            visibleProgram(entry.cycle, entry.track) && entry.level.trim()).map((entry, idx) =>
+                            visibleProgram(entry.cycle, entry.track) && entry.level.trim() &&
+                            belongsToSelectedLevel(entry.level, entry.cycle)).map((entry, idx) =>
                             <option key={idx} value={[entry.cycle, entry.track, entry.level].join("|")}>
                               {entry.level} — {!hasArabic ? "Enseignement ordinaire" : entry.track === "french" ? "Français" : "Arabe"}
                             </option>)}
