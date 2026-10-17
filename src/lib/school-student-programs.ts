@@ -145,3 +145,53 @@ export function aggregateStudentProgramRoster(
   }
   return out;
 }
+
+/** Whole-school totals per teaching, without adding cycle totals together. */
+export function aggregateInstitutionProgramTotals(
+  school: SchoolCyclesSettings,
+  yearPolicy: StudentProgramYear | undefined,
+  classes: readonly ActiveProgramClass[],
+  enrollments: readonly ActiveProgramEnrollment[],
+): Record<TeachingTrack, {
+  students: number; classes: number; complete: boolean; unclassifiedStudents: number;
+}> {
+  const classCycle = new Map(classes.map(row => [row.id, row.cycle]));
+  const studentSets: Record<TeachingTrack, Set<string>> = {
+    french: new Set(), arabic: new Set(),
+  };
+  const classSets: Record<TeachingTrack, Set<string>> = {
+    french: new Set(), arabic: new Set(),
+  };
+  const unknown = new Set<string>();
+  for (const row of classes) {
+    const allowed = school.teachingTracksByCycle[row.cycle] || [];
+    for (const track of yearPolicy?.classes[row.id]?.tracks || []) {
+      if (allowed.includes(track)) classSets[track].add(row.id);
+    }
+  }
+  for (const item of enrollments) {
+    if (item.end_date || !item.student_id) continue;
+    const cycle = classCycle.get(item.class_id);
+    if (!cycle || !school.enabledCycles.includes(cycle)) continue;
+    const tracks = programsForStudent(
+      yearPolicy?.classes[item.class_id], item.student_id,
+      school.teachingTracksByCycle[cycle] || [],
+    );
+    if (!tracks.length) unknown.add(item.student_id);
+    for (const track of tracks) {
+      studentSets[track].add(item.student_id);
+      classSets[track].add(item.class_id);
+    }
+  }
+  const completed = unknown.size === 0;
+  return {
+    french: {
+      students: studentSets.french.size, classes: classSets.french.size,
+      complete: completed, unclassifiedStudents: unknown.size,
+    },
+    arabic: {
+      students: studentSets.arabic.size, classes: classSets.arabic.size,
+      complete: completed, unclassifiedStudents: unknown.size,
+    },
+  };
+}
