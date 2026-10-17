@@ -69,13 +69,14 @@ export default function SchoolBulletinSettings() {
         if (!response.ok || !data.ok || !data.reporting || !data.configuration) {
           throw new Error(data.error || "Chargement impossible.");
         }
-        const reports = data;
-        const cycles = data;
         if (!active) return;
-        setSettings(reports.reporting);
-        setSubjects(cycles.subjects || []);
-        setSubjectTracksByCycle(cycles.configuration.subjectTracksByCycle || {});
-        const config = cycles.configuration;
+        // Keep the validated required fields narrowed; do not alias the
+        // entire optional API response before extracting them.
+        const reporting = data.reporting;
+        const config = data.configuration;
+        setSettings(reporting);
+        setSubjects(data.subjects || []);
+        setSubjectTracksByCycle(config.subjectTracksByCycle || {});
         setMulticycleReady(config.enabled);
         setPrograms(config.enabledCycles.flatMap((cycle) =>
           (config.teachingTracksByCycle[cycle] || [])
