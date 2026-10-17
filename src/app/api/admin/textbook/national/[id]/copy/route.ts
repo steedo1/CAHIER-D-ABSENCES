@@ -6,6 +6,7 @@ import {
   normalizeTextbookProgressionEducationType,
   textbookProgressionMatchesClass,
 } from "@/lib/textbook/progression-context";
+import { matchesTextbookGeneralLevel } from "@/lib/textbook/level-matching";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,33 +34,6 @@ function isManualAssignmentSubject(subjectName: unknown) {
   );
 }
 
-function levelAliases(level: unknown) {
-  const normalized = normalizeLabel(level);
-  const aliases = new Set<string>();
-  if (normalized) aliases.add(normalized);
-
-  const secondAorC =
-    normalized.match(/^(2nde|seconde)\s+a\s*c$/) ||
-    normalized.match(/^(2nde|seconde)\s+a\s+c$/) ||
-    normalized.match(/^(2nde|seconde)\s+a\s*[-/]\s*c$/);
-  if (secondAorC) {
-    aliases.add(`${secondAorC[1]} a`);
-    aliases.add(`${secondAorC[1]} c`);
-  }
-
-  return Array.from(aliases).filter(Boolean);
-}
-
-function classMatchesLevel(row: any, level: unknown) {
-  const aliases = levelAliases(level);
-  if (!aliases.length) return false;
-  const classLevel = normalizeLabel(row?.level);
-  const classLabel = normalizeLabel(row?.label || row?.name);
-  return aliases.some(
-    (alias) => classLevel === alias || classLabel.includes(alias),
-  );
-}
-
 async function autoAssignCompatibleClasses(
   srv: any,
   institutionId: string,
@@ -74,7 +48,7 @@ async function autoAssignCompatibleClasses(
   async function fetchClasses(filterYear: boolean) {
     let query = srv
       .from("classes")
-      .select("id,label,level,academic_year,education_type,formation_code,formation_level_code")
+      .select("id,label,level,official_track_code,academic_year,education_type,formation_code,formation_level_code")
       .eq("institution_id", institutionId);
 
     if (filterYear && progression?.academic_year) {
@@ -95,7 +69,7 @@ async function autoAssignCompatibleClasses(
   const compatibleClasses = classes.filter((row: any) => {
     if (!textbookProgressionMatchesClass(progression, row)) return false;
     if (progressionType === "general_secondary") {
-      return classMatchesLevel(row, progression?.level);
+      return matchesTextbookGeneralLevel(progression, row);
     }
     return true;
   });
