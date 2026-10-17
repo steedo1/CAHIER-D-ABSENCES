@@ -2612,6 +2612,9 @@ export default function AdminSettingsPage() {
     0,
   );
   const activeEvalPeriods = evalPeriods.filter((row) => row.is_active).length;
+  // Coefficients des périodes : affichage uniquement pour le secondaire
+  // dans les écoles multicycles. Les valeurs existantes restent préservées.
+  const showEvalPeriodCoeff = !hasSpecializedSettings || schoolNavigation?.selection.cycle === "secondary";
   const currentAcademicYearRow = academicYears.find(
     (row) => row.code === selectedAcademicYear,
   );
@@ -3831,9 +3834,11 @@ export default function AdminSettingsPage() {
                       <th className="px-3 py-2 text-left">Code</th>
                       <th className="px-3 py-2 text-left">Libellé complet</th>
                       <th className="px-3 py-2 text-left">Libellé bulletin</th>
-                      <th className="w-24 px-3 py-2 text-right">
-                        Coeff. période
-                      </th>
+                      {showEvalPeriodCoeff && (
+                        <th className="w-24 px-3 py-2 text-right">
+                          Coeff. période
+                        </th>
+                      )}
                       <th className="w-32 px-3 py-2 text-left">Début</th>
                       <th className="w-32 px-3 py-2 text-left">Fin</th>
                       <th className="w-24 px-3 py-2 text-center">Actif</th>
@@ -3843,13 +3848,13 @@ export default function AdminSettingsPage() {
                   <tbody className="divide-y">
                     {loadingEvalPeriods ? (
                       <tr>
-                        <td className="px-3 py-3 text-slate-500" colSpan={9}>
+                        <td className="px-3 py-3 text-slate-500" colSpan={showEvalPeriodCoeff ? 9 : 8}>
                           Chargement des périodes…
                         </td>
                       </tr>
                     ) : evalPeriods.length === 0 ? (
                       <tr>
-                        <td className="px-3 py-3 text-slate-500" colSpan={9}>
+                        <td className="px-3 py-3 text-slate-500" colSpan={showEvalPeriodCoeff ? 9 : 8}>
                           Aucune période définie. Cliquez sur « Ajouter une
                           période » pour commencer.
                         </td>
@@ -3894,22 +3899,24 @@ export default function AdminSettingsPage() {
                               placeholder="Trim. 1 / Juin"
                             />
                           </td>
-                          <td className="px-3 py-2 text-right">
-                            <input
-                              type="number"
-                              min={0}
-                              step="0.5"
-                              className="w-20 rounded-lg border px-2 py-1 text-right text-sm"
-                              value={p.weight}
-                              onChange={(e) => {
-                                const raw = e.target.value.replace(",", ".");
-                                const num = parseFloat(raw);
-                                updateEvalPeriod(p.id, {
-                                  weight: isNaN(num) ? 1 : Math.max(0, num),
-                                });
-                              }}
-                            />
-                          </td>
+                          {showEvalPeriodCoeff && (
+                            <td className="px-3 py-2 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.5"
+                                className="w-20 rounded-lg border px-2 py-1 text-right text-sm"
+                                value={p.weight}
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(",", ".");
+                                  const num = parseFloat(raw);
+                                  updateEvalPeriod(p.id, {
+                                    weight: isNaN(num) ? 1 : Math.max(0, num),
+                                  });
+                                }}
+                              />
+                            </td>
+                          )>
                           <td className="px-3 py-2">
                             <input
                               type="date"
