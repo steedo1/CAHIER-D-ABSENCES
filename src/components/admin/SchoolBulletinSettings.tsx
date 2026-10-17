@@ -1,5 +1,6 @@
 "use client";
 import { schoolLevelKey, sameSchoolLevel } from "@/lib/school-levels";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -38,6 +39,7 @@ type CycleResponse = {
 type AllowedProgram = { cycle: SchoolCycle; track: TeachingTrack };
 
 export default function SchoolBulletinSettings() {
+  const navigation = useSchoolNavigation();
   const [settings, setSettings] = useState<FrancoArabicReportsSettings>(
     defaultFrancoArabicReportsSettings,
   );
@@ -97,9 +99,15 @@ export default function SchoolBulletinSettings() {
 
   const allowedKeys = useMemo(() =>
     new Set(programs.map(({ cycle, track }) => `${cycle}|${track}`)), [programs]);
-  const firstProgram = programs.find(row => row.cycle === "primary") ||
-    programs.find(row => row.cycle === "secondary");
-  const hasSecondary = programs.some(program => program.cycle === "secondary");
+  // UI scopes are display filters only. Server verifies all writes independently.
+  const scopedPrograms = programs.filter(row =>
+    (navigation?.selection.cycle === "all" || !navigation || row.cycle === navigation.selection.cycle) &&
+    (navigation?.selection.track === "all" || !navigation || row.track === navigation.selection.track));
+  const visibleProgram = (cycle: SchoolCycle, track: TeachingTrack) =>
+    scopedPrograms.some(p => p.cycle === cycle && p.track === track);
+  const firstProgram = scopedPrograms.find(row => row.cycle === "primary") ||
+    scopedPrograms.find(row => row.cycle === "secondary");
+  const hasSecondary = scopedPrograms.some(program => program.cycle === "secondary");
   const blocked = loading || saving || !loaded || !multicycleReady;
   const hasArabic = programs.some((program) => program.track === "arabic");
 
@@ -141,7 +149,7 @@ export default function SchoolBulletinSettings() {
   function appendCoefficient() {
     if (settings.coefficients.length >= 500) return;
     const scale = settings.scales.find((entry) =>
-      entry.cycle === "secondary" &&
+      visibleProgram(entry.cycle, entry.track) && entry.cycle === "secondary" &&
       entry.level.trim() && availableSubjects(entry.cycle, entry.track).length > 0);
     if (!scale) {
       setError("Définissez un barème puis rattachez des disciplines à cet enseignement.");
@@ -298,8 +306,8 @@ export default function SchoolBulletinSettings() {
                   {settings.scales.map((scale, index) => {
                     // Historical preschool scoring rules are left in stored settings
                     // for compatibility, but cannot be edited or added here.
-                    if (scale.cycle === "preschool") return null;
-                    const availableTracks = programs.filter((p) => p.cycle === scale.cycle);
+                    if (scale.cycle === "preschool" || !visibleProgram(scale.cycle, scale.track)) return null;
+                    const availableTracks = scopedPrograms.filter((p) => p.cycle === scale.cycle);
                     return (
                       <div key={index} className="grid gap-2 rounded-xl border bg-slate-50 p-3 sm:grid-cols-5">
                         <select aria-label={`Cycle ${index + 1}`} value={scale.cycle}
@@ -310,7 +318,7 @@ export default function SchoolBulletinSettings() {
                             updateScale(index, { cycle, track });
                           }}>
                           {SCHOOL_CYCLE_OPTIONS.filter((c) =>
-                            c.id !== "preschool" && programs.some((p) => p.cycle === c.id))
+                            c.id !== "preschool" && scopedPrograms.some((p) => p.cycle === c.id))
                             .map((c) => <option value={c.id} key={c.id}>{c.label}</option>)}
                         </select>
                         <select aria-label={`Enseignement ${index + 1}`} value={scale.track}
@@ -359,7 +367,7 @@ export default function SchoolBulletinSettings() {
                 </p>
                 <div className="mt-3 space-y-3">
                   {settings.coefficients.map((policy, index) => {
-                    if (policy.cycle !== "secondary") return null;
+                    if (policy.cycle !== "secondary" || !visibleProgram(policy.cycle, policy.track)) return null;
                     const selectedKey = [
                       policy.cycle, policy.track, policy.level,
                     ].join("|");
@@ -381,7 +389,8 @@ export default function SchoolBulletinSettings() {
                             });
                           }}
                         >
-                          {settings.scales.filter((entry) => entry.cycle === "secondary" && entry.level.trim()).map((entry, idx) =>
+                          {settings.scales.filter((entry) => entry.cycle === "secondary" &&
+                            visibleProgram(entry.cycle, entry.track) && entry.level.trim()).map((entry, idx) =>
                             <option key={idx} value={[entry.cycle, entry.track, entry.level].join("|")}>
                               {entry.level} — {!hasArabic ? "Enseignement ordinaire" : entry.track === "french" ? "Français" : "Arabe"}
                             </option>)}
