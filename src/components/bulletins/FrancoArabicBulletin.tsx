@@ -73,10 +73,10 @@ function number(value: number | null | undefined, digits = 2): string {
     : "—";
 }
 
-function BrandMark() {
+function BrandMark({ ordinary }: { ordinary: boolean }) {
   return <div className={styles.brandMark} aria-hidden="true">
-    <span className={styles.brandMarkCrescent}>☾</span>
-    <span className={styles.brandMarkBook}>✧</span>
+    {!ordinary && <span className={styles.brandMarkCrescent}>☾</span>}
+    <span className={styles.brandMarkBook}>{ordinary ? "▤" : "✧"}</span>
   </div>;
 }
 
@@ -94,7 +94,7 @@ function Head({ model, variant }: { model: BulletinDocument; variant: BulletinVa
         {model.school.logoUrl
           // An actual school-supplied logo, never a fabricated official stamp.
           ? <img className={styles.schoolLogo} alt="Logo de l’établissement" src={model.school.logoUrl} />
-          : <BrandMark />}
+          : <BrandMark ordinary={variant === "ordinary"} />}
         <div className={styles.schoolIdentity}>
           <div className={styles.schoolName}>{model.school.name}</div>
           {model.school.subtitle && <div className={styles.schoolSubtitle}>{model.school.subtitle}</div>}
@@ -243,7 +243,7 @@ export default function FrancoArabicBulletin({
 
   const compact = variant === "combined";
   const context = programs[0];
-  return <article className={`${styles.page} ${printRoot ? "fa-report-print-root" : ""} ${compact ? styles.combinedPage : ""}`}
+  return <article className={`${styles.page} ${printRoot ? "fa-report-print-root" : ""} ${compact ? styles.combinedPage : ""} ${variant === "ordinary" ? styles.ordinaryPage : ""}`}
     aria-label={`Bulletin ${variant}`}>
     <Head model={model} variant={variant}/>
     <div className={styles.body}>
