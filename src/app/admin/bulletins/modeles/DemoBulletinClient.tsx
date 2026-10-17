@@ -164,8 +164,8 @@ export default function DemoBulletinClient({
       </div>
       <div className="w-full overflow-x-auto pb-8 print:overflow-visible print:p-0">
         {cycle === "preschool"
-          ? <PreschoolBookletDemo variant={variant} schoolName={schoolName} schoolCode={schoolCode} hasArabic={hasArabic} />
-          : <FrancoArabicBulletin model={preview} variant={variant} printRoot />}
+          ? <PreschoolBookletDemo variant={selectedVariant} schoolName={schoolName} schoolCode={schoolCode} hasArabic={cycleHasArabic} />
+          : <FrancoArabicBulletin model={preview} variant={selectedVariant} printRoot />}
       </div>
     </div>
   );
