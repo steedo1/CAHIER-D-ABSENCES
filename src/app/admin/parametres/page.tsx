@@ -17,6 +17,7 @@ import SchoolStudentProgramsEditor from "@/components/admin/SchoolStudentProgram
 import SchoolClassSubjectsEditor from "@/components/admin/SchoolClassSubjectsEditor";
 import { isBilingualSchool } from "@/lib/school-student-programs";
 import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
+import SchoolGradingPeriodsEditor from "@/components/admin/SchoolGradingPeriodsEditor";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
 } from "@/components/admin/EducationScopeSwitcher";
@@ -3785,6 +3786,10 @@ export default function AdminSettingsPage() {
 
         {activeTab === "grading-periods" && (
           <>
+            {hasSpecializedSettings ? (
+              <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} />
+            ) : (
+              <>
             {!hasSpecializedSettings && (
               <EducationScopeSwitcher
                 value={gradingPeriodsScope}
@@ -4020,6 +4025,8 @@ export default function AdminSettingsPage() {
                 educationType={gradingPeriodsScope}
                 educationLabel={educationTypeLabel(gradingPeriodsScope)}
               />
+            )}
+              </>
             )}
           </>
         )}
