@@ -96,9 +96,12 @@ export default function DemoBulletinClient({
   const [localCycle, setCycle] = useState<SchoolCycle>(enabledCycles.includes("primary") ? "primary" : enabledCycles[0] || "secondary");
   const cycle = embedded && previewCycle ? previewCycle : localCycle;
   // Both programs must exist in the selected cycle before a bilingual template applies.
+  const onlyArabic = tracksByCycle[cycle]?.includes("arabic") === true &&
+    tracksByCycle[cycle]?.includes("french") !== true;
   const cycleHasArabic = hasArabic && tracksByCycle[cycle]?.includes("arabic") === true &&
     tracksByCycle[cycle]?.includes("french") === true;
-  const allowedVariants: BulletinVariant[] = !cycleHasArabic ? ["ordinary"]
+  const allowedVariants: BulletinVariant[] = onlyArabic ? ["arabic"]
+    : !cycleHasArabic ? ["ordinary"]
     : embedded && previewFormat === "combined" ? ["combined"]
     : embedded && previewFormat === "separate" ? ["french", "arabic"]
     : ["combined", "french", "arabic"];
@@ -134,7 +137,7 @@ export default function DemoBulletinClient({
     } : undefined,
   };
   const visibleOptions = options.filter(option => allowedVariants.includes(option.id));
-  if (!cycleHasArabic) visibleOptions.push({ id: "ordinary", label: "Bulletin de notes" });
+  if (!cycleHasArabic && !onlyArabic) visibleOptions.push({ id: "ordinary", label: "Bulletin de notes" });
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-5 rounded-2xl border bg-white p-5 shadow-sm print:hidden">
@@ -147,7 +150,8 @@ export default function DemoBulletinClient({
         <p className="mt-1 text-sm leading-6 text-slate-600">
           {cycleHasArabic
             ? "Bulletins français, arabe et regroupé ; les résultats ne sont jamais fusionnés."
-            : "Bulletin ordinaire, sans étiquette « Programme français ». Aucun enseignement arabe n'est ajouté."
+            : onlyArabic ? "Bulletin de l'enseignement arabe uniquement."
+              : "Bulletin ordinaire, sans étiquette « Programme français ». Aucun enseignement arabe n'est ajouté."
           } Toutes les données de démonstration présentées ci-dessous sont fictives.
           Le primaire présente des barèmes sans coefficients et le préscolaire un livret de compétences.
         </p>
@@ -179,7 +183,7 @@ export default function DemoBulletinClient({
       </div>
       <div className="w-full overflow-x-auto pb-8 print:overflow-visible print:p-0">
         {cycle === "preschool"
-          ? <PreschoolBookletDemo variant={selectedVariant} schoolName={schoolName} schoolCode={schoolCode} hasArabic={cycleHasArabic} />
+          ? <PreschoolBookletDemo variant={selectedVariant} schoolName={schoolName} schoolCode={schoolCode} hasArabic={cycleHasArabic || onlyArabic} />
           : <FrancoArabicBulletin model={preview} variant={selectedVariant} printRoot />}
       </div>
     </div>
