@@ -91,6 +91,9 @@ export default function DemoBulletinClient({
 }) {
   const [variant, setVariant] = useState<BulletinVariant>(hasArabic ? "combined" : "ordinary");
   const [cycle, setCycle] = useState<SchoolCycle>(enabledCycles.includes("primary") ? "primary" : enabledCycles[0] || "secondary");
+  // Authorized teaching programs are cycle-specific, not globally interchangeable.
+  const cycleHasArabic = hasArabic && tracksByCycle[cycle]?.includes("arabic") === true;
+  const selectedVariant: BulletinVariant = cycleHasArabic ? variant : "ordinary";
   const label = cycle === "secondary" ? "Secondaire" : "Primaire";
   const preview: BulletinDocument = {
     ...demo,
