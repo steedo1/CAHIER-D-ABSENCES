@@ -1,7 +1,7 @@
 import type { SchoolCycle, TeachingTrack } from "./school-cycles";
 
 export const SCHOOL_CLASS_SUBJECTS_KEY = "school_class_subjects_v1" as const;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type ClassSubjects = Record<string, string[]>;
 export type SchoolClassSubjectsSettings = {

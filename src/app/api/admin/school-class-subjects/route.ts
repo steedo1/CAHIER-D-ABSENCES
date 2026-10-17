@@ -10,7 +10,7 @@ import { asSettingsObject, schoolSettingsRevision, writeSchoolSettings } from "@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const json = (body: unknown, status = 200) =>
   NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 type ClassItem = { id: string; label: string; level: string | null; cycle: SchoolCycle | null; track: TeachingTrack | null };
