@@ -11,6 +11,7 @@ import {
   Settings,
   Crown,
   BookOpen,
+  School,
 } from "lucide-react";
 
 type NavItem = {
@@ -22,6 +23,7 @@ type NavItem = {
 const items: NavItem[] = [
   { href: "/super/dashboard",        label: "Tableau de bord", Icon: LayoutDashboard },
   { href: "/super/etablissements",   label: "Etablissements",  Icon: Building2 },
+  { href: "/super/cycles", label: "Cycles & enseignements", Icon: School },
   { href: "/super/abonnements",      label: "Abonnements",     Icon: BadgeDollarSign },
   { href: "/super/parent-connect", label: "Parent Connect", Icon: Users },
   { href: "/super/admins",           label: "Admins",          Icon: Users },

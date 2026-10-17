@@ -1,0 +1,225 @@
+/* Premium, real A4 layout: identical typography and proportions in print. */
+.page {
+  --emerald: #06564c;
+  --emerald-deep: #083d37;
+  --navy: #142840;
+  --gold: #ba9450;
+  --line: #dce6e4;
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 297mm;
+  background: #fffefc;
+  color: var(--navy);
+  font-family: "Georgia", "Times New Roman", serif;
+  box-shadow: 0 12px 32px rgba(20,40,64,.16);
+  overflow: hidden;
+  margin: 0 auto;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+.page * { box-sizing: border-box; }
+.upperPattern {
+  height: 6mm;
+  background-color: var(--emerald-deep);
+  background-image:
+    repeating-linear-gradient(55deg, transparent 0, transparent 16px, rgba(219,179,96,.35) 17px, transparent 18px),
+    repeating-linear-gradient(-55deg, transparent 0, transparent 16px, rgba(219,179,96,.27) 17px, transparent 18px);
+  border-bottom: 1.2mm solid var(--gold);
+}
+.header { padding: 6mm 11mm 0; }
+.republic {
+  text-align: center;
+  letter-spacing: .16em;
+  font-size: 9pt;
+  line-height: 1.5;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.republic span { display: block; font-size: 7pt; font-weight: 400; color: #667580; letter-spacing: .1em; }
+.brandLine {
+  display: grid;
+  grid-template-columns: 22mm 1fr 28mm;
+  align-items: center;
+  gap: 4mm;
+  min-height: 32mm;
+  border-bottom: 1px solid #d8c39f;
+}
+.brandMark {
+  width: 20mm; height: 20mm; border: 1.2mm solid var(--emerald);
+  border-radius: 9mm 9mm 2mm 2mm;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  color: var(--emerald); background: #eef8f2; position: relative;
+  box-shadow: inset 0 0 0 .75mm #fff;
+}
+.brandMarkCrescent { font-size: 25pt; height: 9mm; line-height: 9mm; }
+.brandMarkBook { color: var(--gold); font-size: 22pt; line-height: 9mm; }
+.schoolLogo { width: 20mm; height: 20mm; object-fit: contain; }
+.schoolIdentity { text-align: center; min-width: 0; }
+.schoolName { font-size: 19pt; line-height: 1.12; font-weight: 700; color: var(--emerald-deep); }
+.schoolSubtitle { font-size: 8pt; margin-top: 1.4mm; color: #415e61; }
+.schoolMotto { margin-top: 2mm; font-size: 7pt; text-transform: uppercase; color: var(--gold); letter-spacing: .12em; }
+.schoolCode { padding-left: 3mm; border-left: 1px solid var(--gold); display: flex; flex-direction: column; align-items: center; gap: 1mm; }
+.schoolCode span { font-size: 7pt; color: #46625f; text-align: center; }
+.schoolCode strong { font-size: 11pt; text-align: center; color: var(--emerald); overflow-wrap: anywhere; }
+.documentHeading {
+  margin: 3.4mm -5mm 0; padding: 3mm 4mm 2.6mm;
+  background: linear-gradient(100deg, #034d43, #0b685c, #034d43);
+  color: white; text-align: center; border-bottom: 1.25mm solid var(--gold);
+  border-radius: 2mm;
+}
+.documentTitle { text-transform: uppercase; font-size: 14.5pt; font-weight: 700; letter-spacing: .055em; }
+.documentPeriod { margin-top: 1mm; font-size: 8.5pt; letter-spacing: .08em; }
+.body { padding: 4.2mm 10mm 7mm; }
+.sampleTag {
+  font: 700 7pt/1.5 Arial, Helvetica, sans-serif;
+  letter-spacing: .08em; color: #7b6b51; text-align: right;
+  margin-bottom: 2mm;
+}
+.identity {
+  display: grid; grid-template-columns: 1.12fr 1fr 22mm; gap: 3mm;
+  padding: 3.2mm 4mm; border: 1px solid #d6e1e0;
+  background: linear-gradient(120deg, #f9fcfb, #fff);
+  border-radius: 2.2mm; min-height: 32mm;
+}
+.identityCol { min-width: 0; }
+.sectionEyebrow {
+  font: 700 7.4pt Arial, Helvetica, sans-serif;
+  color: var(--emerald); text-transform: uppercase; letter-spacing: .13em;
+  border-bottom: 1px solid #cee1d7; padding-bottom: 1mm; margin-bottom: 1.6mm;
+}
+.studentName { font-size: 12pt; font-weight: 700; margin-bottom: 2mm; overflow-wrap: anywhere; }
+.meta {
+  display: flex; gap: 2mm; justify-content: space-between;
+  font: 8pt Arial, Helvetica, sans-serif;
+  padding: .85mm 0; border-bottom: 1px solid #e9efed;
+}
+.meta span { color: #65757b; white-space: nowrap; }
+.meta strong { color: var(--navy); font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.studentPhoto {
+  border: 1px dashed #c4d1d1; border-radius: 1mm; background: #f0f5f5;
+  display: flex; align-items: center; justify-content: center;
+  color: #84949d; font: 8pt Arial, Helvetica, sans-serif; overflow: hidden;
+}
+.studentPhoto img { width: 100%; height: 100%; object-fit: cover; }
+.panels { display: grid; grid-template-columns: minmax(0,1fr); gap: 3mm; margin-top: 4mm; }
+.program { border: 1px solid #d2e4e0; border-radius: 2mm; overflow: hidden; background: white; min-width: 0; }
+.panelHeading {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--emerald); padding: 3mm 4mm; color: white;
+}
+.arabicHeading { background: #17365b; }
+.panelKicker { display: block; font: 7pt Arial, Helvetica, sans-serif; text-transform: uppercase; opacity: .8; letter-spacing: .16em; }
+.panelHeading h2 { font: 700 14pt Georgia, "Times New Roman", serif; margin: 1mm 0 0; }
+.panelSymbol { font-size: 17pt; color: #ecce85; }
+.marks { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9.1pt; }
+.marks th, .marks td { padding: 2.5mm 2mm; vertical-align: middle; border-bottom: 1px solid #e2e9ea; }
+.marks thead { background: #eaf4f0; color: #164e47; }
+.marks th { font: 700 8pt Arial, Helvetica, sans-serif; text-align: center; white-space: nowrap; }
+.marks td { text-align: center; }
+.marks tr:nth-child(even) td { background: #fbfcfc; }
+.marks th.subjectColumn { width: 36%; text-align: left; padding-left: 4mm; }
+.marks td.subjectCell { text-align: left; font-weight: 600; padding-left: 4mm; overflow-wrap: anywhere; }
+.marks td.subjectCell small {
+  display: block; font-size: 8.5pt; color: #546783; text-align: left; margin-top: 1mm;
+  font-family: Tahoma, Arial, sans-serif; overflow-wrap: anywhere;
+}
+.marks th:nth-child(2) { width: 10%; }
+.marks th:nth-child(3) { width: 16%; }
+.marks th:nth-child(4) { width: 12%; }
+.marks th:nth-child(5) { width: 26%; }
+.marks .markCell { background: #e5f6ed !important; font-weight: 700; color: #024638; }
+.marks .observation { font-size: 8.5pt; color: #526577; overflow-wrap: anywhere; }
+.summary {
+  display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 2mm;
+  margin: 3mm 3mm 0;
+}
+.summaryMetric {
+  border: 1px solid #d3e0e0; background: #f2f8f8; border-radius: 1.8mm;
+  padding: 3mm 2mm; min-width: 0; text-align: center;
+}
+.summaryMetric span { font: 700 7.3pt Arial, Helvetica, sans-serif; text-transform: uppercase; color: #46616b; }
+.summaryMetric strong {
+  display: block; margin-top: 1.4mm; font-size: 16pt; white-space: nowrap; color: var(--navy);
+}
+.summaryMetric strong small { font-size: 9pt; font-weight: 400; }
+.summaryMetric strong.miniMetric { font-size: 11pt; }
+.appreciation {
+  margin: 3mm 3mm 3mm; padding: 2.6mm 4mm; border-left: 1mm solid var(--gold);
+  background: #fbf7ee; border-radius: 1mm; min-height: 19mm;
+}
+.appreciation span { font: 700 7.5pt Arial, Helvetica, sans-serif; text-transform: uppercase; letter-spacing: .06em; color: #7c633f; }
+.appreciation p { margin: 1mm 0 0; font-size: 8.7pt; line-height: 1.55; }
+.footer { margin-top: 5mm; }
+.signatures { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4mm; min-height: 24mm; }
+.signBox, .stampBox { padding: 1mm 3mm; text-align: center; font: 8pt Arial, Helvetica, sans-serif; min-width: 0; }
+.signBox span, .stampBox span { display: block; font-weight: 700; color: #445f65; }
+.signBox strong, .stampBox strong { display: block; color: #3a4e5d; font-size: 7pt; font-weight: 500; }
+.signLine { margin: 7mm auto 1mm; border-top: 1px solid #9da9ae; width: 75%; }
+.stampSpace { height: 8mm; }
+.footerLine {
+  margin-top: 3mm; border-top: 1.1mm solid var(--gold);
+  padding: 2.2mm 0 0; display: flex; justify-content: space-between; gap: 2mm;
+  text-transform: uppercase; letter-spacing: .065em; font: 6.5pt Arial, Helvetica, sans-serif;
+  color: #728181;
+}
+.footerLine strong { color: #85693d; }
+/* A grouped bulletin never has an extra blended grade or a warning banner. */
+.combinedPage .schoolName { font-size: 17pt; }
+.combinedPage .header { padding-top: 4mm; }
+.combinedPage .brandLine { min-height: 28mm; }
+.combinedPage .documentHeading { margin-top: 2mm; padding: 2mm 3mm; }
+.combinedPage .identity { min-height: 25mm; padding: 2.2mm 3mm; }
+.combinedPage .body { padding-top: 2.6mm; }
+.twoPanels { grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 2.5mm; margin-top: 3mm; align-items: stretch; }
+.twoPanels .panelHeading { padding: 2.1mm 2.6mm; min-height: 15mm; }
+.twoPanels .panelHeading h2 { font-size: 11.5pt; }
+.twoPanels .panelKicker { font-size: 6pt; }
+.compactMarks { font-size: 7.7pt; }
+.compactMarks th, .compactMarks td { padding: 2.15mm 1mm; }
+.compactMarks th.subjectColumn { width: 55%; padding-left: 2mm; }
+.compactMarks td.subjectCell { padding-left: 2mm; }
+.compactMarks th:nth-child(2) { width: 18%; }
+.compactMarks th:nth-child(3) { width: 27%; }
+.compactMarks td.subjectCell small { font-size: 7.4pt; }
+.twoPanels .summary { grid-template-columns: 1.5fr 1fr; margin: 2.5mm 2mm 0; gap: 1.3mm; }
+.twoPanels .summaryMetric { padding: 2.5mm 1.3mm; }
+.twoPanels .summaryMetric span { font-size: 6.5pt; }
+.twoPanels .summaryMetric strong { font-size: 14pt; }
+.twoPanels .appreciation { min-height: 25mm; margin: 2.5mm 2mm 2.5mm; }
+.twoPanels .appreciation p { font-size: 7.8pt; }
+.combinedPage .signatures { grid-template-columns: repeat(3, minmax(0,1fr)); min-height: 22mm; }
+.combinedPage .footer { margin-top: 3mm; }
+@media screen and (max-width: 850px) {
+  .page { transform-origin: top left; }
+}
+/* Print-only global visibility lives in the internal preview route stylesheet.
+   Keeping this file local avoids leaking print rules into the legacy bulletins. */
+@media print {
+  .page {
+    margin: 0;
+    box-shadow: none;
+    width: 210mm;
+    min-height: 297mm;
+    overflow: visible;
+  }
+  .marks tr { break-inside: avoid; page-break-inside: avoid; }
+  .marks thead { display: table-header-group; }
+  .program { overflow: visible; }
+  .summary, .appreciation, .signatures { break-inside: avoid; }
+}
+
+/* A standard primary school keeps the elegant A4 identity, not an
+ * Islamic/franco-Arabic emblem or geometric religious pattern. */
+.ordinaryPage .upperPattern {
+  background: #07584e;
+  background-image: none;
+}
+.ordinaryPage .brandMark {
+  border-radius: 2mm;
+}
+.ordinaryPage .brandMarkBook {
+  font-size: 24pt;
+  line-height: 15mm;
+}

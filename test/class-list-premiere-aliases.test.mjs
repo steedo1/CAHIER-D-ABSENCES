@@ -26,7 +26,8 @@ test("la liste des classes masque les alias de Première sans toucher aux autres
   assert.match(classesRoute, /isGeneralSecondaryClassRow/);
   assert.match(classesRoute, /dedupeGeneralSecondaryAliasesByAcademicYear/);
   assert.match(classesRoute, /dedupeEquivalentGeneralSecondaryClasses/);
-  assert.match(classesRoute, /classIdParam\s*\?\s*sourceRows/);
+  assert.match(classesRoute, /classIdParam\s*\?\s*authorizedRows/);
+  assert.match(classesRoute, /loadEducatorAssignments/);
 });
 
 test("la liste des élèves rattache les inscriptions alias à la classe canonique", () => {

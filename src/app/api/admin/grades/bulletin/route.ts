@@ -11,6 +11,7 @@ import QRCode from "qrcode";
 import { findExistingBulletinShortCodes, getOrCreateBulletinShortCode } from "@/lib/bulletin-qr-store";
 import { signBulletinQR } from "@/lib/bulletin-qr";
 import { createBulletinQrDataUrl } from "@/lib/bulletin-qr-image";
+import { loadSpecializedBulletin } from "@/lib/server/specialized-bulletin";
 import { prepareBulletinPreviewShortCodes } from "@/lib/bulletin-qr-preview";
 import { bulletinOfficialNumber } from "@/lib/official-documents";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
@@ -1738,6 +1739,13 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
         (instRow as any)?.settings_json?.bulletin_signatures_enabled ?? false
       );
   }
+
+  const specialized = await loadSpecializedBulletin({
+    service: srvClient, institutionId, schoolClass: classRow,
+    settingsJson: institutionSettingsJson, institutionName: institutionMeta.name || null,
+    institutionCode: institutionMeta.code_unique || null, searchParams, role: ctx.role,
+  });
+  if (specialized) return specialized;
 
   const educationContext = resolveBulletinEducationContext({
     educationType: classRow.education_type,

@@ -18,6 +18,10 @@ import {
   type EducationType,
 } from "@/lib/education-organization";
 import { proposeEndOfYearDecision } from "@/lib/end-of-year-decisions.mjs";
+import dynamic from "next/dynamic";
+import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+const SpecializedBulletinPanel = dynamic(() => import("@/components/bulletins/SpecializedBulletinPanel"));
 
 /* ───────── Types ───────── */
 
@@ -242,6 +246,7 @@ type BulletinItemWithRank = BulletinItemBase & {
 
 type BulletinResponse = {
   ok: boolean;
+  specialized?: SpecializedBulletinPayload;
   education?: {
     type: EducationType;
     label: string;
@@ -2428,6 +2433,11 @@ function StudentBulletinCard({
 /* ───────── Page principale ───────── */
 
 export default function BulletinsPage() {
+  const schoolNavigation = useSchoolNavigation();
+  const schoolCycle = schoolNavigation?.selection.cycle;
+  const schoolTrack = schoolNavigation?.selection.track;
+  const schoolLevel = schoolNavigation?.selection.level;
+  const schoolClassId = schoolNavigation?.selection.classId;
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
 
@@ -2483,7 +2493,12 @@ export default function BulletinsPage() {
     const run = async () => {
       try {
         setClassesLoading(true);
-        const res = await fetch("/api/admin/classes");
+        const query = new URLSearchParams();
+        if (schoolCycle) query.set("school_cycle", schoolCycle);
+        if (schoolTrack) query.set("teaching_track", schoolTrack);
+        if (schoolLevel) query.set("school_level", schoolLevel);
+        if (schoolClassId) query.set("school_class_id", schoolClassId);
+        const res = await fetch(`/api/admin/classes?${query}`);
         if (!res.ok) throw new Error(`Erreur classes: ${res.status}`);
         const json = await res.json();
         const items: ClassRow[] = Array.isArray(json)
@@ -2492,7 +2507,10 @@ export default function BulletinsPage() {
           ? json.items
           : [];
         setClasses(items);
-        if (items.length > 0 && !selectedClassId) setSelectedClassId(items[0].id);
+        if (!items.some(row => row.id === selectedClassId)) {
+          setSelectedClassId(items[0]?.id || "");
+          setBulletinRaw(null);
+        }
       } catch (e: any) {
         console.error(e);
         setErrorMsg(e.message || "Erreur lors du chargement des classes.");
@@ -2502,7 +2520,7 @@ export default function BulletinsPage() {
     };
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [schoolCycle, schoolTrack, schoolLevel, schoolClassId]);
 
   useEffect(() => {
     const cls = classes.find((c) => c.id === selectedClassId);
@@ -2653,6 +2671,11 @@ export default function BulletinsPage() {
 
       let json = (await resBulletin.json()) as BulletinResponse;
       if (!json.ok) throw new Error("Réponse bulletin invalide (ok = false).");
+      if (json.specialized) {
+        setBulletinRaw(json);
+        setPreviewOpen(false);
+        return;
+      }
 
       try {
         json = await prepareBulletinQrPreview(json, navigator.onLine);
@@ -2895,11 +2918,16 @@ export default function BulletinsPage() {
   }, [classes]);
 
   const handlePrint = async () => {
-    if (!items.length) return;
+    if (!items.length && !bulletinRaw?.specialized) return;
     if (typeof window === "undefined") return;
+    if (bulletinRaw?.specialized && !navigator.onLine) {
+      setErrorMsg("Reconnectez-vous pour vérifier les notes publiées avant l’impression.");
+      return;
+    }
 
     if (navigator.onLine) {
       try {
+        setErrorMsg(null);
         setPrintPreparing(true);
         const params = new URLSearchParams({
           class_id: selectedClassId,
@@ -2936,6 +2964,11 @@ export default function BulletinsPage() {
       });
     });
   };
+
+  if (bulletinRaw?.specialized) {
+    return <SpecializedBulletinPanel data={bulletinRaw.specialized} onBack={() => setBulletinRaw(null)}
+      onPrint={handlePrint} printPreparing={printPreparing} error={errorMsg} />;
+  }
 
   return (
     <>

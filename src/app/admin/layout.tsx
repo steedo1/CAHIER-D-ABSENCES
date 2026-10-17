@@ -7,6 +7,8 @@ import RelaySupervisionBadge from "@/components/admin/RelaySupervisionBadge";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { ROLE_PRIORITY, type AppRole } from "@/lib/auth/role";
+import { getSchoolNavigationSettings } from "@/lib/server/school-navigation";
+import { SchoolNavigationProvider } from "@/components/admin/SchoolNavigationProvider";
 
 export const metadata: Metadata = { title: "Espace Etablissement — Admin" };
 export const dynamic = "force-dynamic";
@@ -36,6 +38,8 @@ async function getPrimaryRole(): Promise<AppRole | null> {
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const primaryRole = await getPrimaryRole();
+  const navigationSettings = primaryRole === "admin" ? await getSchoolNavigationSettings() : null;
+  const shell = <AdminShell initialRole={primaryRole}>{children}</AdminShell>;
 
   return (
     <>
@@ -44,7 +48,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       {primaryRole === "file_correspondent" ? (
         <FileCorrespondentShell>{children}</FileCorrespondentShell>
       ) : (
-        <AdminShell initialRole={primaryRole}>{children}</AdminShell>
+        navigationSettings ? <SchoolNavigationProvider key={navigationSettings.identityKey} settings={navigationSettings.settings}>{shell}</SchoolNavigationProvider> : shell
       )}
     </>
   );

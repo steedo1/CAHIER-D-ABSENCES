@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import {
   EDUCATION_TYPE_OPTIONS,
   getConfiguredFormations,
@@ -212,6 +213,12 @@ function academicYearOptionLabel(row: AcademicYearRow) {
 }
 
 export default function ClassesPage() {
+  const schoolNavigation = useSchoolNavigation();
+  const schoolCycle = schoolNavigation?.selection.cycle;
+  const teachingTrack = schoolNavigation?.selection.track;
+  const schoolLevel = schoolNavigation?.selection.level;
+  const schoolClassId = schoolNavigation?.selection.classId;
+  const earlySchoolCycle = schoolCycle === "primary" || schoolCycle === "preschool" ? schoolCycle : null;
   const [academicYears, setAcademicYears] = useState<AcademicYearRow[]>([]);
   const [academicYear, setAcademicYear] = useState("");
   const [loadingAcademicYears, setLoadingAcademicYears] = useState(true);
@@ -256,6 +263,14 @@ export default function ClassesPage() {
   const [selectedFormationId, setSelectedFormationId] = useState("");
 
   useEffect(() => {
+    if (earlySchoolCycle) {
+      setLevel(earlySchoolCycle === "primary" ? "CP1" : "PS");
+      setClassEducationType("general_secondary");
+      setOfficialTrackCode("");
+    }
+  }, [earlySchoolCycle]);
+
+  useEffect(() => {
     loadAcademicYears();
     void loadEducationOrganization();
   }, []);
@@ -270,7 +285,7 @@ export default function ClassesPage() {
 
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [academicYear]);
+  }, [academicYear, schoolCycle, teachingTrack, schoolLevel, schoolClassId]);
 
   useEffect(() => {
     if (format === "none") setCount(1);
@@ -312,12 +327,17 @@ export default function ClassesPage() {
   const isGeneralMode = classEducationType === "general_secondary";
 
   useEffect(() => {
+    if (earlySchoolCycle) return;
     if (!enabledEducationTypes.includes(classEducationType)) {
       setClassEducationType(enabledEducationTypes[0] || "general_secondary");
     }
-  }, [classEducationType, enabledEducationTypes]);
+  }, [classEducationType, enabledEducationTypes, earlySchoolCycle]);
 
   useEffect(() => {
+    if (earlySchoolCycle) {
+      setSelectedFormationId("");
+      return;
+    }
     if (classEducationType === "general_secondary") {
       setSelectedFormationId("");
       if (!inferOfficialTrackCode(level)) setLevel("6e");
@@ -340,7 +360,7 @@ export default function ClassesPage() {
 
     const firstLevel = nextFormation.levels[0]?.value || nextFormation.shortCode || nextFormation.name;
     setLevel(firstLevel);
-  }, [classEducationType, formationsForCurrentType, selectedFormationId]);
+  }, [classEducationType, formationsForCurrentType, selectedFormationId, earlySchoolCycle]);
 
   useEffect(() => {
     if (!selectedFormation || isGeneralMode) return;
@@ -472,6 +492,10 @@ export default function ClassesPage() {
 
     try {
       const qs = new URLSearchParams({ limit: "300", academic_year: academicYear });
+      if (schoolCycle) qs.set("school_cycle", schoolCycle);
+      if (teachingTrack) qs.set("teaching_track", teachingTrack);
+      if (schoolLevel) qs.set("school_level", schoolLevel);
+      if (schoolClassId) qs.set("school_class_id", schoolClassId);
       const r = await fetch(`/api/admin/classes?${qs.toString()}`, { cache: "no-store" });
 
       if (r.status === 401) {
@@ -530,6 +554,7 @@ export default function ClassesPage() {
         format,
         count,
         academic_year: academicYear,
+        ...(schoolCycle && schoolCycle !== "all" ? { school_cycle: schoolCycle } : {}),
         official_track_code: isGeneralMode && !isSeriesA(level) ? officialTrackCode || null : null,
         education_type: classEducationType,
         formation_code: isGeneralMode ? null : selectedFormation?.id || null,
@@ -864,7 +889,7 @@ export default function ClassesPage() {
           </div>
         ) : null}
 
-        {enabledEducationTypes.length > 1 ? (
+        {enabledEducationTypes.length > 1 && !earlySchoolCycle ? (
           <div className="mb-4">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               Enseignement concerné
@@ -968,8 +993,12 @@ export default function ClassesPage() {
             <Input
               value={level}
               onChange={(e) => setLevel(e.target.value)}
-              placeholder={isGeneralMode ? "6e / 1A / 1D / TA / TC" : "Ex. 1BT COMPTA"}
+              list={earlySchoolCycle ? "early-school-levels" : undefined}
+              placeholder={earlySchoolCycle === "primary" ? "CP1 / CP2 / CE1 / CE2 / CM1 / CM2" : earlySchoolCycle === "preschool" ? "PS / MS / GS" : isGeneralMode ? "6e / 1A / 1D / TA / TC" : "Ex. 1BT COMPTA"}
             />
+            {earlySchoolCycle && <datalist id="early-school-levels">
+              {(earlySchoolCycle === "primary" ? ["CP1", "CP2", "CE1", "CE2", "CM1", "CM2"] : ["PS", "MS", "GS"]).map(value => <option key={value} value={value} />)}
+            </datalist>}
           </div>
 
           <div className={!isGeneralMode ? "xl:col-span-1" : ""}>
@@ -1012,6 +1041,8 @@ export default function ClassesPage() {
             <>Définissez d’abord l’année scolaire dans les paramètres avant de créer les classes.</>
           ) : !isGeneralMode && !selectedFormation ? (
             <>Ajoutez d’abord une formation dans <b>Organisation pédagogique</b>.</>
+          ) : earlySchoolCycle ? (
+            <>Année active : <b>{selectedAcademicYear?.label || academicYear}</b>. Cycle {earlySchoolCycle === "primary" ? "primaire" : "préscolaire"} ; aucune série du secondaire ne sera attribuée.</>
           ) : isGeneralMode && isSeriesA(level) ? (
             <>
               Série A : cochez uniquement les divisions entièrement A1. Pour une classe commune A1/A2, laissez

@@ -1,6 +1,6 @@
 // src/app/api/super/create-admin/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireSuperAdminAccess } from "@/lib/super-admin-access";
 
 function genTempPass(len = 12) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
@@ -8,7 +8,38 @@ function genTempPass(len = 12) {
 }
 
 export async function POST(req: NextRequest) {
-  const { institution_id, email, phone } = await req.json();
+  const access = await requireSuperAdminAccess();
+  if ("error" in access) return access.error;
+
+  const origin = req.headers.get("origin");
+  if (origin && origin !== req.nextUrl.origin) {
+    return NextResponse.json({ error: "invalid_origin" }, { status: 403 });
+  }
+  if (!req.headers.get("content-type")?.includes("application/json")) {
+    return NextResponse.json({ error: "expected_json" }, { status: 415 });
+  }
+
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+  }
+  if ((body.role !== undefined && body.role !== "admin") || body.teaching_track !== undefined ||
+    body.director_scope !== undefined || body.teachingTrack !== undefined) {
+    return NextResponse.json({ error: "restricted_director_accounts_not_available" }, { status: 409 });
+  }
+  const institution_id = typeof body.institution_id === "string" ? body.institution_id.trim() : "";
+  const email = typeof body.email === "string" ? body.email.trim() : "";
+  const phone = typeof body.phone === "string" ? body.phone.trim() : null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(institution_id) ||
+      email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ||
+      (phone !== null && phone.length > 32)) {
+    return NextResponse.json({ error: "invalid_admin_fields" }, { status: 400 });
+  }
+
+  const check = await access.srv.from("institutions")
+    .select("id").eq("id", institution_id).maybeSingle();
+  if (check.error) return NextResponse.json({ error: "institution_load_failed" }, { status: 503 });
+  if (!check.data) return NextResponse.json({ error: "institution_not_found" }, { status: 404 });
 
   if (!institution_id || !email) {
     return NextResponse.json(
@@ -17,7 +48,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const supabase = getSupabaseServiceClient();
+  const supabase = access.srv;
 
   // Mot de passe temporaire = DEFAULT_TEMP_PASSWORD (sinon fallback g�n�r�)
   const password = process.env.DEFAULT_TEMP_PASSWORD || genTempPass(12);

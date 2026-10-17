@@ -1,0 +1,57 @@
+/*
+ * These print rules ONLY apply when the school demo has a printable A4
+ * bulletin mounted. Existing Mon Cahier PDF routes remain unaffected.
+ */
+@page school-bulletin {
+  size: A4 portrait;
+  margin: 0;
+}
+.specialized-print-denied { display: none; }
+@media print {
+  body:has(.fa-report-print-root),
+  html:has(.fa-report-print-root) {
+    page: school-bulletin;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #fff !important;
+  }
+  body:has(.fa-report-print-root) * {
+    visibility: hidden !important;
+  }
+  body:has(.fa-report-print-root) .fa-report-print-root,
+  body:has(.fa-report-print-root) .fa-report-print-root * {
+    visibility: visible !important;
+  }
+  .fa-report-print-root {
+    page: school-bulletin;
+    position: absolute !important;
+    display: block !important;
+    left: 0 !important;
+    top: 0 !important;
+    margin: 0 !important;
+    width: 210mm !important;
+    box-shadow: none !important;
+  }
+  .specialized-print-root > article {
+    break-after: page;
+    page-break-after: always;
+    margin: 0 !important;
+  }
+  .specialized-print-root > article:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+  /* Covers the browser menu and Ctrl+P, even when the app button is disabled. */
+  body:has(.specialized-print-blocked) .specialized-print-blocked {
+    display: none !important;
+  }
+  body:has(.specialized-print-blocked) .specialized-print-denied {
+    visibility: visible !important;
+    display: block !important;
+    position: absolute;
+    top: 20mm;
+    left: 20mm;
+    width: 170mm;
+    font: 16px/1.6 sans-serif;
+  }
+}
