@@ -59,3 +59,17 @@ export function canAccessDirectorProgramResource(
   if (principal.scope.kind === "teaching_track" && principal.scope.track !== resource.track) return false;
   return canAccessScopedTeachingResource(settings, principal.scope, resource);
 }
+
+/**
+ * An ordinary 'admin' grant provides access to school-wide legacy modules.
+ * Until ALL APIs implement track-scoped authorizations, a bilingual school
+ * must not silently provision such a grant as a French/Arabic director.
+ * Existing accounts are untouched. No new database table is required.
+ */
+export function mustDeferBilingualAdminProvisioning(
+  settings: SchoolCyclesSettings,
+  requestedRole: string,
+): boolean {
+  return requestedRole === "admin" && settings.enabled &&
+    settings.enabledCycles.some(cycle => settings.teachingTracksByCycle[cycle]?.includes("arabic"));
+}

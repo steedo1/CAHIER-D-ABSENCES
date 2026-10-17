@@ -5,6 +5,8 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone } from "@/lib/phone";
 import { canonicalEducatorLevel } from "@/lib/educator-level";
 import { isEducationType, type EducationType } from "@/lib/education-organization";
+import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
+import { mustDeferBilingualAdminProvisioning } from "@/lib/school-director-scope";
 
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
 
@@ -496,6 +498,25 @@ export async function POST(req: NextRequest) {
 
   if (!allowedRoles.includes(role)) {
     return NextResponse.json({ error: "role_not_allowed" }, { status: 403 });
+  }
+
+  // Les comptes « admin » donnent actuellement accès à TOUT l'établissement.
+  // Ne jamais convertir ce rôle historique en direction française/arabe sans
+  // contrôle serveur sur les API notes, listes, finances et exports.
+  if (role === "admin") {
+    const { data: institution, error: schoolError } = await supaSrv
+      .from("institutions").select("settings_json").eq("id", inst).maybeSingle();
+    if (schoolError || !institution) {
+      return NextResponse.json({ error: "school_configuration_unavailable" }, { status: 503 });
+    }
+    if (mustDeferBilingualAdminProvisioning(
+      parseSchoolCyclesSettings(institution.settings_json), role
+    )) {
+      return NextResponse.json({
+        error: "bilingual_director_permissions_pending",
+        message: "Les comptes de direction français/arabe sont temporairement indisponibles : les droits pédagogiques par enseignement ne sont pas encore sécurisés.",
+      }, { status: 409 });
+    }
   }
 
   // Le rôle founder est volontairement absent ici :
