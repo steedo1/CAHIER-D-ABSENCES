@@ -9,11 +9,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 /** Pedagogical bulletin templates are owned by the current school's admin. */
-export default async function AdminBulletinTemplatesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ preview?: string }>;
-}) {
+export default async function AdminBulletinTemplatesPage() {
   const client = await getSupabaseServerClient();
   const service = getSupabaseServiceClient();
   const access = await requireInstitutionRole(client, service, ["admin"]);
