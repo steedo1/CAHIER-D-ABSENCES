@@ -294,7 +294,8 @@ export async function GET(req: NextRequest) {
       return (cycle ? settings.enabledCycles.includes(cycle) : !requestedCycle || requestedCycle === "all") &&
         (!requestedCycle || requestedCycle === "all" || cycle === requestedCycle) &&
         (!requestedTrack || requestedTrack === "all" || !isBilingualSchool(settings) ||
-          configuredProgramYears[String(row.academic_year || "")]?.classes[row.id]?.tracks.includes(requestedTrack)) &&
+          (isTeachingTrack(requestedTrack) &&
+            configuredProgramYears[String(row.academic_year || "")]?.classes[row.id]?.tracks.includes(requestedTrack))) &&
         (!requestedLevel || sameSchoolLevel(row.level, requestedLevel, cycle || undefined)) && (!requestedClass || row.id === requestedClass);
     }).slice(0, Math.min(1000, limit));
   } else {
