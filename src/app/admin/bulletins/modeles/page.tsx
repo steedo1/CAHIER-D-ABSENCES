@@ -29,7 +29,7 @@ export default async function AdminBulletinTemplatesPage() {
   if (!school.enabled) redirect("/admin/bulletins");
   // Both the historic direct link and the preview link must show the
   // templates. The editor itself remains in Paramètres.
-  void searchParams;
+
 
   const hasArabic = school.enabledCycles.some(cycle =>
     school.teachingTracksByCycle[cycle]?.includes("arabic"));
