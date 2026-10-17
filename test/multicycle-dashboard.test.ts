@@ -76,3 +76,21 @@ test("an unmapped teaching program must not report zero teachers as a confirmed 
     null,
   );
 });
+
+test("exact French/Arabic student counters activate only when the entire cycle roster is classified", () => {
+  const withPrograms: CycleDashboardSummary = {
+    ...summary,
+    studentPrograms: {
+      primary: {
+        french: { students: 31, classes: 3, complete: true, unclassifiedStudents: 0 },
+        arabic: { students: 26, classes: 2, complete: true, unclassifiedStudents: 0 },
+      },
+    },
+  };
+  assert.deepEqual(
+    resolveScopedDashboardCounts({ ...all, cycle: "primary", track: "arabic" }, withPrograms),
+    { classes: 2, students: 26, teachers: 4 },
+  );
+  withPrograms.studentPrograms!.primary!.french!.complete = false;
+  assert.equal(resolveScopedDashboardCounts({ ...all, cycle: "primary", track: "french" }, withPrograms).students, null);
+});
