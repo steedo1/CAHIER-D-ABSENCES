@@ -110,7 +110,7 @@ export default function DemoBulletinClient({
       subjects: demo.french.subjects.map(subject => ({
         ...subject, coefficient: cycle === "secondary" ? subject.coefficient : null,
       })),
-      directorName: hasArabic ? demo.french.directorName : "Direction de l’établissement",
+      directorName: cycleHasArabic ? demo.french.directorName : "Direction de l’établissement",
     } : undefined,
     arabic: demo.arabic ? {
       ...demo.arabic,
