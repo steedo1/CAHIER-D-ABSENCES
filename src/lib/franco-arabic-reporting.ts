@@ -42,6 +42,8 @@ export type FrancoArabicReportsSettings = {
   engine?: "legacy" | "specialized";
   /** Exactly one authority for a specialized context; never merge weights. */
   coefficientSource?: "institution" | "program";
+  /** Display model chosen by the school per cycle; legacy `format` is the fallback. */
+  formatsByCycle?: Partial<Record<SchoolCycle, ReportFormat>>;
 };
 
 export function defaultFrancoArabicReportsSettings(): FrancoArabicReportsSettings {
@@ -84,6 +86,16 @@ export function validateFrancoArabicReportsInput(
   if (data.engine !== undefined && data.engine !== "legacy" && data.engine !== "specialized") return null;
   if (data.coefficientSource !== undefined && data.coefficientSource !== "institution" && data.coefficientSource !== "program") return null;
   if (!data.enabled) return defaultFrancoArabicReportsSettings();
+  const formatted = data.formatsByCycle;
+  const formatsByCycle: Partial<Record<SchoolCycle, ReportFormat>> = {};
+  if (formatted !== undefined) {
+    const values = asObject(formatted);
+    if (!values || Object.keys(values).some(key => !isSchoolCycle(key) ||
+        !isReportFormat(values[key]))) return null;
+    for (const cycle of ["preschool", "primary", "secondary"] as const) {
+      if (values[cycle] !== undefined) formatsByCycle[cycle] = values[cycle] as ReportFormat;
+    }
+  }
   const seen = new Set<string>();
   const scales: LevelScoringScale[] = [];
   for (const raw of data.scales) {
@@ -139,7 +151,16 @@ export function validateFrancoArabicReportsInput(
   return { version: 1, enabled: true, format: data.format, scales, coefficients,
     ...(data.engine !== undefined ? { engine: data.engine } : {}),
     ...(data.coefficientSource !== undefined ? { coefficientSource: data.coefficientSource } : {}),
+    ...(data.formatsByCycle !== undefined ? { formatsByCycle } : {}),
   };
+}
+
+/** A bulletin model applies to its cycle without altering scores or calculation policy. */
+export function selectedBulletinFormat(
+  reports: FrancoArabicReportsSettings,
+  cycle: SchoolCycle,
+): ReportFormat {
+  return reports.formatsByCycle?.[cycle] || reports.format;
 }
 
 /** Editors can restore suspended policies; calculations still use the runtime parser. */
