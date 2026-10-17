@@ -17,8 +17,14 @@ const summary: CycleDashboardSummary = {
     secondary: { count: 2, students: 31, teachers: 8 },
   },
   programs: {
-    primary: { arabic: { uniqueTeachers: 4 }, french: { uniqueTeachers: 7 } },
-    secondary: { arabic: { uniqueTeachers: 2 }, french: { uniqueTeachers: 6 } },
+    primary: {
+      arabic: { uniqueTeachers: 4, subjects: [{ id: "arabic-subject", name: "Coran" }] },
+      french: { uniqueTeachers: 7, subjects: [{ id: "french-subject", name: "Mathématiques" }] },
+    },
+    secondary: {
+      arabic: { uniqueTeachers: 2, subjects: [{ id: "arabic-subject", name: "Coran" }] },
+      french: { uniqueTeachers: 6, subjects: [{ id: "french-subject", name: "Mathématiques" }] },
+    },
   },
 };
 
@@ -57,4 +63,16 @@ test("missing/incomplete authoritative data is unknown, not zero", () => {
   assert.deepEqual(resolveScopedDashboardCounts({ ...all, cycle: "primary" }, {
     ok: true, enabled: true, cycles: { primary: { count: -1, students: NaN, teachers: 2 } },
   }), { classes: null, students: null, teachers: 2 });
+});
+
+test("an unmapped teaching program must not report zero teachers as a confirmed value", () => {
+  const incomplete: CycleDashboardSummary = {
+    ok: true, enabled: true,
+    cycles: { primary: { count: 3, students: 42, teachers: 10 } },
+    programs: { primary: { arabic: { uniqueTeachers: 0, subjects: [] } } },
+  };
+  assert.equal(
+    resolveScopedDashboardCounts({ ...all, cycle: "primary", track: "arabic" }, incomplete).teachers,
+    null,
+  );
 });
