@@ -4708,6 +4708,7 @@ export default function AdminSettingsPage() {
 
         {hasSpecializedSettings && activeTab === "bulletin-models" && (
           <section className="space-y-5">
+            <SchoolProgramPeriodsEditor />
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <h2 className="text-xl font-bold text-slate-900">
                 Modèles de bulletins par cycle et enseignement
