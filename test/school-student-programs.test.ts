@@ -3,11 +3,13 @@ import test from "node:test";
 import {
   SCHOOL_STUDENT_PROGRAMS_KEY,
   aggregateStudentProgramRoster,
+  expandPedagogicalEnrollments,
   aggregateInstitutionProgramTotals,
   isBilingualSchool,
   normalizedProgramTracks,
   programsForStudent,
   readStudentProgramSettings,
+  type StudentProgramYear,
 } from "../src/lib/school-student-programs";
 import { parseSchoolCyclesSettings } from "../src/lib/school-cycles";
 import { mergeGeneralSchoolSettings } from "../src/lib/school-settings-write";
@@ -124,4 +126,34 @@ test("whole-school French and Arabic totals deduplicate pupils across cycles", (
   assert.equal(summary.arabic.students, 2);
   assert.equal(summary.arabic.classes, 1);
   assert.equal(summary.arabic.complete, true);
+});
+
+test("two teaching classes share one administrative enrollment and one pupil identity", () => {
+  const year: StudentProgramYear = {
+    classes: {
+      [A]: { tracks: ["french"], students: {} },
+      [B]: { tracks: ["arabic"], students: {}, linkedStudentIds: [S1] },
+    },
+  };
+  const classes = [
+    { id: A, cycle: "primary" as const, level: "CP1" },
+    { id: B, cycle: "primary" as const, level: "CP1" },
+  ];
+  const home = [{ class_id: A, student_id: S1, end_date: null }];
+  const derived = expandPedagogicalEnrollments(school, year, classes, home);
+  assert.equal(home.length, 1, "historical unique-enrollment constraint preserved");
+  assert.deepEqual(derived.map(row => row.class_id), [A, B]);
+  const counts = aggregateStudentProgramRoster(school, year, classes, home);
+  assert.equal(counts.primary.french.students, 1);
+  assert.equal(counts.primary.arabic.students, 1);
+  assert.equal(counts.primary.arabic.classes, 1);
+  const total = aggregateInstitutionProgramTotals(school, year, classes, home);
+  assert.equal(total.french.students, 1);
+  assert.equal(total.arabic.students, 1);
+  assert.equal(total.arabic.complete, true);
+  assert.equal(expandPedagogicalEnrollments(school, year,
+    [classes[0], { ...classes[1], level: "CE1" }], home).length, 1,
+    "mismatched grades must never receive a virtual enrollment");
+  assert.equal(expandPedagogicalEnrollments(school, year, classes, []).length, 0,
+    "stale links without home enrollment must never survive");
 });

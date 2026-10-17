@@ -135,3 +135,52 @@ test("unrecognized Arabic school level needs explicit cycle assignment, never de
   assert.equal((await response.json()).error, "class_cycle_requires_configuration");
   assert.equal(db.calls.some(row => row.op !== "read"), false);
 });
+
+test("one pupil appears in separate French and Arabic classes without a second administrative enrollment", async () => {
+  const db = setup();
+  const classArabic = "55555555-5555-4555-8555-555555555555";
+  db.tables.classes.push({ id: classArabic, institution_id: db.legacyId,
+    academic_year: "2026-2027", label: "CP1 — Arabe", level: "CP1" });
+  const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+  const first = await (await handler.GET(request(api))).json();
+  const homeSaved = await handler.PUT(request(api, "PUT", {
+    revision: first.revision, classId: c1, defaultTracks: ["french"], overrides: {},
+  }));
+  assert.equal(homeSaved.status, 200);
+  const arabicBefore = await (await handler.GET(request(`${api}?class_id=${classArabic}`))).json();
+  assert.deepEqual(arabicBefore.candidates.map(row => row.id).sort(), [s1, s2].sort());
+  const linked = await handler.PUT(request(api, "PUT", {
+    revision: arabicBefore.revision, classId: classArabic,
+    defaultTracks: ["arabic"], overrides: {}, linkedStudentIds: [s1],
+  }));
+  assert.equal(linked.status, 200, JSON.stringify(await linked.clone().json()));
+  const result = await (await handler.GET(request(`${api}?class_id=${classArabic}`))).json();
+  assert.deepEqual(result.defaultTracks, ["arabic"]);
+  assert.deepEqual(result.linkedStudentIds, [s1]);
+  assert.equal(db.tables.class_enrollments.length, 2);
+  assert.equal(db.tables.students.length, 2);
+  const rejected = await handler.PUT(request(api, "PUT", {
+    revision: result.revision, classId: classArabic, defaultTracks: ["arabic"],
+    overrides: {}, linkedStudentIds: [stranger],
+  }));
+  assert.equal(rejected.status, 403);
+  assert.equal(db.tables.class_enrollments.length, 2);
+});
+
+test("additional class must be at the same academic level", async () => {
+  const db = setup();
+  const other = "55555555-5555-4555-8555-555555555555";
+  db.tables.classes.push({ id: other, institution_id: db.legacyId,
+    academic_year: "2026-2027", label: "CE1 — Arabe", level: "CE1" });
+  const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+  const first = await (await handler.GET(request(api))).json();
+  assert.equal((await handler.PUT(request(api, "PUT", {
+    revision: first.revision, classId: c1, defaultTracks: ["french"], overrides: {},
+  }))).status, 200);
+  const next = await (await handler.GET(request(api))).json();
+  const invalid = await handler.PUT(request(api, "PUT", {
+    revision: next.revision, classId: other, defaultTracks: ["arabic"],
+    overrides: {}, linkedStudentIds: [s1],
+  }));
+  assert.equal(invalid.status, 403);
+});

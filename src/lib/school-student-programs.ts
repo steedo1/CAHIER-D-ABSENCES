@@ -4,6 +4,7 @@ import {
   type SchoolCyclesSettings,
   type TeachingTrack,
 } from "./school-cycles";
+import { sameSchoolLevel } from "./school-levels";
 
 export const SCHOOL_STUDENT_PROGRAMS_KEY = "school_student_programs_v1" as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -17,10 +18,12 @@ export type StudentProgramClassPolicy = {
   tracks: TeachingTrack[];
   /** Only exceptions to the class default; a student can follow both. */
   students: Record<string, TeachingTrack[]>;
+  /** One additional pedagogical class without a second administrative enrollment. */
+  linkedStudentIds?: string[];
 };
 export type StudentProgramYear = { classes: Record<string, StudentProgramClassPolicy> };
 export type StudentProgramSettings = { version: 1; years: Record<string, StudentProgramYear> };
-export type ActiveProgramClass = { id: string; cycle: SchoolCycle };
+export type ActiveProgramClass = { id: string; cycle: SchoolCycle; level?: string | null };
 export type ActiveProgramEnrollment = { class_id: string; student_id: string; end_date?: string | null };
 export type ProgramRoster = Record<SchoolCycle, Record<TeachingTrack, {
   students: number;
@@ -63,7 +66,13 @@ export function readStudentProgramSettings(value: unknown): StudentProgramSettin
         const studentTracks = normalizedProgramTracks(incoming);
         if (UUID.test(studentId) && studentTracks?.length) students[studentId] = studentTracks;
       }
-      classes[classId] = { tracks, students };
+      const links = policy?.linkedStudentIds;
+      const linkedStudentIds = Array.isArray(links) && links.length <= 700 &&
+        links.every(id => typeof id === "string" && UUID.test(id))
+        ? [...new Set(links)] as string[] : [];
+      classes[classId] = linkedStudentIds.length
+        ? { tracks, students, linkedStudentIds }
+        : { tracks, students };
     }
     years[year] = { classes };
   }
@@ -79,6 +88,53 @@ export function programsForStudent(
   if (!policy) return [];
   const tracks = policy.students[studentId] || policy.tracks;
   return tracks.filter(track => allowed.includes(track));
+}
+
+
+/**
+ * A pupil retains ONE class_enrollments record. An explicitly authorized
+ * pedagogical class in the same academic level may display that pupil too.
+ * Stale, ambiguous or cross-cycle links are silently excluded from counts.
+ * Caller supplies classes and actual active enrollments of ONE institution/year.
+ */
+export function expandPedagogicalEnrollments(
+  school: SchoolCyclesSettings,
+  yearPolicy: StudentProgramYear | undefined,
+  classes: readonly ActiveProgramClass[],
+  administrative: readonly ActiveProgramEnrollment[],
+): ActiveProgramEnrollment[] {
+  const byClass = new Map(classes.map(row => [row.id, row]));
+  const homeByStudent = new Map<string, ActiveProgramEnrollment>();
+  const seen = new Set<string>();
+  const result: ActiveProgramEnrollment[] = [];
+  for (const row of administrative) {
+    if (row.end_date || !row.student_id || !byClass.has(row.class_id)) continue;
+    if (!homeByStudent.has(row.student_id)) homeByStudent.set(row.student_id, row);
+    const pair = row.class_id + ":" + row.student_id;
+    if (!seen.has(pair)) { seen.add(pair); result.push(row); }
+  }
+  for (const target of classes) {
+    const policy = yearPolicy?.classes[target.id];
+    if (!policy?.linkedStudentIds?.length || policy.tracks.length !== 1 || !target.level) continue;
+    const teaching = policy.tracks[0];
+    if (!school.teachingTracksByCycle[target.cycle]?.includes(teaching)) continue;
+    for (const id of policy.linkedStudentIds) {
+      const home = homeByStudent.get(id);
+      if (!home || home.class_id === target.id) continue;
+      const source = byClass.get(home.class_id);
+      if (!source?.level || source.cycle !== target.cycle ||
+        !sameSchoolLevel(source.level, target.level, target.cycle)) continue;
+      const sourceTracks = programsForStudent(
+        yearPolicy?.classes[source.id], id, school.teachingTracksByCycle[source.cycle] || []);
+      if (sourceTracks.length !== 1 || sourceTracks[0] === teaching) continue;
+      const pair = target.id + ":" + id;
+      if (!seen.has(pair)) {
+        seen.add(pair);
+        result.push({ class_id: target.id, student_id: id, end_date: null });
+      }
+    }
+  }
+  return result;
 }
 
 /**
@@ -108,7 +164,7 @@ export function aggregateStudentProgramRoster(
       if (allowed.includes(track)) classifiedClass.get(row.cycle)?.get(track)?.add(row.id);
     }
   }
-  for (const row of enrollments) {
+  for (const row of expandPedagogicalEnrollments(school, yearPolicy, classes, enrollments)) {
     if (row.end_date || !row.student_id) continue;
     const cycle = classesById.get(row.class_id);
     if (!cycle || !members.has(cycle)) continue;
@@ -169,7 +225,7 @@ export function aggregateInstitutionProgramTotals(
       if (allowed.includes(track)) classSets[track].add(row.id);
     }
   }
-  for (const item of enrollments) {
+  for (const item of expandPedagogicalEnrollments(school, yearPolicy, classes, enrollments)) {
     if (item.end_date || !item.student_id) continue;
     const cycle = classCycle.get(item.class_id);
     if (!cycle || !school.enabledCycles.includes(cycle)) continue;

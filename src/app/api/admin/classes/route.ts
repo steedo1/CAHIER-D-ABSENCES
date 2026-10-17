@@ -8,6 +8,7 @@ import { isEducationType } from "@/lib/education-organization";
 import { dedupeEquivalentGeneralSecondaryClasses } from "@/lib/general-secondary-class-equivalence";
 import { inferSchoolCycleFromLevel, isSchoolCycle, isTeachingTrack, parseSchoolCyclesSettings, type SchoolCyclesSettings } from "@/lib/school-cycles";
 import { sameSchoolLevel } from "@/lib/school-levels";
+import { isBilingualSchool, readStudentProgramSettings, type StudentProgramSettings } from "@/lib/school-student-programs";
 
 const READ_ALLOWED_ROLES = new Set([
   "admin",
@@ -153,6 +154,7 @@ export async function GET(req: NextRequest) {
   const { srv, institutionId } = ctx;
   const url = new URL(req.url);
   let cycleSettings: SchoolCyclesSettings | null = null;
+  let configuredProgramYears: StudentProgramSettings["years"] = {};
   const requestedCycle = url.searchParams.get("school_cycle");
   const requestedTrack = url.searchParams.get("teaching_track");
   const requestedLevel = url.searchParams.get("school_level") || "";
@@ -163,6 +165,9 @@ export async function GET(req: NextRequest) {
     const configuration = parseSchoolCyclesSettings(school.data.settings_json);
     if (configuration.enabled) {
       cycleSettings = configuration;
+      if (isBilingualSchool(configuration)) {
+        configuredProgramYears = readStudentProgramSettings(school.data.settings_json).years;
+      }
       if (requestedCycle && requestedCycle !== "all" && (!isSchoolCycle(requestedCycle) || !configuration.enabledCycles.includes(requestedCycle))) {
         return NextResponse.json({ error: "school_cycle_not_allowed" }, { status: 400 });
       }
@@ -288,6 +293,8 @@ export async function GET(req: NextRequest) {
       const cycle = settings.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level);
       return (cycle ? settings.enabledCycles.includes(cycle) : !requestedCycle || requestedCycle === "all") &&
         (!requestedCycle || requestedCycle === "all" || cycle === requestedCycle) &&
+        (!requestedTrack || requestedTrack === "all" || !isBilingualSchool(settings) ||
+          configuredProgramYears[String(row.academic_year || "")]?.classes[row.id]?.tracks.includes(requestedTrack)) &&
         (!requestedLevel || sameSchoolLevel(row.level, requestedLevel, cycle || undefined)) && (!requestedClass || row.id === requestedClass);
     }).slice(0, Math.min(1000, limit));
   } else {

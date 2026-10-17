@@ -149,3 +149,39 @@ test("historical bulletin averages, subject calculations and ranks match the sta
     assert.equal(currentDb.calls.length, baselineDb.calls.length, "Historical selection adds no Supabase queries");
   }
 });
+
+test("a student follows both French and Arabic classes with one identity in the specialized engine", async () => {
+  const db = setup();
+  const frenchClass = "77777777-7777-4777-8777-777777777777";
+  const virtualStudent = "88888888-8888-4888-8888-888888888888";
+  db.tables.classes.push({
+    id: frenchClass, institution_id: db.legacyId, academic_year: "2026-2027",
+    level: "CP1", label: "CP1 Français", education_type: "general_secondary",
+  });
+  db.tables.class_enrollments.push({
+    id: "single-home-enrollment", institution_id: db.legacyId,
+    class_id: frenchClass, student_id: virtualStudent, end_date: null,
+    students: { id: virtualStudent, institution_id: db.legacyId, full_name: "Élève lié" },
+  });
+  db.tables.students = [{
+    id: virtualStudent, institution_id: db.legacyId,
+    full_name: "Élève lié", first_name: "Élève", last_name: "Lié",
+    matricule: "EPC-TEST", birthdate: null,
+  }];
+  db.tables.institutions[0].settings_json.school_student_programs_v1 = {
+    version: 1, years: { "2026-2027": { classes: {
+      [frenchClass]: { tracks: ["french"], students: {} },
+      [classId]: { tracks: ["arabic"], students: {}, linkedStudentIds: [virtualStudent] },
+    } } },
+  };
+  const response = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url());
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  const document = (await response.json()).specialized;
+  assert.deepEqual(document.programs, ["arabic"]);
+  const linked = document.documents.find(row => row.studentId === virtualStudent);
+  assert.ok(linked, "linked pupil must be present in the Arabic bulletin");
+  assert.equal(linked.document.arabic.classSize, 3);
+  assert.equal(linked.document.french, undefined);
+  assert.equal(db.tables.class_enrollments.filter(row => row.student_id === virtualStudent).length, 1);
+  assert.equal(db.calls.some(row => row.op !== "read"), false);
+});

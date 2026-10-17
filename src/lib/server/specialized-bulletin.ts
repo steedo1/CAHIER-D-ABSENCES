@@ -6,6 +6,9 @@ import { normalizePedagogicalLevel, resolveEvaluationTeachingTrack, resolvePedag
 import type { BulletinDocument, BulletinProgram } from "@/components/bulletins/FrancoArabicBulletin";
 import { SCHOOL_CYCLE_OPTIONS, type SchoolCycle, type TeachingTrack } from "@/lib/school-cycles";
 import { buildPedagogicalRanks } from "@/lib/pedagogical-ranking";
+import { programsForStudent, readStudentProgramSettings } from "@/lib/school-student-programs";
+import { sameSchoolLevel } from "@/lib/school-levels";
+import { inferSchoolCycleFromLevel } from "@/lib/school-cycles";
 
 export type SpecializedBulletinPayload = {
   engine: "specialized"; cycle: SchoolCycle; format: "separate" | "combined" | "both";
@@ -55,6 +58,11 @@ export async function loadSpecializedBulletin(input: {
   if (!year || !level || (searchParams.has("academic_year") && searchParams.get("academic_year") !== year)) {
     return json({ ok: false, error: "CLASS_ACADEMIC_CONTEXT_REQUIRED" }, 400);
   }
+  const storedYear = readStudentProgramSettings(input.settingsJson).years[year];
+  const classPolicy = storedYear?.classes[schoolClass.id];
+  if (classPolicy && !classPolicy.tracks.length) {
+    return json({ ok: false, error: "CLASS_TEACHING_NOT_CONFIGURED" }, 409);
+  }
   try {
     const periods = await listApplicableGradePeriods(service, institutionId, year, schoolClass.id);
     const period = periods.items.find(row => row.is_active !== false &&
@@ -85,6 +93,47 @@ export async function loadSpecializedBulletin(input: {
         .eq("institution_id", institutionId).eq("class_id", schoolClass.id).eq("is_current", true)
         .gte("eval_date", period.start_date).lte("eval_date", period.end_date).order("id").range(from, to)),
     ]);
+    // A specialized teaching class may contain a pupil enrolled administratively
+    // in its French/Arabic counterpart. Re-verify home enrollment and grade.
+    // Historical bulletin flow above this function remains untouched.
+    const links = classPolicy?.linkedStudentIds || [];
+    if (links.length) {
+      if (classPolicy?.tracks.length !== 1) {
+        return json({ ok: false, error: "CLASS_TEACHING_LINK_INVALID" }, 409);
+      }
+      const homes = await pages<{ student_id: string; class_id: string }>((from, to) =>
+        service.from("class_enrollments").select("student_id,class_id")
+          .eq("institution_id", institutionId).is("end_date", null)
+          .in("student_id", links).order("student_id").range(from, to));
+      if (homes.length !== links.length) {
+        return json({ ok: false, error: "STUDENT_PROGRAM_LINK_STALE" }, 409);
+      }
+      const homeIds = [...new Set(homes.map(row => row.class_id))];
+      const sources = await pages<{ id: string; institution_id: string; academic_year: string; level: string | null }>((from, to) =>
+        service.from("classes").select("id,institution_id,academic_year,level")
+          .eq("institution_id", institutionId).eq("academic_year", year)
+          .in("id", homeIds).order("id").range(from, to));
+      const byStudent = new Map(homes.map(row => [row.student_id, row.class_id]));
+      const byClass = new Map(sources.map(row => [row.id, row]));
+      for (const studentId of links) {
+        const source = byClass.get(byStudent.get(studentId) || "");
+        const fromTrack = source && programsForStudent(storedYear?.classes[source.id], studentId,
+          school.teachingTracksByCycle[cycle] || []);
+        const fromCycle = source && (school.classCycleById[source.id] || inferSchoolCycleFromLevel(source.level));
+        if (!source || source.institution_id !== institutionId || source.academic_year !== year ||
+          fromCycle !== cycle || !sameSchoolLevel(source.level, level, cycle) ||
+          fromTrack?.length !== 1 || fromTrack[0] === classPolicy.tracks[0]) {
+          return json({ ok: false, error: "STUDENT_PROGRAM_LINK_STALE" }, 409);
+        }
+      }
+      const profiles = await pages<Student>((from, to) => service.from("students")
+        .select("id,institution_id,full_name,first_name,last_name,matricule,birthdate")
+        .eq("institution_id", institutionId).in("id", links).order("id").range(from, to));
+      if (profiles.length !== links.length) {
+        return json({ ok: false, error: "STUDENT_SCOPE_INVALID" }, 409);
+      }
+      for (const profile of profiles) enrollments.push({ student_id: profile.id, students: profile });
+    }
     const students = new Map<string, Student>();
     for (const row of enrollments) {
       const student = Array.isArray(row.students) ? row.students[0] : row.students;
@@ -112,7 +161,10 @@ export async function loadSpecializedBulletin(input: {
         score: row.score, scale: row.scale, evaluationCoefficient: row.coeff, isCurrentPublished: true,
         teachingTrack: trackBySubject.get(row.subject_id) ?? null });
     }
-    const programs = school.teachingTracksByCycle[cycle] || [];
+    const allPrograms = school.teachingTracksByCycle[cycle] || [];
+    const programs = classPolicy
+      ? allPrograms.filter(track => classPolicy.tracks.includes(track))
+      : allPrograms;
     const resolved = programs.map(track => ({ track, ...resolveProgramCoefficients({
       cycle, level, track, settingsJson: input.settingsJson,
       activeSubjectIds: activeSubjects.map(row => row.subject_id),

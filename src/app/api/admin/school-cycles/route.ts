@@ -157,7 +157,7 @@ export async function GET(request: NextRequest) {
   }
 
   const scopedClasses = configuration.enabledCycles.flatMap((cycle) =>
-    grouped[cycle].map((row) => ({ id: row.id, cycle })));
+    grouped[cycle].map((row) => ({ id: row.id, cycle, level: row.level })));
   const headcount = aggregateSchoolCycleRoster(
     scopedClasses, enrollments, teachers,
   );

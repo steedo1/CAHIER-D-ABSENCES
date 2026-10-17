@@ -19,6 +19,8 @@ type Response = {
   availableTracks: TeachingTrack[];
   defaultTracks: TeachingTrack[];
   students: Student[];
+  candidates: Array<{ id: string; name: string; matricule: string | null; fromClass: string }>;
+  linkedStudentIds: string[];
   error?: string;
 };
 
@@ -51,6 +53,8 @@ export default function SchoolStudentProgramsEditor() {
   const [available, setAvailable] = useState<TeachingTrack[]>([]);
   const [defaultTracks, setDefaultTracks] = useState<TeachingTrack[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
+  const [candidates, setCandidates] = useState<Response["candidates"]>([]);
+  const [linkedIds, setLinkedIds] = useState<string[]>([]);
   const [overrides, setOverrides] = useState<Record<string, TeachingTrack[] | null>>({});
   const [revision, setRevision] = useState("");
   const [loading, setLoading] = useState(false);
@@ -75,6 +79,8 @@ export default function SchoolStudentProgramsEditor() {
       setDefaultTracks(payload.defaultTracks);
       setAvailable(payload.availableTracks);
       setStudents(payload.students);
+      setCandidates(payload.candidates || []);
+      setLinkedIds(payload.linkedStudentIds || []);
       setOverrides(Object.fromEntries(payload.students.map(row => [row.id, row.tracks])));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chargement impossible");
@@ -98,7 +104,7 @@ export default function SchoolStudentProgramsEditor() {
       const response = await fetch(API, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ revision, classId, defaultTracks, overrides: nextOverrides }),
+        body: JSON.stringify({ revision, classId, defaultTracks, overrides: nextOverrides, linkedStudentIds: linkedIds }),
       });
       const payload = await response.json() as { ok?: boolean; error?: string };
       if (!response.ok || !payload.ok) throw new Error(payload.error || "Enregistrement impossible");
@@ -193,6 +199,39 @@ export default function SchoolStudentProgramsEditor() {
               ))}
             </div>}
           </div>
+          <fieldset className="rounded-xl border border-sky-200 bg-sky-50/40 p-4">
+            <legend className="px-1 text-sm font-semibold text-slate-900">
+              Élèves de l'autre enseignement au même niveau
+            </legend>
+            <p className="mt-2 text-xs text-slate-700">
+              Exemple : un élève inscrit administrativement en CP1 Français peut
+              suivre également CP1 Arabe, sans seconde fiche ni frais doublés.
+              Configurez d’abord l’enseignement de sa classe d’origine.
+            </p>
+            {defaultTracks.length !== 1 && <p role="status" className="mt-2 text-xs text-amber-900">
+              Choisissez un seul enseignement pour rattacher des élèves d’une autre classe.
+            </p>}
+            <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">
+              {candidates.map(candidate => (
+                <label key={candidate.id} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-2 text-sm">
+                  <input type="checkbox" className="mt-1"
+                    disabled={defaultTracks.length !== 1}
+                    checked={linkedIds.includes(candidate.id)}
+                    onChange={event => setLinkedIds(old => event.target.checked
+                      ? [...old, candidate.id] : old.filter(id => id !== candidate.id))}
+                  />
+                  <span>{candidate.name}
+                    <span className="text-xs text-slate-500">
+                      {" "}({candidate.fromClass}{candidate.matricule ? " · " + candidate.matricule : ""})
+                    </span>
+                  </span>
+                </label>
+              ))}
+              {!candidates.length && <p className="text-xs text-slate-600">
+                Aucun élève d’une autre classe du même niveau n’est encore inscrit.
+              </p>}
+            </div>
+          </fieldset>
           <button type="button" disabled={saving || loading}
             onClick={() => void save()}
             className="rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">

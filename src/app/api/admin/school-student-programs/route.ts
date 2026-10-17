@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sameSchoolLevel } from "@/lib/school-levels";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
@@ -12,6 +13,7 @@ import {
   isBilingualSchool,
   normalizedProgramTracks,
   readStudentProgramSettings,
+  programsForStudent,
 } from "@/lib/school-student-programs";
 import {
   asSettingsObject, schoolSettingsRevision, writeSchoolSettings,
@@ -82,6 +84,33 @@ async function activeClassStudentIds(
   return { error: "class_roster_too_large" } as const;
 }
 
+
+type SchoolChoice = { id: string; label: string; level: string | null; cycle: "preschool" | "primary" | "secondary" | null };
+async function sameLevelHomeStudents(
+  service: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  selected: SchoolChoice,
+  choices: SchoolChoice[],
+) {
+  if (!selected.level?.trim()) return { candidates: [] };
+  const siblingIds = choices.filter(row =>
+    row.id !== selected.id && !!row.level?.trim() && !!row.cycle && row.cycle === selected.cycle &&
+    sameSchoolLevel(row.level, selected.level, selected.cycle || undefined))
+    .map(row => row.id);
+  const candidates: Array<{ student_id: string; class_id: string }> = [];
+  if (!siblingIds.length) return { candidates };
+  for (let offset = 0; offset < 10000; offset += 500) {
+    const { data, error } = await service.from("class_enrollments")
+      .select("student_id,class_id").eq("institution_id", institutionId)
+      .in("class_id", siblingIds).is("end_date", null)
+      .order("id").range(offset, offset + 499);
+    if (error) return { error: "candidate_roster_unavailable" } as const;
+    candidates.push(...(data || []));
+    if (!data || data.length < 500) return { candidates } as const;
+  }
+  return { error: "candidate_roster_too_large" } as const;
+}
+
 export async function GET(request: NextRequest) {
   const context = await authorizedSchool();
   if ("error" in context) return context.error;
@@ -111,16 +140,22 @@ export async function GET(request: NextRequest) {
   const selected = requestedId ? choices.find(row => row.id === requestedId) : undefined;
   if (requestedId && !selected) return json({ error: "class_not_found" }, 404);
   let students: Array<{ id: string; name: string; matricule: string | null; tracks: TeachingTrack[] | null }> = [];
+  let candidates: Array<{ id: string; name: string; matricule: string | null; fromClass: string }> = [];
   if (selected) {
     const enroll = await activeClassStudentIds(service, institutionId, selected.id);
     if ("error" in enroll) return json({ error: enroll.error }, 503);
     const studentIds = enroll.studentIds;
+    const nearby = selected.cycle ? await sameLevelHomeStudents(service, institutionId, selected, choices) :
+      { candidates: [] as Array<{ class_id: string; student_id: string }> };
+    if ("error" in nearby) return json({ error: nearby.error }, 503);
+    const nearbyStudents = nearby.candidates.filter(row => !studentIds.includes(row.student_id));
+    const idsToLoad = [...new Set([...studentIds, ...nearbyStudents.map(row => row.student_id)])];
     const profiles: Array<{ id: string; first_name: string | null; last_name: string | null;
       full_name: string | null; matricule: string | null }> = [];
-    for (let i = 0; i < studentIds.length; i += 100) {
+    for (let i = 0; i < idsToLoad.length; i += 100) {
       const { data, error } = await service.from("students")
         .select("id,first_name,last_name,full_name,matricule")
-        .eq("institution_id", institutionId).in("id", studentIds.slice(i, i + 100));
+        .eq("institution_id", institutionId).in("id", idsToLoad.slice(i, i + 100));
       if (error) return json({ error: "students_load_failed" }, 503);
       profiles.push(...(data || []));
     }
@@ -135,6 +170,16 @@ export async function GET(request: NextRequest) {
         tracks: policy?.students[id] || null,
       };
     }).sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    const classNames = new Map(choices.map(row => [row.id, row.label]));
+    candidates = nearbyStudents.map(row => {
+      const profile = byId.get(row.student_id);
+      return {
+        id: row.student_id,
+        name: String(profile?.full_name || [profile?.last_name, profile?.first_name].filter(Boolean).join(" ") || "Élève"),
+        matricule: profile?.matricule || null,
+        fromClass: classNames.get(row.class_id) || "",
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name, "fr"));
   }
 
   return json({
@@ -143,6 +188,8 @@ export async function GET(request: NextRequest) {
     availableTracks: selected?.cycle ? settings.teachingTracksByCycle[selected.cycle] || [] : [],
     defaultTracks: selected ? stored.years[year]?.classes[selected.id]?.tracks || [] : [],
     students,
+    candidates,
+    linkedStudentIds: selected ? stored.years[year]?.classes[selected.id]?.linkedStudentIds || [] : [],
   });
 }
 
@@ -197,13 +244,64 @@ export async function PUT(request: NextRequest) {
   }
 
   const existing = readStudentProgramSettings(rawSettings);
+  const previousLinks = existing.years[year]?.classes[classId]?.linkedStudentIds || [];
+  const inputLinks: unknown = body.linkedStudentIds === undefined ? previousLinks : body.linkedStudentIds;
+  if (!Array.isArray(inputLinks) || inputLinks.length > 700 ||
+    inputLinks.some(id => typeof id !== "string" || !UUID.test(id)) ||
+    new Set(inputLinks).size !== inputLinks.length) {
+    return json({ error: "invalid_linked_students" }, 400);
+  }
+  const linkedStudentIds = inputLinks as string[];
+  if (linkedStudentIds.length) {
+    if (defaultTracks.length !== 1) {
+      return json({ error: "linked_class_needs_one_teaching" }, 400);
+    }
+    const choices: SchoolChoice[] = [];
+    for (let offset = 0; offset < 5000; offset += 500) {
+      const { data, error } = await service.from("classes")
+        .select("id,label,level").eq("institution_id", institutionId)
+        .eq("academic_year", year).order("id").range(offset, offset + 499);
+      if (error) return json({ error: "classes_load_failed" }, 503);
+      choices.push(...(data || []).map(row => ({
+        ...row, cycle: settings.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level),
+      })));
+      if (!data || data.length < 500) break;
+      if (offset === 4500) return json({ error: "too_many_classes" }, 503);
+    }
+    const target = choices.find(row => row.id === classId);
+    if (!target) return json({ error: "class_not_found" }, 404);
+    const eligibleHome = await sameLevelHomeStudents(service, institutionId, target, choices);
+    if ("error" in eligibleHome) return json({ error: eligibleHome.error }, 503);
+    const homeByStudent = new Map(eligibleHome.candidates.map(row => [row.student_id, row.class_id]));
+    for (const id of linkedStudentIds) {
+      const sourceClassId = homeByStudent.get(id);
+      const sourceTracks = sourceClassId && programsForStudent(
+        existing.years[year]?.classes[sourceClassId], id, allowed);
+      if (!sourceClassId || sourceTracks?.length !== 1 ||
+        sourceTracks[0] === defaultTracks[0] || eligible.has(id)) {
+        return json({ error: "linked_student_not_eligible" }, 403);
+      }
+      // Do not place the same pupil into two distinct classes of one teaching.
+      for (const [otherId, policy] of Object.entries(existing.years[year]?.classes || {})) {
+        if (otherId === classId || !policy.linkedStudentIds?.includes(id) ||
+          !policy.tracks.includes(defaultTracks[0])) continue;
+        const otherClass = choices.find(row => row.id === otherId);
+        if (otherClass?.cycle === cycle && sameSchoolLevel(otherClass.level, target.level, cycle)) {
+          return json({ error: "duplicate_teaching_class" }, 409);
+        }
+      }
+    }
+  }
   if (!existing.years[year] && Object.keys(existing.years).length >= 6) {
     return json({ error: "too_many_academic_years" }, 409);
   }
   const classes = { ...(existing.years[year]?.classes || {}) };
   if (!classes[classId] && Object.keys(classes).length >= 500) return json({ error: "too_many_classes" }, 409);
-  if (!defaultTracks.length && !Object.keys(overrides).length) delete classes[classId];
-  else classes[classId] = { tracks: defaultTracks, students: overrides };
+  if (!defaultTracks.length && !Object.keys(overrides).length && !linkedStudentIds.length) delete classes[classId];
+  else classes[classId] = {
+    tracks: defaultTracks, students: overrides,
+    ...(linkedStudentIds.length ? { linkedStudentIds } : {}),
+  };
   const next = {
     ...asSettingsObject(rawSettings),
     [SCHOOL_STUDENT_PROGRAMS_KEY]: {
