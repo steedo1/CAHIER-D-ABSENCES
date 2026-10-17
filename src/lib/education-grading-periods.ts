@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  schoolPeriodFormationCode,
+  schoolPeriodProgramForClass,
+} from "@/lib/school-grading-periods";
+import {
   EDUCATION_PARAMETER_PROFILES_SETTINGS_KEY,
 } from "@/lib/education-parameter-profiles";
 import {
@@ -9,6 +13,7 @@ import {
 
 export type ClassEducationContext = {
   classId: string;
+  level: string;
   educationType: EducationType;
   formationCode: string | null;
   formationLevelCode: string | null;
@@ -49,7 +54,7 @@ export async function getClassEducationContext(
 ): Promise<ClassEducationContext | null> {
   const { data, error } = await srv
     .from("classes")
-    .select("id,institution_id,education_type,formation_code,formation_level_code")
+    .select("id,institution_id,level,education_type,formation_code,formation_level_code")
     .eq("id", classId)
     .eq("institution_id", institutionId)
     .maybeSingle();
@@ -58,6 +63,7 @@ export async function getClassEducationContext(
 
   return {
     classId: String((data as any).id),
+    level: String((data as any).level || ""),
     educationType: normalizedEducationType((data as any).education_type),
     formationCode: String((data as any).formation_code || "").trim() || null,
     formationLevelCode:
@@ -144,6 +150,29 @@ async function listEducationPeriods(
   return (data || []).map(mapDisplayCode);
 }
 
+/**
+ * Program periods live in grade_periods itself, so teacher evaluation APIs
+ * verify and auto-select the same persisted IDs as bulletin consumers.
+ */
+async function listSchoolProgramPeriods(
+  srv: SupabaseClient,
+  institutionId: string,
+  academicYear: string,
+  cycle: import("@/lib/school-cycles").SchoolCycle,
+  track: import("@/lib/school-cycles").TeachingTrack,
+): Promise<ScopedGradePeriodRow[]> {
+  const { data, error } = await srv.from("grade_periods")
+    .select("id,institution_id,academic_year,code,display_code,label,short_label,kind,start_date,end_date,order_index,is_active,coeff,scope_type,education_type,formation_code,profile_period_key")
+    .eq("institution_id", institutionId)
+    .eq("academic_year", academicYear)
+    .eq("scope_type", "formation")
+    .eq("education_type", "general_secondary")
+    .eq("formation_code", schoolPeriodFormationCode(cycle, track))
+    .order("order_index", { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapDisplayCode);
+}
+
 export async function listApplicableGradePeriods(
   srv: SupabaseClient,
   institutionId: string,
@@ -152,7 +181,7 @@ export async function listApplicableGradePeriods(
 ): Promise<{
   items: ScopedGradePeriodRow[];
   context: ClassEducationContext | null;
-  resolvedScope: "common" | "education";
+  resolvedScope: "common" | "education" | "program";
   fallbackToCommon: boolean;
 }> {
   if (!classId) {
@@ -171,6 +200,27 @@ export async function listApplicableGradePeriods(
       context: null,
       resolvedScope: "common",
       fallbackToCommon: false,
+    };
+  }
+
+  const settings = await readInstitutionSettings(srv, institutionId);
+  const program = schoolPeriodProgramForClass(settings, academicYear, {
+    id: context.classId,
+    level: context.level,
+  });
+  if (program) {
+    const scoped = await listSchoolProgramPeriods(
+      srv, institutionId, academicYear, program.cycle, program.track,
+    );
+    // No new scoped period yet? Preserve previously functional common periods
+    // until the school configures this specific teaching. Once any scoped row
+    // exists for that program, ONLY its own period IDs can be selected.
+    if (scoped.length > 0) {
+      return { items: scoped, context, resolvedScope: "program", fallbackToCommon: false };
+    }
+    return {
+      items: await listCommonPeriods(srv, institutionId, academicYear),
+      context, resolvedScope: "common", fallbackToCommon: true,
     };
   }
 

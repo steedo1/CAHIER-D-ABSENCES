@@ -17,6 +17,7 @@ import SchoolStudentProgramsEditor from "@/components/admin/SchoolStudentProgram
 import SchoolClassSubjectsEditor from "@/components/admin/SchoolClassSubjectsEditor";
 import { isBilingualSchool } from "@/lib/school-student-programs";
 import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
+import SchoolGradingPeriodsEditor from "@/components/admin/SchoolGradingPeriodsEditor";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
 } from "@/components/admin/EducationScopeSwitcher";
@@ -3785,6 +3786,10 @@ export default function AdminSettingsPage() {
 
         {activeTab === "grading-periods" && (
           <>
+            {hasSpecializedSettings ? (
+              <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} />
+            ) : (
+              <>
             {!hasSpecializedSettings && (
               <EducationScopeSwitcher
                 value={gradingPeriodsScope}
@@ -4021,6 +4026,8 @@ export default function AdminSettingsPage() {
                 educationLabel={educationTypeLabel(gradingPeriodsScope)}
               />
             )}
+              </>
+            )}
           </>
         )}
 
@@ -4229,6 +4236,10 @@ export default function AdminSettingsPage() {
 
         {activeTab === "coefficients" && (
           <>
+            {hasSpecializedSettings ? (
+              <SchoolBulletinSettings mode="coefficients" />
+            ) : (
+              <>
             <EducationScopeSwitcher
               value={coeffSettingsScope}
               onChange={setCoeffSettingsScope}
@@ -4696,6 +4707,8 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
             </SectionCard>
+              </>
+            )}
             {hasSpecializedSettings && (
               <details className="rounded-2xl border border-slate-200 bg-white p-5">
                 <summary className="cursor-pointer text-base font-semibold text-slate-900">
