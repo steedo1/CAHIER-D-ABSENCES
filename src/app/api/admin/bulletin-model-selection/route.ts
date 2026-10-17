@@ -52,8 +52,11 @@ export async function PATCH(req: NextRequest) {
   if (!school.enabled || !school.enabledCycles.includes(body.cycle)) {
     return response({ ok: false, error: "cycle_not_available" }, 400);
   }
-  const bilingual = school.teachingTracksByCycle[body.cycle]?.includes("arabic") &&
-    school.teachingTracksByCycle[body.cycle]?.includes("french");
+  // JSON fields are untyped at runtime; narrow the validated cycle before
+  // indexing the type-safe school teaching mapping.
+  const cycle = body.cycle as import("@/lib/school-cycles").SchoolCycle;
+  const bilingual = school.teachingTracksByCycle[cycle]?.includes("arabic") &&
+    school.teachingTracksByCycle[cycle]?.includes("french");
   if (!bilingual && body.format !== "separate") {
     return response({ ok: false, error: "one_teaching_only" }, 400);
   }
