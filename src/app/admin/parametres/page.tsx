@@ -3783,6 +3783,7 @@ export default function AdminSettingsPage() {
 
         {activeTab === "grading-periods" && (
           <>
+            {hasSpecializedSettings && <SchoolProgramPeriodsEditor />}
             <EducationScopeSwitcher
               value={gradingPeriodsScope}
               onChange={setGradingPeriodsScope}
