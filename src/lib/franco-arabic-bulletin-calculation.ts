@@ -162,9 +162,9 @@ export function buildProgramBulletinDraft(params: {
   for (const subjectId of subjectIds) {
     const rule = policiesById.get(subjectId);
     if (!rule || duplicatePolicyIds.has(subjectId) ||
-        !Number.isFinite(rule.coefficient) || rule.coefficient < 0 ||
-        (rule.includeInAverage && rule.coefficient === 0) ||
-        typeof rule.includeInAverage !== "boolean") {
+        (cycle === "secondary" && (!Number.isFinite(rule.coefficient) || rule.coefficient < 0 ||
+          (rule.includeInAverage && rule.coefficient === 0) ||
+          typeof rule.includeInAverage !== "boolean"))) {
       problems.push("subject_policy_missing_or_invalid");
       subjects.push({
         subjectId, coefficient: null, includeInAverage: false,
@@ -186,16 +186,20 @@ export function buildProgramBulletinDraft(params: {
       : null;
     const average = preciseAverage === null ? null : round2(preciseAverage);
 
+    // In primary every configured subject has equal arithmetic weight.
+    // Older primary coefficient records are ignored, not silently reused.
+    const contributes = cycle === "primary" ? true : rule.includeInAverage;
+    const weight = cycle === "primary" ? 1 : rule.coefficient;
     subjects.push({
       subjectId, coefficient: cycle === "secondary" ? rule.coefficient : null,
-      includeInAverage: rule.includeInAverage,
+      includeInAverage: contributes,
       average, evaluatedCount: evaluations.length,
     });
-    if (rule.includeInAverage) {
+    if (contributes) {
       if (average === null) problems.push("included_subject_without_score");
       else {
-        generalSum += (preciseAverage as number) * rule.coefficient;
-        generalCoefficientSum += rule.coefficient;
+        generalSum += (preciseAverage as number) * weight;
+        generalCoefficientSum += weight;
       }
     }
   }
