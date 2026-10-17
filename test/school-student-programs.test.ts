@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   SCHOOL_STUDENT_PROGRAMS_KEY,
   aggregateStudentProgramRoster,
+  aggregateInstitutionProgramTotals,
   isBilingualSchool,
   normalizedProgramTracks,
   programsForStudent,
@@ -109,4 +110,18 @@ test("new academic years cannot inherit old student-class allocations", () => {
   const membership = readStudentProgramSettings(stored);
   assert.equal(membership.years["2025-2026"], undefined);
   assert.equal(membership.years["2027-2028"], undefined);
+});
+
+test("whole-school French and Arabic totals deduplicate pupils across cycles", () => {
+  const summary = aggregateInstitutionProgramTotals(
+    school, readStudentProgramSettings(stored).years["2026-2027"],
+    [{ id: A, cycle: "primary" }, { id: B, cycle: "secondary" }],
+    [{ class_id: A, student_id: S1 }, { class_id: A, student_id: S2 },
+      { class_id: B, student_id: S1 }],
+  );
+  assert.equal(summary.french.students, 1);
+  assert.equal(summary.french.classes, 2);
+  assert.equal(summary.arabic.students, 2);
+  assert.equal(summary.arabic.classes, 1);
+  assert.equal(summary.arabic.complete, true);
 });
