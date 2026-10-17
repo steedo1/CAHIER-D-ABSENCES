@@ -25,6 +25,10 @@ export type CycleDashboardSummary = {
     complete: boolean;
     unclassifiedStudents: number;
   }>>>>;
+  studentProgramTotals?: Partial<Record<TeachingTrack, {
+    students: number; classes: number; complete: boolean; unclassifiedStudents: number;
+  }>>;
+  programTeacherTotals?: Partial<Record<TeachingTrack, { uniqueTeachers: number | null }>>;
 };
 
 export type ScopedDashboardCounts = {
@@ -50,8 +54,17 @@ export function resolveScopedDashboardCounts(
 ): ScopedDashboardCounts {
   const unknown = { classes: null, students: null, teachers: null };
   if (!summary?.ok || !summary.enabled) return unknown;
-  // The cycle aggregate cannot be filtered by level or administrative class.
-  if (selection.classId || selection.level || selection.cycle === "all") return unknown;
+  // A cycle aggregate cannot be filtered further by level or class.
+  if (selection.classId || selection.level) return unknown;
+  if (selection.cycle === "all") {
+    if (selection.track === "all") return unknown; // Original school-wide dashboard owns those numbers.
+    const total = summary.studentProgramTotals?.[selection.track];
+    return {
+      students: total?.complete ? countOrUnknown(total.students) : null,
+      classes: total?.complete ? countOrUnknown(total.classes) : null,
+      teachers: countOrUnknown(summary.programTeacherTotals?.[selection.track]?.uniqueTeachers),
+    };
+  }
 
   const cycle = summary.cycles?.[selection.cycle];
   if (!cycle) return unknown;
