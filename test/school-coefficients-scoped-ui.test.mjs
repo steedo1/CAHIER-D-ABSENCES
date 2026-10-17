@@ -19,6 +19,9 @@ test("the specialized editor shows only classified and selected class subjects",
   assert.match(editor, /row\.cycle === activeProgram\?\.cycle && row\.track === activeProgram\?\.track/);
   assert.match(editor, /subjectTracksByCycle\[cycle\]\?\.\[subject\.id\]\?\.includes\(track\)/);
   assert.match(editor, /classSubjectIds\.includes\(subject\.id\)/);
+  assert.match(editor, /belongsToSelectedLevel/);
+  assert.match(editor, /sameSchoolLevel\(level, activeTeachingClass\.level, cycle\)/);
+  assert.match(editor, /const possibleSubjects = mode === "coefficients"/);
   assert.match(editor, /api\/admin\/school-class-subjects\?class_id=/);
   assert.match(editor, /mode === "coefficients"/);
 });
