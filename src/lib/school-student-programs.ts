@@ -48,7 +48,7 @@ export function readStudentProgramSettings(value: unknown): StudentProgramSettin
   const years: StudentProgramSettings["years"] = {};
   if (stored?.version !== 1 || !yearsRoot) return { version: 1, years };
   for (const [year, yearValue] of Object.entries(yearsRoot).slice(0, 6)) {
-    if (!/^[a-zA-Z0-9_-]{4,35}$/.test(year)) continue;
+    if (!/^[0-9]{4}[-/_][0-9]{4}$/.test(year)) continue;
     const classRoot = asRecord(asRecord(yearValue)?.classes);
     if (!classRoot) continue;
     const classes: StudentProgramYear["classes"] = {};
