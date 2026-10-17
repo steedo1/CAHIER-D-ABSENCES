@@ -130,7 +130,7 @@ export default function DemoBulletinClient({
         </Link>
         <h1 className="mt-2 text-2xl font-bold text-slate-900">Maquettes de bulletins A4</h1>
         <p className="mt-1 text-sm leading-6 text-slate-600">
-          {hasArabic
+          {cycleHasArabic
             ? "Bulletins français, arabe et regroupé ; les résultats ne sont jamais fusionnés."
             : "Bulletin ordinaire, sans étiquette « Programme français ». Aucun enseignement arabe n'est ajouté."
           } Toutes les données de démonstration présentées ci-dessous sont fictives.
