@@ -101,7 +101,7 @@ export default function DemoBulletinClient({
       ...demo.school,
       name: schoolName,
       code: schoolCode,
-      subtitle: hasArabic ? "Maquette pédagogique franco-arabe" : "Maquette pédagogique primaire",
+      subtitle: cycleHasArabic ? "Maquette pédagogique franco-arabe" : "Maquette pédagogique scolaire",
     },
     french: demo.french ? {
       ...demo.french,
