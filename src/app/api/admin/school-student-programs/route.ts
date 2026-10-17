@@ -4,7 +4,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
 import {
   parseSchoolCyclesSettings,
-  resolveSchoolCycleForClass,
+  inferSchoolCycleFromLevel,
   type TeachingTrack,
 } from "@/lib/school-cycles";
 import {
@@ -98,9 +98,13 @@ export async function GET(request: NextRequest) {
     if (!data || data.length < 500) break;
     if (offset === 4500) return json({ error: "too_many_classes" }, 503);
   }
-  const choices = classes.map(row => ({
-    ...row, cycle: resolveSchoolCycleForClass(row, settings),
-  })).filter(row => settings.enabledCycles.includes(row.cycle));
+  // Never silently treat an unfamiliar Franco-Arabic level as secondary.
+  // Keep the class visible, but require its cycle to be configured first.
+  const recognizedCycle = (row: { id: string; level: string | null }) => {
+    const cycle = settings.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level);
+    return cycle && settings.enabledCycles.includes(cycle) ? cycle : null;
+  };
+  const choices = classes.map(row => ({ ...row, cycle: recognizedCycle(row) }));
 
   const requestedId = request.nextUrl.searchParams.get("class_id") || "";
   if (requestedId && !UUID.test(requestedId)) return json({ error: "invalid_class" }, 400);
@@ -136,7 +140,7 @@ export async function GET(request: NextRequest) {
   return json({
     ok: true, academicYear: year, revision: schoolSettingsRevision(rawSettings),
     classes: choices, selectedClassId: selected?.id || null,
-    availableTracks: selected ? settings.teachingTracksByCycle[selected.cycle] || [] : [],
+    availableTracks: selected?.cycle ? settings.teachingTracksByCycle[selected.cycle] || [] : [],
     defaultTracks: selected ? stored.years[year]?.classes[selected.id]?.tracks || [] : [],
     students,
   });
@@ -160,8 +164,11 @@ export async function PUT(request: NextRequest) {
   if (!UUID.test(classId)) return json({ error: "invalid_class" }, 400);
   const found = await classInCurrentSchool(service, institutionId, year, classId);
   if ("error" in found) return json({ error: found.error }, found.error === "class_not_found" ? 404 : 503);
-  const cycle = resolveSchoolCycleForClass(found.schoolClass, settings);
-  if (!settings.enabledCycles.includes(cycle)) return json({ error: "cycle_not_enabled" }, 400);
+  const cycle = settings.classCycleById[classId] ||
+    inferSchoolCycleFromLevel(found.schoolClass.level);
+  if (!cycle || !settings.enabledCycles.includes(cycle)) {
+    return json({ error: "class_cycle_requires_configuration" }, 409);
+  }
   const allowed = settings.teachingTracksByCycle[cycle] || [];
   const defaultTracks = normalizedProgramTracks(body.defaultTracks);
   if (!defaultTracks || defaultTracks.some(track => !allowed.includes(track))) {
