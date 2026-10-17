@@ -3,6 +3,10 @@ import { filterParentConnectStudentIds } from "@/lib/parent-connect/server";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  schoolPeriodFormationCode,
+  schoolPeriodProgramForClass,
+} from "@/lib/school-grading-periods";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,7 +48,7 @@ export async function GET() {
 
     const { data: enrollments, error: enrollErr } = await srv
       .from("class_enrollments")
-      .select("student_id, institution_id, classes:class_id(institution_id, academic_year)")
+      .select("student_id, class_id, institution_id, classes:class_id(id, institution_id, academic_year, level)")
       .in("student_id", studentIds)
       .is("end_date", null);
 
@@ -67,9 +71,31 @@ export async function GET() {
     const ids = Array.from(institutionIds);
     if (!ids.length) return NextResponse.json({ ok: true, items: [] });
 
+    // A parent's device may cover several schools and programs. Only expose
+    // periods of the children's actual, explicitly mapped classes.
+    const { data: settingsRows, error: settingsErr } = await srv.from("institutions")
+      .select("id,settings_json").in("id", ids);
+    if (settingsErr) return NextResponse.json({ ok: false, error: settingsErr.message }, { status: 400 });
+    const settingsByInstitution = new Map((settingsRows || []).map(row => [String(row.id), row.settings_json]));
+    const allowedPrograms = new Map<string, Set<string>>();
+    for (const row of enrollments || []) {
+      const cls = (row as any).classes;
+      const institutionId = String(cls?.institution_id || (row as any).institution_id || "").trim();
+      const academicYear = String(cls?.academic_year || computedYear).trim();
+      if (!institutionId || !cls?.id) continue;
+      const program = schoolPeriodProgramForClass(
+        settingsByInstitution.get(institutionId), academicYear,
+        { id: String(cls.id), level: cls.level },
+      );
+      if (!program) continue;
+      const key = `${institutionId}|${academicYear}`;
+      if (!allowedPrograms.has(key)) allowedPrograms.set(key, new Set());
+      allowedPrograms.get(key)!.add(schoolPeriodFormationCode(program.cycle, program.track));
+    }
+
     const { data: periods, error: periodsErr } = await srv
       .from("grade_periods")
-      .select("id, institution_id, academic_year, code, label, short_label, kind, start_date, end_date, order_index, is_active, coeff")
+      .select("id, institution_id, academic_year, code, display_code, label, short_label, kind, start_date, end_date, order_index, is_active, coeff, scope_type, formation_code")
       .in("institution_id", ids)
       .eq("is_active", true)
       .order("institution_id", { ascending: true })
@@ -83,13 +109,18 @@ export async function GET() {
         const institutionId = String(row.institution_id || "");
         const year = String(row.academic_year || "");
         const allowedYears = yearsByInstitution.get(institutionId);
-        return (!allowedYears?.size || allowedYears.has(year)) && isTrimester(row);
+        if (allowedYears?.size && !allowedYears.has(year)) return false;
+        if (row.scope_type === "formation" &&
+            String(row.formation_code || "").startsWith("SCHOOL_PROGRAM_")) {
+          return allowedPrograms.get(`${institutionId}|${year}`)?.has(row.formation_code) ?? false;
+        }
+        return isTrimester(row);
       })
       .map((row: any) => ({
         id: String(row.id),
         institution_id: String(row.institution_id || ""),
         academic_year: String(row.academic_year || ""),
-        code: row.code || null,
+        code: row.display_code || row.code || null,
         label: row.label || row.short_label || row.code || "Trimestre",
         short_label: row.short_label || row.label || row.code || "Trimestre",
         kind: row.kind || null,
