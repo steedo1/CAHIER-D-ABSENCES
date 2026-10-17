@@ -27,7 +27,7 @@ test("existing scoped report coefficients are still keyed by cycle level track s
   const rules = read("src/lib/franco-arabic-reporting.ts");
   const api = read("src/app/api/admin/bulletin-templates/route.ts");
   const old = read("src/app/api/admin/institution/subject-coeffs/route.ts");
-  assert.match(rules, /policy\.cycle, policy\.track/);
+  assert.match(rules, /policy\.cycle === cycle && policy\.track === track/);
   assert.match(api, /subject_not_configured_for_program/);
   assert.match(old, /institution_subject_coeffs/);
 });
