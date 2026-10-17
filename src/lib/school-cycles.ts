@@ -214,3 +214,47 @@ export function groupScopedClassesByCycle(
   }
   return groups;
 }
+
+/** Navigation choices are presentation-only; authorization stays server-side. */
+export type SchoolAdminNavigation = {
+  showCycleSelector: boolean;
+  landingCycle: SchoolCycle | "all";
+  availableCycles: SchoolCycle[];
+  availableTracks: TeachingTrack[];
+  showTrackSelector: boolean;
+};
+
+export function getSchoolAdminNavigation(
+  settings: SchoolCyclesSettings,
+  requestedCycle?: SchoolCycle | "all",
+): SchoolAdminNavigation {
+  if (!settings.enabled) {
+    return {
+      showCycleSelector: false,
+      landingCycle: "secondary",
+      availableCycles: ["secondary"],
+      availableTracks: ["french"],
+      showTrackSelector: false,
+    };
+  }
+
+  const availableCycles = [...settings.enabledCycles];
+  const showCycleSelector = availableCycles.length > 1;
+  const fallback = showCycleSelector ? settings.defaultView : availableCycles[0];
+  const landingCycle =
+    requestedCycle === "all" && showCycleSelector ? "all"
+    : requestedCycle && requestedCycle !== "all" && availableCycles.includes(requestedCycle)
+      ? requestedCycle
+      : fallback === "all" && !showCycleSelector ? availableCycles[0] : fallback;
+  const cycles = landingCycle === "all" ? availableCycles : [landingCycle];
+  const availableTracks = Array.from(new Set(cycles.flatMap(
+    (cycle) => settings.teachingTracksByCycle[cycle] ?? ["french"],
+  )));
+  return {
+    showCycleSelector,
+    landingCycle,
+    availableCycles,
+    availableTracks,
+    showTrackSelector: availableTracks.length > 1,
+  };
+}
