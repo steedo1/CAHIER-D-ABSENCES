@@ -1,6 +1,8 @@
 "use client";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import { mustDeferBilingualAdminProvisioning } from "@/lib/school-director-scope";
+import SchoolTeachingSignatoriesManager from "@/components/admin/SchoolTeachingSignatoriesManager";
+import { isBilingualSchool } from "@/lib/school-student-programs";
 
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -1074,6 +1076,7 @@ export default function UsersPage() {
       </div>
 
       <StaffManager />
+      {navigation && isBilingualSchool(navigation.settings) && <SchoolTeachingSignatoriesManager />}
 
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-700">

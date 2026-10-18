@@ -11,6 +11,7 @@ import { sameSchoolLevel } from "@/lib/school-levels";
 import { selectedBulletinFormat } from "@/lib/franco-arabic-reporting";
 import { inferSchoolCycleFromLevel } from "@/lib/school-cycles";
 import { classSubjectIds } from "@/lib/school-class-subjects";
+import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
 
 export type SpecializedBulletinPayload = {
   engine: "specialized"; cycle: SchoolCycle; format: "separate" | "combined" | "both";
@@ -192,6 +193,7 @@ export async function loadSpecializedBulletin(input: {
       const subject = Array.isArray(row.subjects) ? row.subjects[0] : row.subjects;
       return [row.subject_id, row.custom_name || subject?.name || row.subject_id];
     }));
+    const signatories = readSchoolTeachingSignatories(input.settingsJson);
     const documents: SpecializedBulletinPayload["documents"] = results.map(({ student, drafts }) => {
       const document: BulletinDocument = {
         school: { name: input.institutionName || "", code: input.institutionCode },
@@ -206,6 +208,7 @@ export async function loadSpecializedBulletin(input: {
             coefficient: subject.coefficient, average: subject.average, includeInAverage: subject.includeInAverage })),
           generalAverage: draft.generalAverage, rank, classSize: students.size,
           appreciation: draft.status === "ready" ? null : "Résultats incomplets — configuration ou notes à vérifier.",
+          directorName: signatories[draft.track]?.name || null,
         };
         document[draft.track] = program;
       }
