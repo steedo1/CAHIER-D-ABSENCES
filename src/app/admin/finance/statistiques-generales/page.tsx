@@ -18,6 +18,9 @@ type Student = {
   class_id: string | null;
   class_label: string | null;
   level: string | null;
+  school_cycle?: "preschool" | "primary" | "secondary";
+  teaching_tracks?: Array<"french" | "arabic">;
+  program_class_ids?: Partial<Record<"french" | "arabic", string>>;
   gender: string | null;
   birthdate: string | null;
   nationality?: string | null;
@@ -44,6 +47,19 @@ type Institution = {
 };
 
 type Choice = "all" | "yes" | "no";
+type SchoolCycle = "preschool" | "primary" | "secondary";
+type TeachingTrack = "french" | "arabic";
+type SchoolConfiguration = {
+  enabled: boolean;
+  enabled_cycles: SchoolCycle[];
+  teaching_tracks_by_cycle: Partial<Record<SchoolCycle, TeachingTrack[]>>;
+};
+const CYCLE_LABELS: Record<SchoolCycle, string> = {
+  preschool: "Préscolaire", primary: "Primaire", secondary: "Secondaire",
+};
+const TRACK_LABELS: Record<TeachingTrack, string> = {
+  french: "Enseignement français", arabic: "Enseignement arabe",
+};
 type SexChoice = "all" | "F" | "M";
 type Lv2Choice = "all" | "allemand" | "espagnol";
 type PrintColumnKey =
@@ -165,6 +181,8 @@ function sortedUnique(values: Array<string | null | undefined>) {
 }
 
 function filterLabel(args: {
+  cycle?: string;
+  track?: string;
   level: string;
   classLabel: string;
   boarding: Choice;
@@ -181,6 +199,8 @@ function filterLabel(args: {
   maxAverage: string;
 }) {
   const out: string[] = [];
+  if (args.cycle && args.cycle !== "all") out.push(`Cycle : ${args.cycle}`);
+  if (args.track && args.track !== "all") out.push(args.track);
   if (args.level !== "all") out.push(`Niveau : ${args.level}`);
   if (args.classLabel) out.push(args.classLabel);
   if (args.boarding === "yes") out.push("Interne");
@@ -242,6 +262,9 @@ export default function GeneralStatisticsPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [institution, setInstitution] = useState<Institution>({});
   const [academicYear, setAcademicYear] = useState<string>("");
+  const [schoolConfiguration, setSchoolConfiguration] = useState<SchoolConfiguration | null>(null);
+  const [cycle, setCycle] = useState<SchoolCycle | "all">("all");
+  const [track, setTrack] = useState<TeachingTrack | "all">("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -261,7 +284,7 @@ export default function GeneralStatisticsPage() {
   const [periodError, setPeriodError] = useState<string | null>(null);
   const [academicPeriod, setAcademicPeriod] = useState("");
   const [academicSubject, setAcademicSubject] = useState("all");
-  const [academicSubjects, setAcademicSubjects] = useState<{ id: string; label: string }[]>([]);
+  const [academicSubjects, setAcademicSubjects] = useState<{ id: string; label: string; track?: TeachingTrack }[]>([]);
   const [minAverage, setMinAverage] = useState("");
   const [maxAverage, setMaxAverage] = useState("");
   const [academicResult, setAcademicResult] = useState<{ key: string; data: StatisticsAcademicData } | null>(null);
@@ -296,6 +319,16 @@ export default function GeneralStatisticsPage() {
         if (!cancelled) {
           setStudents(Array.isArray(statsJson?.items) ? statsJson.items : []);
           setAcademicYear(clean(statsJson?.academic_year));
+          const config = statsJson?.school_configuration as SchoolConfiguration | undefined;
+          if (config?.enabled) {
+            setSchoolConfiguration(config);
+            const offered = Array.from(new Set(config.enabled_cycles.flatMap(
+              (schoolCycle) => config.teaching_tracks_by_cycle[schoolCycle] || [],
+            )));
+            setTrack(offered.length === 1 ? offered[0] : "all");
+          } else {
+            setSchoolConfiguration(null);
+          }
           setCanFilterAverages(statsJson?.can_filter_averages === true);
           setAcademicPeriods(Array.isArray(statsJson?.academic_periods) ? statsJson.academic_periods : []);
           setPeriodError(statsJson?.academic_filter_error || null);
@@ -313,12 +346,22 @@ export default function GeneralStatisticsPage() {
     };
   }, []);
 
-  const levels = useMemo(() => sortedUnique(students.map((student) => student.level)), [students]);
+  const specialSchool = schoolConfiguration?.enabled === true;
+  const availableTracks = useMemo(() => Array.from(new Set(
+    (schoolConfiguration?.enabled_cycles || []).filter((item) => cycle === "all" || cycle === item)
+      .flatMap((item) => schoolConfiguration?.teaching_tracks_by_cycle[item] || []),
+  )), [schoolConfiguration, cycle]);
+  const scopedStudents = useMemo(() => students.filter((student) =>
+    (!specialSchool || cycle === "all" || student.school_cycle === cycle) &&
+    (!specialSchool || track === "all" || student.teaching_tracks?.includes(track) === true),
+  ), [students, specialSchool, cycle, track]);
+  const unclassified = specialSchool ? students.filter((student) => !student.teaching_tracks?.length).length : 0;
+  const levels = useMemo(() => sortedUnique(scopedStudents.map((student) => student.level)), [scopedStudents]);
   const nationalities = useMemo(() => sortedUnique(students.map((student) => nationalityLabel(student.nationality))), [students]);
 
   const classes = useMemo(() => {
     const choices = new Map<string, string>();
-    for (const student of students) {
+    for (const student of scopedStudents) {
       if (student.class_id && (level === "all" || clean(student.level) === level)) {
         choices.set(student.class_id, clean(student.class_label) || student.class_id);
       }
@@ -326,14 +369,14 @@ export default function GeneralStatisticsPage() {
     return Array.from(choices, ([id, label]) => ({ id, label })).sort((a, b) =>
       a.label.localeCompare(b.label, "fr", { sensitivity: "base", numeric: true }),
     );
-  }, [students, level]);
+  }, [scopedStudents, level]);
   const selectedClassLabel = classes.find((item) => item.id === classId)?.label || "";
 
   const baseFiltered = useMemo(() => {
     const min = minAge === "" ? null : Number(minAge);
     const max = maxAge === "" ? null : Number(maxAge);
 
-    return students.filter((student) => {
+    return scopedStudents.filter((student) => {
       if (level !== "all" && clean(student.level) !== level) return false;
       if (classId !== "all" && student.class_id !== classId) return false;
       if (!boolMatches(student.is_boarder, boarding)) return false;
@@ -351,10 +394,15 @@ export default function GeneralStatisticsPage() {
       }
       return true;
     });
-  }, [students, level, classId, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge]);
+  }, [scopedStudents, level, classId, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge]);
 
-  const academicClassIds = useMemo(() => sortedUnique(baseFiltered.map((student) => student.class_id)), [baseFiltered]);
+  const academicClassIds = useMemo(() => sortedUnique(baseFiltered.map((student) =>
+    specialSchool && track !== "all" ? student.program_class_ids?.[track] || null : student.class_id,
+  )), [baseFiltered, specialSchool, track]);
   const academicKey = JSON.stringify([academicYear, academicPeriod, academicClassIds, academicRetry]);
+  const availablePeriods = useMemo(() => academicPeriods.filter((period) =>
+    academicClassIds.some((id) => period.class_ids.includes(id)),
+  ), [academicPeriods, academicClassIds]);
   const academicData = academicResult?.key === academicKey ? academicResult.data : null;
   const academicBusy = Boolean(academicPeriod && !academicData && !academicError);
   const averageBounds = statisticsAverageBounds(minAverage, maxAverage);
@@ -364,7 +412,7 @@ export default function GeneralStatisticsPage() {
     let active = true;
     setAcademicResult(null);
     setAcademicError(null);
-    if (academicPeriod && canFilterAverages) {
+    if (academicPeriod && canFilterAverages && (!specialSchool || track !== "all")) {
       setAcademicProgress("Chargement des moyennes…");
       void loadStatisticsAcademicData({ classIds: academicClassIds, selection: academicPeriod,
         academicYear, periods: academicPeriods, cache: academicCache.current, signal: controller.signal,
@@ -384,11 +432,13 @@ export default function GeneralStatisticsPage() {
         });
     }
     return () => { active = false; controller.abort(); };
-  }, [academicKey, academicClassIds, academicPeriod, academicPeriods, academicYear, canFilterAverages]);
+  }, [academicKey, academicClassIds, academicPeriod, academicPeriods, academicYear, canFilterAverages, specialSchool, track]);
 
   const studentAverages = useMemo(() => new Map(baseFiltered.map((student) => [student.id,
-    statisticsStudentAverage(academicData, student.class_id, student.id, academicPeriod, academicSubject),
-  ])), [baseFiltered, academicData, academicPeriod, academicSubject]);
+    statisticsStudentAverage(academicData,
+      specialSchool && track !== "all" ? student.program_class_ids?.[track] || null : student.class_id,
+      student.id, academicPeriod, academicSubject, specialSchool && track !== "all" ? track : undefined),
+  ])), [baseFiltered, academicData, academicPeriod, academicSubject, specialSchool, track]);
   const filtered = useMemo(() => {
     if (!academicPeriod) return baseFiltered;
     if (!academicData || academicError || averageBounds.error) return [];
@@ -397,7 +447,10 @@ export default function GeneralStatisticsPage() {
   const academicPeriodLabel = academicPeriod === "annual" ? "Année scolaire entière"
     : academicPeriods.find((period) => period.id === academicPeriod)?.label || "";
   const academicSubjectLabel = academicSubject === "all" ? "Moyenne générale"
-    : academicSubjects.find((subject) => subject.id === academicSubject)?.label || "Discipline";
+    : academicSubjects.find((subject) => subject.id === academicSubject &&
+      (!specialSchool || subject.track === track))?.label || "Discipline";
+  const visibleAcademicSubjects = academicSubjects.filter((subject) =>
+    !specialSchool || subject.track === track);
   const canPrint = !academicBusy && !academicError && !averageBounds.error;
 
   const totals = useMemo(() => {
@@ -426,6 +479,8 @@ export default function GeneralStatisticsPage() {
   const criteria = useMemo(
     () =>
       filterLabel({
+        cycle: specialSchool && cycle !== "all" ? CYCLE_LABELS[cycle] : undefined,
+        track: specialSchool && track !== "all" ? TRACK_LABELS[track] : undefined,
         level,
         classLabel: selectedClassLabel,
         boarding,
@@ -441,13 +496,15 @@ export default function GeneralStatisticsPage() {
         minAverage,
         maxAverage,
       }),
-    [level, selectedClassLabel, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge, academicPeriodLabel, academicSubjectLabel, minAverage, maxAverage],
+    [specialSchool, cycle, track, level, selectedClassLabel, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge, academicPeriodLabel, academicSubjectLabel, minAverage, maxAverage],
   );
 
   // Le filtre d'âge compte pour un seul critère, même avec deux bornes.
   // Pour quatre critères ou plus, le détail reste intégralement sous le titre.
   const printTitle = useMemo(() => {
     const filterCount = [
+      specialSchool && cycle !== "all",
+      specialSchool && track !== "all",
       level !== "all",
       classId !== "all",
       boarding !== "all",
@@ -476,6 +533,8 @@ export default function GeneralStatisticsPage() {
     }
 
     let title = "LISTE DES " + parts.join(" ");
+    if (specialSchool && cycle !== "all") title += " — " + CYCLE_LABELS[cycle].toLocaleUpperCase("fr");
+    if (specialSchool && track !== "all") title += " — " + TRACK_LABELS[track].toLocaleUpperCase("fr");
     if (minAge || maxAge) {
       const ageAdjective = feminine ? "ÂGÉES" : "ÂGÉS";
       title += minAge && maxAge ? Number(minAge) === Number(maxAge)
@@ -496,7 +555,7 @@ export default function GeneralStatisticsPage() {
       else if (maxAverage.trim()) title += ` — MOYENNE ≤ ${maxAverage}/20`;
     }
     return title;
-  }, [level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge, academicPeriod, academicPeriodLabel, academicSubject, academicSubjectLabel, minAverage, maxAverage]);
+  }, [specialSchool, cycle, track, level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge, academicPeriod, academicPeriodLabel, academicSubject, academicSubjectLabel, minAverage, maxAverage]);
 
   // Une sélection de niveau reste distincte d'une classe. Même sous d'autres
   // filtres, ne retirer CLASSE que si toutes les lignes ont la même classe connue.
@@ -524,6 +583,8 @@ export default function GeneralStatisticsPage() {
   const ministryLines = officialMinistry.split(/\s+(?=ET DE L['’]ENSEIGNEMENT TECHNIQUE\b)/i);
 
   function reset() {
+    setCycle("all");
+    setTrack(specialSchool && availableTracks.length === 1 ? availableTracks[0] : "all");
     setLevel("all");
     setClassId("all");
     setBoarding("all");
@@ -711,6 +772,31 @@ export default function GeneralStatisticsPage() {
           </header>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            {specialSchool && <div className="mb-4 grid gap-3 sm:grid-cols-2">
+              <Select label="Cycle" value={cycle} onChange={(value) => {
+                setCycle(value as SchoolCycle | "all"); setTrack("all"); setLevel("all"); setClassId("all");
+                setAcademicPeriod(""); setAcademicSubject("all"); setAcademicSubjects([]);
+              }}>
+                <option value="all">Tous les cycles</option>
+                {schoolConfiguration?.enabled_cycles.map((item) =>
+                  <option key={item} value={item}>{CYCLE_LABELS[item]}</option>)}
+              </Select>
+              <Select label="Enseignement" value={track} onChange={(value) => {
+                setTrack(value as TeachingTrack | "all"); setLevel("all"); setClassId("all");
+                setAcademicPeriod(""); setAcademicSubject("all"); setAcademicSubjects([]);
+              }}>
+                <option value="all">Toute l'école — effectifs sans doublon</option>
+                {availableTracks.map((item) => <option key={item} value={item}>{TRACK_LABELS[item]}</option>)}
+              </Select>
+            </div>}
+            {specialSchool && track === "all" && <p className="mb-3 text-sm text-sky-800" role="status">
+              Les effectifs regroupent chaque élève une seule fois. Sélectionnez l’enseignement français ou arabe
+              pour obtenir ses moyennes propres : aucune moyenne commune n’est calculée.
+            </p>}
+            {specialSchool && unclassified > 0 && <p className="mb-3 text-sm text-amber-800" role="status">
+              {unclassified} élève(s) sans enseignement pédagogique configuré : comptés dans toute l’école,
+              mais non attribués arbitrairement au français ou à l’arabe.
+            </p>}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
               <Select label="Niveau" value={level} onChange={(value) => { setLevel(value); setClassId("all"); }}>
                 <option value="all">Tous</option>
@@ -789,20 +875,20 @@ export default function GeneralStatisticsPage() {
             </div>
           </section>
 
-          {canFilterAverages && <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm" aria-busy={academicBusy}>
+          {canFilterAverages && (!specialSchool || track !== "all") && <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm" aria-busy={academicBusy}>
             <h2 className="text-sm font-bold text-slate-800">Résultats scolaires</h2>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Select label="Période des moyennes" value={academicPeriod} disabled={Boolean(periodError) || !academicPeriods.length} onChange={(value) => {
+              <Select label="Période des moyennes" value={academicPeriod} disabled={Boolean(periodError) || !availablePeriods.length} onChange={(value) => {
                 setAcademicPeriod(value);
                 if (!value) { setAcademicSubject("all"); setMinAverage(""); setMaxAverage(""); }
               }}>
                 <option value="">Sans filtre de moyenne</option>
-                {academicPeriods.map((period) => <option key={period.id} value={period.id}>{period.label}</option>)}
+                {availablePeriods.map((period) => <option key={period.id} value={period.id}>{period.label}</option>)}
                 <option value="annual">Année scolaire entière</option>
               </Select>
               <Select label="Discipline" value={academicSubject} disabled={!academicData || academicBusy} onChange={setAcademicSubject}>
                 <option value="all">Toutes — moyenne générale</option>
-                {academicSubjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.label}</option>)}
+                {visibleAcademicSubjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.label}</option>)}
               </Select>
               {([["Moyenne min", minAverage, setMinAverage], ["Moyenne max", maxAverage, setMaxAverage]] as const).map(([label, value, setter]) => (
                 <label key={label} className="block min-w-0">
@@ -921,6 +1007,8 @@ export default function GeneralStatisticsPage() {
 
           <div className="stats-right-meta">
             <div>Année scolaire : {academicYear || "—"}</div>
+            {specialSchool && <div>Cycle : {cycle === "all" ? "Tous" : CYCLE_LABELS[cycle]}</div>}
+            {specialSchool && <div>Enseignement : {track === "all" ? "Toute l’école" : TRACK_LABELS[track]}</div>}
             <div>Niveau : {level === "all" ? "Tous" : displayLevel(level)}</div>
             {classId !== "all" ? <div>Classe : {selectedClassLabel}</div> : null}
             <div>Effectif : {filtered.length}</div>
