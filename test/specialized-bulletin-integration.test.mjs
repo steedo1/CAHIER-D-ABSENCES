@@ -134,6 +134,49 @@ for (const level of PRIMARY_LEVELS) {
   });
 }
 
+test("teacher class selector resolves all six primary levels and their separately assigned French/Arabic subjects", async () => {
+  const db = setup();
+  const teacherId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  db.users.set(teacherId, { user: db.user(teacherId, "teacher-primary@example.invalid") });
+  db.tables.profiles.push({ id: teacherId, institution_id: db.legacyId });
+  db.tables.user_roles.push({ profile_id: teacherId, institution_id: db.legacyId, role: "teacher" });
+  const schoolSettings = db.tables.institutions[0].settings_json;
+  schoolSettings.school_student_programs_v1 = { version: 1, years: { "2026-2027": { classes: {} } } };
+  schoolSettings.franco_arabic_reports_v1.scales = [];
+  db.tables.classes = [];
+  db.tables.class_teachers = [];
+  for (const [index, level] of PRIMARY_LEVELS.entries()) {
+    const classUuid = `${String(index + 1).padStart(8, "0")}-1111-4111-8111-111111111111`;
+    db.tables.classes.push({ id: classUuid, label: `${level} unique`, level, academic_year: "2026-2027",
+      institution_id: db.legacyId, education_type: "general_secondary" });
+    schoolSettings.school_student_programs_v1.years["2026-2027"].classes[classUuid] = {
+      tracks: ["french", "arabic"], students: {},
+    };
+    for (const [subjectId, track, maxScore] of [[french, "french", 10], [arabic, "arabic", 20]]) {
+      db.tables.class_teachers.push({ institution_id: db.legacyId, class_id: classUuid,
+        subject_id: subjectId, teacher_id: teacherId, end_date: null });
+      schoolSettings.franco_arabic_reports_v1.scales.push({ cycle: "primary", level, track, maxScore });
+    }
+  }
+  const teacherRoute = createFixtureRouteLoader(db, teacherId)("src/app/api/grades/classes/route.ts");
+  const response = await teacherRoute.GET(new NextRequest("https://example.invalid/api/grades/classes"));
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  const payload = await response.json();
+  assert.equal(payload.mode, "teacher");
+  assert.equal(payload.items.length, 12);
+  for (const level of PRIMARY_LEVELS) {
+    const choices = payload.items.filter(item => item.level === level);
+    assert.equal(choices.length, 2, `${level}: two subject-specific choices`);
+    const frenchRow = choices.find(item => item.subject_id === french);
+    const arabicRow = choices.find(item => item.subject_id === arabic);
+    assert.equal(frenchRow?.school_cycle, "primary", `${level}: French in primary`);
+    assert.equal(arabicRow?.school_cycle, "primary", `${level}: Arabic in primary`);
+    assert.equal(frenchRow?.teaching_track, "french", `${level}: French assigned subject`);
+    assert.equal(arabicRow?.teaching_track, "arabic", `${level}: Arabic assigned subject`);
+    assert.equal(frenchRow?.configured_scale, 10, `${level}: configured French scale`);
+    assert.equal(arabicRow?.configured_scale, 20, `${level}: configured Arabic scale`);
+  }
+});
 test("the existing bulletin endpoint produces a configured ordinary primary bulletin from published marks", async () => {
   const db = setup({ bilingual: false });
   const before = structuredClone(db.tables);
