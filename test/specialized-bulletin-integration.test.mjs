@@ -82,6 +82,58 @@ test("missing composition is incomplete, never an invented zero or an old devoir
   assert.equal(row.ready, false);
 });
 
+
+const PRIMARY_LEVELS = ["CP1", "CP2", "CE1", "CE2", "CM1", "CM2"];
+
+for (const level of PRIMARY_LEVELS) {
+  test(\`primary \${level}: French and Arabic compositions retain independent means, ranks, configured scales and period\`, async () => {
+    const db = setup();
+    const configs = db.tables.institutions[0].settings_json.franco_arabic_reports_v1;
+    db.tables.classes[0].level = level;
+    db.tables.institution_level_subjects.forEach(row => { row.level_code = level; });
+    db.tables.institution_subject_coeffs.forEach(row => { row.level = level; });
+    configs.scales.forEach(row => { row.level = level; });
+    // A published devoir has a score, but is NEVER part of the official bulletin.
+    db.tables.grade_evaluations.push({
+      ...db.tables.grade_evaluations[0], id: \`homework-\${level}\`,
+      eval_kind: "devoir", title: "Devoir", grading_period_id: db.tables.grade_periods[0].id,
+    });
+    db.tables.grade_published_scores.push({
+      ...db.tables.grade_published_scores[0], id: \`homework-score-\${level}\`,
+      evaluation_id: \`homework-\${level}\`, score: 0,
+    });
+    // A valid composition in another period cannot contaminate this report.
+    db.tables.grade_evaluations.push({
+      ...db.tables.grade_evaluations[1], id: \`other-period-\${level}\`,
+      grading_period_id: "99999999-9999-4999-8999-999999999999",
+    });
+    db.tables.grade_published_scores.push({
+      ...db.tables.grade_published_scores[1], id: \`other-score-\${level}\`,
+      evaluation_id: \`other-period-\${level}\`, score: 0,
+    });
+    const response = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url());
+    assert.equal(response.status, 200, \`\${level}: \${JSON.stringify(await response.clone().json())}\`);
+    const result = (await response.json()).specialized;
+    assert.equal(result.cycle, "primary");
+    assert.deepEqual(result.programs, ["french", "arabic"]);
+    assert.equal(result.documents.length, 2);
+    const first = result.documents.find(row => row.studentId === "student-0");
+    const second = result.documents.find(row => row.studentId === "student-1");
+    assert.ok(first && second, \`\${level}: two pupils\`);
+    assert.deepEqual(first.programReadiness, { french: true, arabic: true });
+    assert.equal(first.document.french.generalAverage, 8);
+    assert.equal(first.document.arabic.generalAverage, 12);
+    assert.equal(first.document.french.denominator, 10);
+    assert.equal(first.document.arabic.denominator, 20);
+    assert.equal(first.document.french.rank, 1);
+    assert.equal(first.document.arabic.rank, 1);
+    assert.equal(second.document.french.rank, 2);
+    assert.equal(second.document.arabic.rank, 2);
+    assert.equal("generalAverage" in first.document, false, \`\${level}: no combined mean\`);
+    assert.equal(db.calls.some(call => call.op !== "read"), false, \`\${level}: read-only bulletin\`);
+  });
+}
+
 test("the existing bulletin endpoint produces a configured ordinary primary bulletin from published marks", async () => {
   const db = setup({ bilingual: false });
   const before = structuredClone(db.tables);
