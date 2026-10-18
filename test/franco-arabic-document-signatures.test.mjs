@@ -136,5 +136,5 @@ test("bulletins franco-arabes : chaque enseignement garde SON directeur, simplem
     variant: "ordinary",
   }));
   assert.match(ordinary, /Direction de l’établissement/);
-  assert.doesNotMatch(ordinary, />Le Directeur<\\/span>/);
+  assert.doesNotMatch(ordinary, />Le Directeur<\/span>/);
 });
