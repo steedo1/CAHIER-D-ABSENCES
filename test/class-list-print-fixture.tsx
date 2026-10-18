@@ -3,10 +3,22 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { CI_PRIMARY_FRENCH_REFERENCE, ciPrimaryFrenchDenominator } from "../src/lib/primary-french-reference-ci";
 import { classListSubjectShortName } from "../src/lib/class-list-subjects";
+import { resolveTeachingDocumentSignatories } from "../src/lib/franco-arabic-document-signatories";
 import ClassListPage from "../src/app/admin/classes/liste/[id]/page";
 import ClassListPrintEnhancer from "../src/components/ClassListPrintEnhancer";
 const params = new URLSearchParams(location.search);
 const count = Number(params.get("count") || 6);
+const teaching = params.get("teaching");
+const signatureClassId = "33333333-3333-4333-8333-333333333333";
+const signatureSettings = {
+  school_cycles_v1: { version: 1, enabled: true, enabledCycles: ["primary", "secondary"],
+    teachingTracksByCycle: { primary: ["french", "arabic"], secondary: ["french", "arabic"] } },
+  school_teaching_signatories_v1: { version: 1,
+    french: { name: "Responsable Français Démonstration" }, arabic: { name: "Responsable Arabe Démonstration" } },
+  school_student_programs_v1: { version: 1, years: { "2026-2027": { classes: {
+    [signatureClassId]: { tracks: teaching === "mixed" ? ["french", "arabic"] : [teaching], students: {} },
+  } } } },
+};
 const students = Array.from({ length: count }, (_, index) => ({
   id: `s-${index}`, matricule: `1234567${String(index).padStart(2, "0")}A`,
   full_name: `ÉLÈVE${String(index).padStart(3, "0")} ${params.has("long")
@@ -28,7 +40,11 @@ window.fetch = async (input) => {
     academic_year: { label: "2026-2027" }, can_edit: true,
     institution: { name: "COLLÈGE PRIVÉ DE DÉMONSTRATION DE YAMOUSSOUKRO", code: "000000",
       logo_url: params.has("noLogo") ? null : logo, email: "college.demonstration@example.invalid",
-      regional_direction: "DRENA YAMOUSSOUKRO", status: "private", head_name: "KESSIE DÉSIRÉ OLIVIER" },
+      regional_direction: "DRENA YAMOUSSOUKRO", status: "private", head_name: "KESSIE DÉSIRÉ OLIVIER",
+      ...(teaching ? { document_signatories: resolveTeachingDocumentSignatories(signatureSettings, {
+        academicYear: "2026-2027", classIds: [signatureClassId],
+        institutionHeadName: "Administration Générale Démonstration", institutionHeadTitle: "Titre général configuré",
+      }) } : {}) },
     staff: { head_teacher: { id: "teacher", display_name: "KOFFI CHIMÈNE" }, educators: [] },
     students, totals: { students: count, girls: Math.floor(count / 2), boys: Math.ceil(count / 2) },
   });

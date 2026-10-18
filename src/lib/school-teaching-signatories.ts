@@ -2,6 +2,7 @@ import type { TeachingTrack } from "./school-cycles";
 
 /** Administrative signatories ONLY: no accounts, roles, login or permissions. */
 export const SCHOOL_TEACHING_SIGNATORIES_KEY = "school_teaching_signatories_v1" as const;
+export const SCHOOL_TEACHING_DIRECTOR_TITLE = "Directeur des études" as const;
 export type TeachingSignatory = { name: string };
 export type TeachingSignatories = Partial<Record<TeachingTrack, TeachingSignatory>>;
 const TRACKS: TeachingTrack[] = ["french", "arabic"];
