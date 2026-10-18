@@ -8,6 +8,7 @@ import {
   expandPedagogicalEnrollments, programsForStudent, readStudentProgramSettings,
 } from "@/lib/school-student-programs";
 import { schoolSettingsRevision, writeSchoolSettings } from "@/lib/school-settings-write";
+import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
 import {
   parsePreschoolStore, validPreschoolCatalog, validPreschoolRecord,
   setPreschoolCatalog, setPreschoolRecord, getPreschoolRecord, preschoolRecordReady,
@@ -43,7 +44,7 @@ async function context() {
     auth.error === "unauthorized" ? 401 : 403) } as const;
   const [roles, institution] = await Promise.all([
     getRequestRoles(client, service, auth.user.id),
-    service.from("institutions").select("settings_json").eq("id", auth.instId).maybeSingle(),
+    service.from("institutions").select("settings_json,name,code_unique").eq("id", auth.instId).maybeSingle(),
   ]);
   if (roles.error || institution.error || !institution.data) {
     return { error: response({ ok: false, error: "school_unavailable" }, 503) } as const;
@@ -61,6 +62,7 @@ async function context() {
   return {
     service, school, admin, teacher, instId: auth.instId, userId: auth.user.id,
     settings: institution.data.settings_json,
+    schoolName: institution.data.name, schoolCode: institution.data.code_unique,
   } as const;
 }
 async function getScope(scoped: Exclude<Awaited<ReturnType<typeof context>>, { error: NextResponse }>,
@@ -166,7 +168,9 @@ export async function GET(request: NextRequest) {
       students: full.students, periods: full.periods,
       programs: scoped.school.teachingTracksByCycle.preschool || [],
       format: (scoped.settings as Record<string, any>)?.franco_arabic_reports_v1?.formatsByCycle?.preschool || "separate",
-      catalogs: store.catalogs, records,
+      catalogs: store.catalogs, records, schoolName: scoped.schoolName,
+      schoolCode: scoped.schoolCode,
+      signatories: readSchoolTeachingSignatories(scoped.settings),
       revision: schoolSettingsRevision(scoped.settings),
       admin: scoped.admin, editable: scoped.admin || scoped.teacher,
     });
