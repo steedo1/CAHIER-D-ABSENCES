@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import FrancoArabicBulletin, { type BulletinVariant } from "./FrancoArabicBulletin";
+import SecondaryHistoricalBulletin from "./SecondaryHistoricalBulletin";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
 import { isSpecializedBulletinPrintable } from "@/lib/franco-arabic-print-layout";
 import "@/app/admin/bulletins/modeles/print.css";
 
 /** View inside the existing bulletin page; data and engine choice come from its
  * authenticated API. Changing this layout never changes a calculation or scope. */
-export default function SpecializedBulletinPanel({ data, onBack, onPrint, printPreparing = false, error }: {
+export default function SpecializedBulletinPanel({ data, onBack, onPrint, printPreparing = false, error, schoolLogoUrl }: {
   data: SpecializedBulletinPayload; onBack: () => void; onPrint: () => Promise<void>;
-  printPreparing?: boolean; error?: string | null;
+  printPreparing?: boolean; error?: string | null; schoolLogoUrl?: string | null;
 }) {
   // Defense in depth for existing saved secondary choices and stale API data:
   // secondary never offers the combined model; preserve each teaching track.
@@ -50,8 +51,17 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
     </div>}
     <div className="specialized-print-denied" role="status">Impression indisponible : les bulletins sélectionnés sont incomplets ou non validés. Vérifiez la configuration et les notes publiées dans Mon Cahier.</div>
     <div className={`fa-report-print-root specialized-print-root ${!printable || printPreparing || error ? "specialized-print-blocked" : ""} space-y-6 overflow-x-auto print:overflow-visible`}>
-      {data.documents.map(row => <FrancoArabicBulletin key={row.studentId} model={{ ...row.document,
-        draft: !isSpecializedBulletinPrintable(row.document, row.programReadiness, selected) }} variant={selected} printRoot={false} />)}
+      {data.cycle === "secondary"
+        ? data.documents.map(row => {
+            const program = selected === "arabic" ? row.document.arabic : row.document.french;
+            return program
+              ? <SecondaryHistoricalBulletin key={row.studentId} model={row.document}
+                  program={program} schoolLogoUrl={schoolLogoUrl} />
+              : <article key={row.studentId} role="alert">Bulletin indisponible : enseignement non renseigné.</article>;
+          })
+        : data.documents.map(row => <FrancoArabicBulletin key={row.studentId} model={{ ...row.document,
+            draft: !isSpecializedBulletinPrintable(row.document, row.programReadiness, selected) }}
+            variant={selected} printRoot={false} />)}
     </div>
   </section>;
 }
