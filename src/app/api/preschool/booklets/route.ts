@@ -8,14 +8,13 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, isTeachingTrack,
 import {
   expandPedagogicalEnrollments, programsForStudent, readStudentProgramSettings,
 } from "@/lib/school-student-programs";
-import { schoolSettingsRevision, writeSchoolSettings } from "@/lib/school-settings-write";
 import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
 import {
-  parsePreschoolStore, validPreschoolCatalog, validPreschoolRecord,
-  setPreschoolCatalog, preschoolRecordReady,
+  validPreschoolCatalog, validPreschoolRecord, preschoolRecordReady,
 } from "@/lib/preschool-booklet-store";
 import {
   readPrivatePreschoolRecord, writePrivatePreschoolRecord,
+  readPreschoolCatalogs, writePreschoolCatalog,
 } from "@/lib/preschool-private-records";
 
 export const runtime = "nodejs";
@@ -154,7 +153,12 @@ export async function GET(request: NextRequest) {
   const classId = url.searchParams.get("class_id") || "";
   const periodId = url.searchParams.get("period_id") || "";
   const studentId = url.searchParams.get("student_id") || "";
-  const store = parsePreschoolStore(scoped.settings);
+  let store: Awaited<ReturnType<typeof readPreschoolCatalogs>>;
+  try {
+    store = await readPreschoolCatalogs(scoped.service, scoped.instId);
+  } catch {
+    return response({ ok: false, error: "preschool_catalog_storage_unavailable" }, 503);
+  }
   if (!year || !classId) {
     // The school is already verified and the caller is authenticated.
     // List classes from a single year without ever showing another institution.
@@ -164,7 +168,7 @@ export async function GET(request: NextRequest) {
     try {
       const classes = await getScope(scoped, selectedYear, "");
       return response({ ok: true, year: selectedYear, classes: classes.classes,
-        catalogs: store.catalogs, admin: scoped.admin });
+        catalogs: store.catalogs, catalogRevisions: store.revisions, admin: scoped.admin });
     } catch (error) {
       return response({ ok: false, error: String(error) }, 503);
     }
@@ -195,10 +199,10 @@ export async function GET(request: NextRequest) {
       students: full.students, periods: full.periods,
       programs: scoped.school.teachingTracksByCycle.preschool || [],
       format: (scoped.settings as Record<string, any>)?.franco_arabic_reports_v1?.formatsByCycle?.preschool || "separate",
-      catalogs: store.catalogs, records, schoolName: scoped.schoolName,
+      catalogs: store.catalogs, catalogRevisions: store.revisions,
+      records, schoolName: scoped.schoolName,
       schoolCode: scoped.schoolCode,
       signatories: readSchoolTeachingSignatories(scoped.settings),
-      revision: schoolSettingsRevision(scoped.settings),
       admin: scoped.admin, editable: scoped.admin || scoped.teacher,
     });
   } catch (error) {
@@ -219,7 +223,6 @@ export async function PUT(request: NextRequest) {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return response({ ok: false, error: "invalid_request" }, 400);
   }
-  const store = parsePreschoolStore(scoped.settings);
   if (!isTeachingTrack(data.track) ||
       !(scoped.school.teachingTracksByCycle.preschool || []).includes(data.track)) {
     return response({ ok: false, error: "invalid_preschool_track" }, 400);
@@ -227,29 +230,37 @@ export async function PUT(request: NextRequest) {
   const selectedTrack = data.track as TeachingTrack;
   if (data.mode === "catalog") {
     if (!scoped.admin) return response({ ok: false, error: "forbidden" }, 403);
-    if (data.revision !== schoolSettingsRevision(scoped.settings)) {
-      return response({ ok: false, error: "settings_changed_reload_required" }, 409);
-    }
     if (!validPreschoolCatalog(data.competencies)) {
       return response({ ok: false, error: "invalid_competency_catalog" }, 400);
     }
-    const ids = new Set(data.competencies.map((row: { id: string }) => row.id));
-    const obsolete = (store.catalogs[selectedTrack] || []).filter(row => !ids.has(row.id));
-    if (obsolete.length) {
-      // Old answers must not silently disappear when an administrator edits the list.
-      return response({ ok: false, error: "competency_removal_requires_archival" }, 409);
+    try {
+      const current = await readPreschoolCatalogs(scoped.service, scoped.instId);
+      const ids = new Set((data.competencies as Array<{ id: string }>).map(row => row.id));
+      if ((current.catalogs[selectedTrack] || []).some(row => !ids.has(row.id))) {
+        return response({ ok: false, error: "competency_removal_requires_archival" }, 409);
+      }
+      const revision = await writePreschoolCatalog(scoped.service, scoped.instId, selectedTrack,
+        data.competencies, scoped.userId, data.expectedCatalogRevision);
+      return response({ ok: true, catalogRevision: revision });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "preschool_catalog_save_failed";
+      return response({ ok: false, error: message },
+        message === "catalog_changed_reload_required" ? 409 :
+        message === "invalid_preschool_catalog" ? 400 : 503);
     }
-    const next = setPreschoolCatalog(scoped.settings, selectedTrack, data.competencies);
-    const result = await writeSchoolSettings(scoped.service, scoped.instId, scoped.settings, next);
-    if ("error" in result) return response({ ok: false, error: result.error }, result.status);
-    return response({ ok: true, revision: result.revision });
   } else if (data.mode === "record") {
     if (!scoped.admin && !scoped.teacher) return response({ ok: false, error: "forbidden" }, 403);
     if (![data.class_id, data.period_id, data.student_id].every((v: unknown) =>
       typeof v === "string" && UUID.test(v)) || !/^\d{4}-\d{4}$/.test(data.year)) {
       return response({ ok: false, error: "invalid_context" }, 400);
     }
-    const catalog = store.catalogs[selectedTrack] || [];
+    let catalog;
+    try {
+      const current = await readPreschoolCatalogs(scoped.service, scoped.instId);
+      catalog = current.catalogs[selectedTrack] || [];
+    } catch {
+      return response({ ok: false, error: "preschool_catalog_storage_unavailable" }, 503);
+    }
     if (!catalog.length || !validPreschoolRecord(data.record, catalog)) {
       return response({ ok: false, error: "invalid_preschool_observations" }, 400);
     }
@@ -273,7 +284,7 @@ export async function PUT(request: NextRequest) {
         ? data.expectedEditedAt : null);
       return response({ ok: true, editedAt: saved.editedAt });
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : "private_preschool_save_failed";
+      const message = reason instanceof Error ? reason.message : "preschool_record_save_failed";
       return response({ ok: false, error: message },
         message === "record_changed_reload_required" ? 409 :
         message === "preschool_record_too_large" ? 422 : 503);
