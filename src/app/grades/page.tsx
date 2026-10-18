@@ -124,7 +124,7 @@ type TeachClass = {
 
 type RosterItem = { id: string; full_name: string; matricule: string | null };
 
-type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
+type EvalKind = "devoir" | "composition" | "interro_ecrite" | "interro_orale";
 
 type PublicationStatus =
   | "draft"
@@ -656,6 +656,7 @@ export default function TeacherNotesPage() {
   const [newType, setNewType] = useState<EvalKind>("devoir");
   const [newScale, setNewScale] = useState<number>(20);
   const [newCoeff, setNewCoeff] = useState<number>(1);
+  useEffect(() => { setNewType("devoir"); }, [selected?.class_id, selected?.school_cycle]);
 
   // Primary evaluation scales are set by the school for each level and teaching.
   useEffect(() => {
@@ -1219,6 +1220,10 @@ export default function TeacherNotesPage() {
 
   async function addEvaluation() {
     if (!selected) return;
+    if (isPrimaryProgram && !selectedPeriodId) {
+      setMsg("Aucune période d’évaluation sélectionnée : utilisez Paramètres → Périodes d’évaluation.");
+      return;
+    }
     if (isPrimaryProgram && !selected.configured_scale) {
       setMsg("Barème non configuré pour le primaire et cet enseignement : demandez à la direction de le définir avant toute saisie.");
       return;
@@ -1813,9 +1818,11 @@ export default function TeacherNotesPage() {
           : "Rendement global fragile. Une remédiation ciblée est recommandée avant la prochaine évaluation.";
 
     const typeLabel =
-      ev.eval_kind === "devoir"
-        ? "Devoir"
-        : ev.eval_kind === "interro_ecrite"
+      ev.eval_kind === "composition"
+        ? "Composition"
+        : ev.eval_kind === "devoir"
+          ? "Devoir"
+          : ev.eval_kind === "interro_ecrite"
           ? "Interrogation écrite"
           : "Interrogation orale";
 
@@ -2320,6 +2327,7 @@ export default function TeacherNotesPage() {
   const labelByEvalId: Record<string, string> = useMemo(() => {
     const counters: Record<EvalKind, number> = {
       devoir: 0,
+      composition: 0,
       interro_ecrite: 0,
       interro_orale: 0,
     };
@@ -2329,6 +2337,7 @@ export default function TeacherNotesPage() {
       const idx = counters[ev.eval_kind];
       let prefix: string;
       if (ev.eval_kind === "devoir") prefix = "DEVOIR";
+      else if (ev.eval_kind === "composition") prefix = "COMPOSITION";
       else if (ev.eval_kind === "interro_ecrite") prefix = "IE";
       else prefix = "IO";
       map[ev.id] = `${prefix}${idx}`;
@@ -2503,9 +2512,11 @@ export default function TeacherNotesPage() {
                   aria-label="Type d’évaluation"
                   disabled={selectedPeriodClosed}
                 >
-                  <option value="devoir">{isPrimaryProgram ? "Évaluation écrite" : "Devoir"}</option>
-                  <option value="interro_ecrite">{isPrimaryProgram ? "Exercice écrit" : "Interrogation écrite"}</option>
-                  <option value="interro_orale">{isPrimaryProgram ? "Évaluation orale" : "Interrogation orale"}</option>
+                  <option value="devoir">Devoir</option>
+                  {isPrimaryProgram ? <option value="composition">Composition</option> : <>
+                    <option value="interro_ecrite">Interrogation écrite</option>
+                    <option value="interro_orale">Interrogation orale</option>
+                  </>}
                 </Select>
               </div>
 
@@ -2580,7 +2591,7 @@ export default function TeacherNotesPage() {
             <div className="mt-2">
               <Button
                 onClick={addEvaluation}
-                disabled={!selected || creating || selectedPeriodClosed || isPreschoolProgram || (isPrimaryProgram && !selected.configured_scale)}
+                disabled={!selected || creating || selectedPeriodClosed || isPreschoolProgram || (isPrimaryProgram && (!selected.configured_scale || !selectedPeriodId))}
               >
                 <Plus className="h-4 w-4" />
                 {creating ? "Ajout…" : "Ajouter une note"}
@@ -3468,9 +3479,11 @@ export default function TeacherNotesPage() {
                   <tbody className="divide-y">
                     {evaluations.map((ev) => {
                       const typeLabel =
-                        ev.eval_kind === "devoir"
-                          ? "Devoir"
-                          : ev.eval_kind === "interro_ecrite"
+                        ev.eval_kind === "composition"
+                          ? "Composition"
+                          : ev.eval_kind === "devoir"
+                            ? "Devoir"
+                            : ev.eval_kind === "interro_ecrite"
                           ? "Interrogation écrite"
                           : "Interrogation orale";
                       const shortLabel = labelByEvalId[ev.id] ?? "";
