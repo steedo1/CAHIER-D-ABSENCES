@@ -65,3 +65,15 @@ test("specialized workspace displays all five educational report modes", () => {
     assert.ok(html.includes("Afficher les résultats"), mode);
   }
 });
+
+test("official DESPS export fails closed for bilingual schools until authority validates the model", () => {
+  for (const file of ["src/app/admin/export-moyennes/page.tsx",
+    "src/app/api/admin/exports/averages/route.ts",
+    "src/app/api/admin/exports/averages/diagnostic/route.ts"]) {
+    const code = read(file);
+    assert.match(code, /isBilingualSchool\(parseSchoolCyclesSettings\(/, file);
+    assert.match(code, /DESPS|Export DESPS/, file);
+  }
+  assert.match(read("src/app/api/admin/exports/averages/route.ts"),
+    /DESPS_FRANCO_ARABIC_MODEL_NOT_VALIDATED/);
+});
