@@ -109,7 +109,13 @@ test("un clic d'enregistrement arabe ne touche JAMAIS aux coefficients historiqu
     const historicalWrites = requests.filter(req => req.url === "/api/admin/institution/subject-coeffs" && req.method === "PUT");
     assert.equal(historicalWrites.length, 0);
     const saves = requests.filter(req => req.url === "/api/admin/bulletin-templates" && req.method === "PUT");
-    assert.equal(saves.length, 1);
+    assert.equal(saves.length, 1, JSON.stringify({
+      error: container.querySelector('[role="alert"]')?.textContent,
+      message: container.querySelector('[role="status"]')?.textContent,
+      inputs: [...container.querySelectorAll("input")].map(input => ({ label: input.getAttribute("aria-label"), value: input.value })),
+      writes: requests.filter(request => request.method === "PUT"),
+      loading: [...container.querySelectorAll("button")].filter(button => button.textContent.includes("Enregistrer")).map(button => ({ text: button.textContent, disabled: button.disabled })),
+    }));
     const data = saves[0].body;
     assert.equal(data.enabled, true);
     assert.equal(data.engine, "specialized");
