@@ -102,7 +102,7 @@ test("un clic d'enregistrement arabe ne touche JAMAIS aux coefficients historiqu
     assert.ok(max);
     await changeValue(win, max, "20");
     await changeValue(win, container.querySelector('input[aria-label="Coefficient Arabe"]'), "5");
-    const save = [...container.querySelectorAll("button")].find(b => /Enregistrer les coefficients et barèmes/.test(b.textContent));
+    const save = [...container.querySelectorAll("button")].find(b => /Enregistrer les coefficients/.test(b.textContent));
     assert.ok(save);
     await act(async () => { save.click(); });
     await flush(); await flush();
