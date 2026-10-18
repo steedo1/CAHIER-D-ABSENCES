@@ -119,6 +119,7 @@ type TeachClass = {
   /** Supplied by the server only for schools opting into multi-cycle education. */
   school_cycle?: "preschool" | "primary" | "secondary" | null;
   teaching_track?: "french" | "arabic" | null;
+  configured_scale?: number | null;
 };
 
 type RosterItem = { id: string; full_name: string; matricule: string | null };
@@ -653,8 +654,15 @@ export default function TeacherNotesPage() {
     new Date().toISOString().slice(0, 10)
   );
   const [newType, setNewType] = useState<EvalKind>("devoir");
-  const [newScale, setNewScale] = useState<5 | 10 | 20>(20);
+  const [newScale, setNewScale] = useState<number>(20);
   const [newCoeff, setNewCoeff] = useState<number>(1);
+
+  // Primary evaluation scales are set by the school for each level and teaching.
+  useEffect(() => {
+    if (selected?.school_cycle === "primary" && selected.configured_scale) {
+      setNewScale(selected.configured_scale);
+    }
+  }, [selected?.class_id, selected?.configured_scale, selected?.school_cycle]);
   const [creating, setCreating] = useState(false);
 
   /* -------- Colonne active sur mobile -------- */
@@ -1211,6 +1219,10 @@ export default function TeacherNotesPage() {
 
   async function addEvaluation() {
     if (!selected) return;
+    if (isPrimaryProgram && !selected.configured_scale) {
+      setMsg("Barème non configuré pour le primaire et cet enseignement : demandez à la direction de le définir avant toute saisie.");
+      return;
+    }
     if (!isOnline) {
       setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
       return;
@@ -2526,12 +2538,12 @@ export default function TeacherNotesPage() {
                 <Select
                   value={String(newScale)}
                   onChange={(e) =>
-                    setNewScale(Number(e.target.value) as 5 | 10 | 20)
+                    setNewScale(Number(e.target.value))
                   }
                   aria-label="Échelle"
                   disabled={selectedPeriodClosed}
                 >
-                  {[5, 10, 20].map((s) => (
+                  {(isPrimaryProgram && selected?.configured_scale ? [selected.configured_scale] : [5, 10, 20]).map((s) => (
                     <option key={s} value={s}>
                       /{s}
                     </option>
@@ -2555,15 +2567,20 @@ export default function TeacherNotesPage() {
                 </div>
               )}
             </div>
+            {isPrimaryProgram && !selected?.configured_scale && (
+              <p role="alert" className="mt-2 text-xs font-medium text-amber-800">
+                Barème non configuré pour ce niveau et cet enseignement. La direction doit le définir avant la saisie officielle.
+              </p>
+            )}
             {isPrimaryProgram && (
               <p className="mt-2 text-xs text-slate-600">
-                Le coefficient de la discipline est fixé par l’établissement. Les évaluations comptent à poids égal.
+                Au primaire, les évaluations ont toutes le même poids. Aucun coefficient libre à saisir.
               </p>
             )}
             <div className="mt-2">
               <Button
                 onClick={addEvaluation}
-                disabled={!selected || creating || selectedPeriodClosed || isPreschoolProgram}
+                disabled={!selected || creating || selectedPeriodClosed || isPreschoolProgram || (isPrimaryProgram && !selected.configured_scale)}
               >
                 <Plus className="h-4 w-4" />
                 {creating ? "Ajout…" : "Ajouter une note"}
