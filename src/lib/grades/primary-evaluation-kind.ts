@@ -38,3 +38,23 @@ export function displayPrimaryEvaluationKind(row: {
   // Older interrogations stay classified as older evaluations, not compositions.
   return null;
 }
+
+/**
+ * A primary class may offer BOTH French and Arabic. Its single class-level
+ * track therefore cannot identify the teacher's assigned subject.
+ * Resolve only explicit, allowed subject mappings; never guess from names.
+ */
+export function resolvePrimaryTeachingTrack(input: {
+  offeredTracks: readonly ("french" | "arabic")[];
+  subjectTracks: readonly ("french" | "arabic")[] | undefined;
+  classTracks: readonly ("french" | "arabic")[];
+}): "french" | "arabic" | null {
+  const offered = new Set(input.offeredTracks);
+  const permitted = input.classTracks.filter(track => offered.has(track));
+  const mapped = input.subjectTracks?.filter(track => permitted.includes(track));
+  if (mapped?.length) return mapped.length === 1 ? mapped[0] : null;
+  // When an explicit subject mapping exists but does not match the class,
+  // never fall back to a different teaching track.
+  if (input.subjectTracks?.length) return null;
+  return permitted.length === 1 ? permitted[0] : null;
+}
