@@ -136,7 +136,7 @@ export function validateFrancoArabicReportsInput(
     const item = asObject(raw);
     if (!item || item.cycle !== "primary" || item.track !== "arabic" ||
       typeof item.subjectId !== "string" ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.subjectId) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.subjectId) ||
       !Number.isInteger(item.maxScore) || (item.maxScore as number) < 1 || (item.maxScore as number) > 100) return null;
     const level = normalizedLevel(item.level, "primary");
     if (!level || !scales.some(scale => scale.cycle === "primary" && scale.track === "arabic" &&
