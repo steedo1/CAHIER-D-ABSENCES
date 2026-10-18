@@ -8,6 +8,7 @@ export type TeachingDirectorPrincipal = {
   institutionId: string;
   teachingTrack: TeachingTrack;
   cycles: SchoolCycle[];
+  hasTeacherRole: boolean;
 };
 
 export type TeachingDirectorResolution =
@@ -46,7 +47,10 @@ export async function requireTeachingDirector(
   const cycles = settings.enabledCycles.filter(cycle =>
     settings.teachingTracksByCycle[cycle]?.includes(teachingTrack));
   if (!cycles.length) return { ok: false, status: 403, error: "track_not_configured" };
-  return { ok: true, principal: { userId: user.id, institutionId, teachingTrack, cycles } };
+  return { ok: true, principal: { userId: user.id, institutionId, teachingTrack, cycles,
+    hasTeacherRole: (roles.data || []).some(row =>
+      row.role === "teacher" && row.institution_id === institutionId),
+  } };
 }
 
 /** Explicit school + program + cycle + subject scope for director resource APIs. */
