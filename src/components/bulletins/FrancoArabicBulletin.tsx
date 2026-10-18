@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import styles from "./FrancoArabicBulletin.module.css";
 import { selectPrintablePrograms } from "@/lib/franco-arabic-print-layout";
 
@@ -179,7 +180,7 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
       {!compact && <th scope="col">Observation</th>}
     </tr></thead>
     <tbody>
-      {program.subjects.map(row => <tr key={row.id}>
+      {program.subjects.map(row => <Fragment key={row.id}><tr>
         <td className={styles.subjectCell}>
           <span dir="auto">{row.name}</span>
           {row.arabicName && <small lang="ar" dir="rtl">{row.arabicName}</small>}
@@ -194,17 +195,17 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
           : number(row.average)}</td>
         {!compact && <td>{number(row.classAverage)}</td>}
         {!compact && <td className={styles.observation}>{row.observation || "—"}</td>}
-      </tr>)}
-      {program.historicalSecondary && program.subjects.flatMap(subject =>
-        (subject.components || []).map(component => (
-          <tr key={`component-${subject.id}-${component.id}`} className={styles.subjectComponentRow}>
+      </tr>
+      {program.historicalSecondary && (row.components || []).map(component => (
+          <tr key={`component-${row.id}-${component.id}`} className={styles.subjectComponentRow}>
             <td className={styles.subjectCell}>↳ {component.name}{component.rank != null ? ` · Rang ${component.rank}` : ""}</td>
             {secondary && <td>{number(component.coefficient, 0)}</td>}
             <td>{component.average === null ? "NC" : number(component.average)}</td>
             {!compact && <td>—</td>}
             {!compact && <td className={styles.observation}>Sous-matière</td>}
           </tr>
-        )))}
+        ))}
+      </Fragment>)}
     </tbody>
   </table>;
 }
