@@ -246,14 +246,19 @@ test("real secondary curriculum, scales and coefficients match level aliases wit
   const response = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url());
   const data = await response.json(); assert.equal(response.status, 200, JSON.stringify(data));
   const row = data.specialized.documents[0];
-  assert.equal(row.ready, true); assert.equal(row.document.french.generalAverage, 8);
+  assert.equal(row.ready, true);
+  assert.equal(row.document.french.generalAverage, 16, "historical secondary engine normalizes /10 grades onto /20");
+  assert.equal(row.document.french.denominator, 20);
   assert.deepEqual(row.document.french.subjects.map(subject => subject.id), [french]);
+  assert.equal(row.document.french.subjects[0].coefficient, 2, "use historical secondary coefficient");
   assert.deepEqual(row.programReadiness, { french: true, arabic: true });
   db.tables.institution_level_subjects.forEach(item => { item.level_code = "5eme"; });
   const missing = await (await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url())).json();
-  assert.equal(missing.specialized.documents[0].ready, false);
-  assert.equal(missing.specialized.documents[0].document.french.generalAverage, null);
-  assert.deepEqual(missing.specialized.documents[0].document.french.subjects, []);
+  assert.equal(missing.specialized.documents[0].ready, false, "Arabic specialized curriculum still requires correct level");
+  assert.equal(missing.specialized.documents[0].document.french.generalAverage, 16,
+    "French MUST still use historical secondary data even when Arabic specialized curriculum is incomplete");
+  assert.equal(missing.specialized.documents[0].programReadiness.french, true);
+  assert.equal(missing.specialized.documents[0].programReadiness.arabic, false);
 });
 
 test("program rankings preserve independent ties and exclude incomplete results", async () => {
