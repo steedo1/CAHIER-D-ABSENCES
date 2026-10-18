@@ -1,5 +1,9 @@
 // src/app/admin/notes/conseil-classe/page.tsx
 "use client";
+import SpecializedCorrespondentReports from "@/components/admin/SpecializedCorrespondentReports";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import { isBilingualSchool } from "@/lib/school-student-programs";
+
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Printer, RefreshCw, FileText, X } from "lucide-react";
@@ -961,6 +965,14 @@ function filterConductByActiveStudents(
 /* ───────── Page ───────── */
 
 export default function ConseilClassePage() {
+  const navigation = useSchoolNavigation();
+  if (navigation && isBilingualSchool(navigation.settings)) {
+    return <SpecializedCorrespondentReports mode="council" />;
+  }
+  return <LegacyConseilClassePage />;
+}
+
+function LegacyConseilClassePage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
 
