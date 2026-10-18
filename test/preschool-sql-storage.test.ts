@@ -23,7 +23,7 @@ function fakeDB() {
     const filters: Array<(row: Row) => boolean> = [];
     let update: Row | null = null;
     const matched = () => tables[name].filter(row => filters.every(f => f(row)));
-    const query = {
+    const query: any = {
       select: (_columns: string) => query,
       eq: (column: string, expected: unknown) => {
         filters.push(row => row[column] === expected); return query;
