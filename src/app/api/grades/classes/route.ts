@@ -14,6 +14,8 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, type SchoolCycle
 import { readStudentProgramSettings } from "@/lib/school-student-programs";
 import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
 import { resolvePrimaryTeachingTrack } from "@/lib/grades/primary-evaluation-kind";
+import { hasCiPrimaryFrenchReference } from "@/lib/school-class-subjects";
+import { ciPrimaryFrenchEntryForName, ciPrimaryFrenchDenominator } from "@/lib/primary-french-reference-ci";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +36,7 @@ type TeachClass = {
   school_cycle: SchoolCycle | null;
   teaching_track: TeachingTrack | null;
   configured_scale: number | null;
+  academic_year: string;
 };
 
 
@@ -221,12 +224,14 @@ export async function GET(_req: NextRequest) {
         nameById.set(subjId, nm);
       }
 
-      return list.map((it) => ({
-        ...it,
-        subject_name: it.subject_id
-          ? nameById.get(it.subject_id) ?? it.subject_name
-          : it.subject_name,
-      }));
+      return list.map((it) => {
+        const subjectName = it.subject_id ? nameById.get(it.subject_id) ?? it.subject_name : it.subject_name;
+        const ciEntry = subjectName && it.school_cycle === "primary" && it.teaching_track === "french" &&
+          hasCiPrimaryFrenchReference(institutionContext.settings, it.academic_year, it.class_id)
+          ? ciPrimaryFrenchEntryForName(subjectName) : null;
+        return { ...it, subject_name: subjectName,
+          configured_scale: ciEntry ? ciPrimaryFrenchDenominator(it.level, ciEntry.code) : it.configured_scale };
+      });
     }
 
     /* ───────── Mode PROF ───────── */
@@ -250,6 +255,7 @@ export async function GET(_req: NextRequest) {
             level: String(cls.level ?? "—"),
             subject_id: row.subject_id || null,
             subject_name: null,
+              academic_year: String(cls.academic_year || ""),
             ...classContext(cls, formationLabels, String(row.class_id), String(cls.academic_year || ""), row.subject_id || null, school, programs, reports),
           });
         });
@@ -306,6 +312,7 @@ export async function GET(_req: NextRequest) {
               level: String(cls.level ?? "—"),
               subject_id: row.subject_id || null,
               subject_name: null,
+              academic_year: String(cls.academic_year || ""),
               ...classContext(cls, formationLabels, String(row.class_id), String(cls.academic_year || ""), row.subject_id || null, school, programs, reports),
             });
           });
