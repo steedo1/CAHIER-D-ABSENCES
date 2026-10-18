@@ -12,8 +12,11 @@ import { schoolSettingsRevision, writeSchoolSettings } from "@/lib/school-settin
 import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
 import {
   parsePreschoolStore, validPreschoolCatalog, validPreschoolRecord,
-  setPreschoolCatalog, setPreschoolRecord, getPreschoolRecord, preschoolRecordReady,
+  setPreschoolCatalog, preschoolRecordReady,
 } from "@/lib/preschool-booklet-store";
+import {
+  readPrivatePreschoolRecord, writePrivatePreschoolRecord,
+} from "@/lib/preschool-private-records";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -150,6 +153,7 @@ export async function GET(request: NextRequest) {
   const year = url.searchParams.get("year") || "";
   const classId = url.searchParams.get("class_id") || "";
   const periodId = url.searchParams.get("period_id") || "";
+  const studentId = url.searchParams.get("student_id") || "";
   const store = parsePreschoolStore(scoped.settings);
   if (!year || !classId) {
     // The school is already verified and the caller is authenticated.
@@ -165,7 +169,8 @@ export async function GET(request: NextRequest) {
       return response({ ok: false, error: String(error) }, 503);
     }
   }
-  if (!UUID.test(classId) || (periodId && !UUID.test(periodId))) {
+  if (!UUID.test(classId) || (periodId && !UUID.test(periodId)) ||
+      (studentId && !UUID.test(studentId))) {
     return response({ ok: false, error: "invalid_ids" }, 400);
   }
   try {
@@ -174,9 +179,13 @@ export async function GET(request: NextRequest) {
       return response({ ok: false, error: "invalid_period" }, 400);
     }
     const records: Record<string, Record<string, unknown>> = {};
-    if (periodId) for (const student of full.students) {
+    if (studentId && periodId) {
+      const student = full.students.find(row => row.id === studentId);
+      if (!student) return response({ ok: false, error: "student_program_forbidden" }, 403);
       for (const track of student.tracks) {
-        const record = getPreschoolRecord(store, year, classId, periodId, track, student.id);
+        const record = await readPrivatePreschoolRecord(scoped.service, {
+          institutionId: scoped.instId, year, classId, periodId, track, studentId,
+        });
         (records[student.id] ||= {})[track] = {
           record, ready: preschoolRecordReady(store.catalogs[track] || [], record),
         };
@@ -207,9 +216,8 @@ export async function PUT(request: NextRequest) {
     return response({ ok: false, error: "expected_json" }, 415);
   }
   const data = await request.json().catch(() => null);
-  if (!data || typeof data !== "object" || Array.isArray(data) ||
-      data.revision !== schoolSettingsRevision(scoped.settings)) {
-    return response({ ok: false, error: "settings_changed_reload_required" }, 409);
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return response({ ok: false, error: "invalid_request" }, 400);
   }
   const store = parsePreschoolStore(scoped.settings);
   if (!isTeachingTrack(data.track) ||
@@ -217,9 +225,11 @@ export async function PUT(request: NextRequest) {
     return response({ ok: false, error: "invalid_preschool_track" }, 400);
   }
   const selectedTrack = data.track as TeachingTrack;
-  let next: Record<string, unknown>;
   if (data.mode === "catalog") {
     if (!scoped.admin) return response({ ok: false, error: "forbidden" }, 403);
+    if (data.revision !== schoolSettingsRevision(scoped.settings)) {
+      return response({ ok: false, error: "settings_changed_reload_required" }, 409);
+    }
     if (!validPreschoolCatalog(data.competencies)) {
       return response({ ok: false, error: "invalid_competency_catalog" }, 400);
     }
@@ -229,7 +239,10 @@ export async function PUT(request: NextRequest) {
       // Old answers must not silently disappear when an administrator edits the list.
       return response({ ok: false, error: "competency_removal_requires_archival" }, 409);
     }
-    next = setPreschoolCatalog(scoped.settings, selectedTrack, data.competencies);
+    const next = setPreschoolCatalog(scoped.settings, selectedTrack, data.competencies);
+    const result = await writeSchoolSettings(scoped.service, scoped.instId, scoped.settings, next);
+    if ("error" in result) return response({ ok: false, error: result.error }, result.status);
+    return response({ ok: true, revision: result.revision });
   } else if (data.mode === "record") {
     if (!scoped.admin && !scoped.teacher) return response({ ok: false, error: "forbidden" }, 403);
     if (![data.class_id, data.period_id, data.student_id].every((v: unknown) =>
@@ -252,18 +265,19 @@ export async function PUT(request: NextRequest) {
       const message = error instanceof Error ? error.message : "school_data_unavailable";
       return response({ ok: false, error: message }, statusFor(message));
     }
-    next = setPreschoolRecord(scoped.settings, {
-      year: data.year, classId: data.class_id, periodId: data.period_id,
-      track: selectedTrack, studentId: data.student_id, record: data.record,
-      actor: scoped.userId,
-    });
-  } else return response({ ok: false, error: "invalid_mode" }, 400);
-  // Bounded persistence: prevent JSONB school settings from becoming a large
-  // unbounded grade database. Explicitly fail instead of losing data.
-  if (JSON.stringify(next).length > 2_000_000) {
-    return response({ ok: false, error: "preschool_store_capacity_reached" }, 422);
+    try {
+      const saved = await writePrivatePreschoolRecord(scoped.service, {
+        institutionId: scoped.instId, year: data.year, classId: data.class_id,
+        periodId: data.period_id, track: selectedTrack, studentId: data.student_id,
+      }, data.record, scoped.userId, typeof data.expectedEditedAt === "string"
+        ? data.expectedEditedAt : null);
+      return response({ ok: true, editedAt: saved.editedAt });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "private_preschool_save_failed";
+      return response({ ok: false, error: message },
+        message === "record_changed_reload_required" ? 409 :
+        message === "preschool_record_too_large" ? 422 : 503);
+    }
   }
-  const result = await writeSchoolSettings(scoped.service, scoped.instId, scoped.settings, next);
-  if ("error" in result) return response({ ok: false, error: result.error }, result.status);
-  return response({ ok: true, revision: result.revision });
+  return response({ ok: false, error: "invalid_mode" }, 400);
 }
