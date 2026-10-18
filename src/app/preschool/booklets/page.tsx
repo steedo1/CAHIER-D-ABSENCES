@@ -142,8 +142,8 @@ export default function PreschoolBookletPage() {
       ...previous, observations: {
         ...previous.observations,
         [competencyId]: {
-          attainment: "not_observed", observation: "",
-          ...previous.observations[competencyId], ...patch,
+          ...(previous.observations[competencyId] || { attainment: "not_observed", observation: "" }),
+          ...patch,
         },
       },
     }));
