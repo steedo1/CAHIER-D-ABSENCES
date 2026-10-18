@@ -13,7 +13,7 @@ import {
 import { computeAcademicYear } from "@/lib/academicYear";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
 import { resolveEvaluationTeachingTrack } from "@/lib/pedagogical-engine";
-import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
+import { getConfiguredScoringScale, getConfiguredPrimarySubjectScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
 import { encodePrimaryEvaluation, isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
 import { hasCiPrimaryFrenchReference } from "@/lib/school-class-subjects";
 import { ciPrimaryFrenchEntryForName, ciPrimaryFrenchDenominator } from "@/lib/primary-french-reference-ci";
@@ -840,6 +840,13 @@ export async function POST(req: NextRequest) {
         parseFrancoArabicReportsSettings(schoolCtx.settings), "primary", schoolCtx.level, track);
       if (primaryScale == null) {
         return NextResponse.json({ ok: false, error: "primary_scale_not_configured" }, { status: 409 });
+      }
+      if (track === "arabic" && globalId) {
+        primaryScale = getConfiguredPrimarySubjectScale(
+          parseFrancoArabicReportsSettings(schoolCtx.settings), schoolCtx.level, globalId);
+        if (primaryScale == null) {
+          return NextResponse.json({ ok: false, error: "primary_arabic_subject_scale_not_configured" }, { status: 409 });
+        }
       }
       // The already-applied CI curriculum has per-subject examination denominators
       // at CM1/CM2. Only ACTIVE catalog names and verified class+year opt-in qualify.
