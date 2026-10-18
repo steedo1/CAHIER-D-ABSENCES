@@ -138,7 +138,9 @@ export async function GET(request: NextRequest) {
   if (!year || !classId) {
     // The school is already verified and the caller is authenticated.
     // List classes from a single year without ever showing another institution.
-    const selectedYear = year || `${new Date().getUTCFullYear()}-${new Date().getUTCFullYear() + 1}`;
+    const today = new Date();
+    const start = today.getUTCMonth() >= 7 ? today.getUTCFullYear() : today.getUTCFullYear() - 1;
+    const selectedYear = year || `${start}-${start + 1}`;
     try {
       const classes = await getScope(scoped, selectedYear, "");
       return response({ ok: true, year: selectedYear, classes: classes.classes,
