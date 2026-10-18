@@ -223,6 +223,7 @@ export async function GET() {
   // opt-in school mapping. An Arabic-linked class does not enroll/count the
   // pupil a second time. Missing mappings stay unclassified, never French by default.
   const programmeClasses = new Map<string, Partial<Record<TeachingTrack, string>>>();
+  const verifiedSchoolClasses = new Map<string, { id: string; level: string | null }>();
   if (school.enabled) {
     const { data: scopedClasses, error: classesError } = await srv.from("classes")
       .select("id,level,institution_id,academic_year")
@@ -233,6 +234,9 @@ export async function GET() {
     const knownClasses = scopedClasses.map((row) => ({
       id: row.id, level: row.level, cycle: resolveSchoolCycleForClass(row, school),
     }));
+    for (const row of scopedClasses) {
+      verifiedSchoolClasses.set(row.id, { id: row.id, level: row.level });
+    }
     const currentEnrollments = (enrollmentsResult.data || []).map((row: any) => ({
       class_id: clean(row.class_id), student_id: clean(row.student_id), end_date: null,
     }));
@@ -332,6 +336,20 @@ export async function GET() {
       for (const row of enrollmentsResult.data || []) {
         const cls = (row as any).classes;
         if (cls?.id) classes.set(cls.id, cls);
+      }
+      // A pedagogical Arabic/French class may be linked to a pupil's
+      // administrative class without owning another enrollment row.
+      // It still needs its own validated grading periods in statistics.
+      for (const record of programmeClasses.values()) {
+        for (const id of Object.values(record)) {
+          const schoolClass = id && verifiedSchoolClasses.get(id);
+          if (schoolClass && !classes.has(schoolClass.id)) {
+            classes.set(schoolClass.id, {
+              ...schoolClass, education_type: "general_secondary",
+              formation_code: null, formation_level_code: null,
+            });
+          }
+        }
       }
       academicPeriods = await loadStatisticsGradePeriods(srv, institutionId, academicYear, Array.from(classes.values()), settingsJson);
     } catch {
