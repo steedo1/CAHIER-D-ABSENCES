@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PreschoolAttainment, PreschoolCompetency } from "@/lib/preschool-assessments";
 import type { PreschoolRecord, PreschoolMark } from "@/lib/preschool-booklet-store";
 import type { TeachingTrack } from "@/lib/school-cycles";
@@ -41,6 +41,8 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
       class_forbidden: "Cette classe ne fait pas partie de vos affectations autorisées.",
       student_program_forbidden: "Cet élève n’est pas affecté à cet enseignement dans cette classe.",
       preschool_store_capacity_reached: "La capacité du stockage actuel est atteinte : une extension du stockage par établissement est nécessaire.",
+      record_changed_reload_required: "Cet élève a été modifié par une autre personne. Actualisez sa fiche pour éviter d’écraser ses observations.",
+      private_preschool_storage_unavailable: "Le stockage privé des livrets est temporairement indisponible.",
       not_preschool_school: "Les livrets de compétences ne sont disponibles que pour les établissements ayant activé le préscolaire.",
     };
     throw Error(body.message || humanErrors[body.error] || body.error || "Chargement indisponible");
@@ -80,16 +82,21 @@ export default function PreschoolBookletPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const requestId = useRef(0);
 
-  const load = useCallback(async (yearValue: string, classValue: string, periodValue: string) => {
+  const load = useCallback(async (yearValue: string, classValue: string, periodValue: string,
+    studentValue = "") => {
+    const id = ++requestId.current;
     setLoading(true); setError("");
     try {
       const params = new URLSearchParams();
       if (yearValue) params.set("year", yearValue);
       if (classValue) params.set("class_id", classValue);
       if (periodValue) params.set("period_id", periodValue);
+      if (studentValue) params.set("student_id", studentValue);
       const response = await getJson<FormData & { classes?: ClassRow[] }>(
         "/api/preschool/booklets?" + params.toString());
+      if (id !== requestId.current) return;
       if (!classValue) {
         setYear(response.year);
         setClasses(response.classes || []);
@@ -102,9 +109,10 @@ export default function PreschoolBookletPage() {
           ? current : response.students[0]?.id || "");
       }
     } catch (reason) {
+      if (id !== requestId.current) return;
       setError(reason instanceof Error ? reason.message : "Lecture impossible");
       setData(null);
-    } finally { setLoading(false); }
+    } finally { if (id === requestId.current) setLoading(false); }
   }, []);
 
   useEffect(() => { void load("", "", ""); }, [load]);
@@ -115,8 +123,8 @@ export default function PreschoolBookletPage() {
     return () => window.clearTimeout(handle);
   }, [year, classId, load]);
   useEffect(() => {
-    if (year && classId) void load(year, classId, periodId);
-  }, [year, classId, periodId, load]);
+    if (year && classId) void load(year, classId, periodId, studentId);
+  }, [year, classId, periodId, studentId, load]);
 
   const student = data?.students.find(item => item.id === studentId);
   const enabledTracks = student?.tracks || [];
@@ -168,13 +176,14 @@ export default function PreschoolBookletPage() {
       let payload: Record<string, unknown> = { mode, track: effectiveTrack, revision: data.revision };
       if (mode === "catalog") payload = { ...payload, competencies: parseCatalogDraft(catalogDraft) };
       else payload = { ...payload, year: data.year, class_id: classId,
-        period_id: periodId, student_id: studentId, record };
+        period_id: periodId, student_id: studentId, record,
+        expectedEditedAt: slot?.record?.editedAt || null };
       await getJson("/api/preschool/booklets", {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       setNotice(mode === "catalog" ? "Catalogue enregistré." : "Observations enregistrées.");
-      await load(year, classId, periodId);
+      await load(year, classId, periodId, studentId);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Enregistrement impossible");
     } finally { setWorking(false); }
