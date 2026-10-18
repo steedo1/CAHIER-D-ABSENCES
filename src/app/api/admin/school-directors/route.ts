@@ -51,10 +51,26 @@ export async function GET() {
     .select("id,display_name,email,phone").in("id", ids) : { data: [], error: null };
   if (profiles.error) return respond({ ok: false, error: "director_profiles_unavailable" }, 503);
   const byId = new Map((profiles.data || []).map(row => [row.id, row]));
-  return respond({ ok: true, directors: (data || []).map(row => ({
-    track: row.teaching_track, active: row.is_active,
-    updated_at: row.updated_at, profile: byId.get(row.profile_id) || null,
-  })) });
+  // Offer existing school teachers for nomination; the selector does not
+  // create a second login or reset their current password.
+  const { data: teacherRoles, error: teachersError } = await access.service.from("user_roles")
+    .select("profile_id").eq("institution_id", access.instId).eq("role", "teacher").limit(400);
+  if (teachersError) return respond({ ok: false, error: "director_candidates_unavailable" }, 503);
+  const teacherIds = [...new Set((teacherRoles || []).map(row => row.profile_id))];
+  const existingProfiles = teacherIds.length ? await access.service.from("profiles")
+    .select("id,display_name,email,phone,institution_id").in("id", teacherIds)
+    .eq("institution_id", access.instId) : { data: [], error: null };
+  if (existingProfiles.error) return respond({ ok: false, error: "director_candidates_unavailable" }, 503);
+  const occupied = new Set((data || []).filter(row => row.is_active).map(row => row.profile_id));
+  return respond({ ok: true,
+    directors: (data || []).map(row => ({
+      track: row.teaching_track, active: row.is_active,
+      updated_at: row.updated_at, profile: byId.get(row.profile_id) || null,
+    })),
+    candidates: (existingProfiles.data || []).filter(row => !occupied.has(row.id)).map(row => ({
+      id: row.id, display_name: row.display_name, email: row.email, phone: row.phone,
+    })),
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -66,6 +82,59 @@ export async function POST(req: NextRequest) {
   }
   const body = await req.json().catch(() => null);
   const track = body?.track;
+  // Explicit appointment of a previously registered teacher, with the
+  // verified user/role/institution and no password or profile mutation.
+  if (body?.existing_profile_id !== undefined) {
+    const profileId = body.existing_profile_id;
+    if (!isTrack(track) || !allowedTrack(access.school, track) ||
+        typeof profileId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(profileId)) {
+      return respond({ ok: false, error: "invalid_director_nomination" }, 400);
+    }
+    const [profile, roles, slot, appointments] = await Promise.all([
+      access.service.from("profiles").select("id,institution_id,display_name,phone,email")
+        .eq("id", profileId).eq("institution_id", access.instId).maybeSingle(),
+      access.service.from("user_roles").select("role,institution_id")
+        .eq("profile_id", profileId),
+      access.service.from("school_teaching_directors").select("profile_id,is_active")
+        .eq("institution_id", access.instId).eq("teaching_track", track).maybeSingle(),
+      access.service.from("school_teaching_directors").select("teaching_track")
+        .eq("institution_id", access.instId).eq("profile_id", profileId).eq("is_active", true),
+    ]);
+    if (profile.error || roles.error || slot.error || appointments.error) {
+      return respond({ ok: false, error: "director_nomination_unavailable" }, 503);
+    }
+    if (!profile.data || slot.data?.is_active ||
+        (appointments.data || []).length ||
+        roles.data?.length !== 1 || roles.data[0].role !== "teacher" ||
+        roles.data[0].institution_id !== access.instId) {
+      return respond({ ok: false, error: "director_nomination_not_allowed" }, 409);
+    }
+    const role = await access.service.from("user_roles").insert({
+      profile_id: profileId, institution_id: access.instId, role: "teaching_director",
+    });
+    if (role.error) return respond({ ok: false, error: "director_role_assignment_failed" }, 503);
+    const assigned = slot.data
+      ? await access.service.from("school_teaching_directors").update({
+          profile_id: profileId, is_active: true, updated_at: new Date().toISOString(),
+        }).eq("institution_id", access.instId).eq("teaching_track", track)
+          .eq("is_active", false).select("profile_id")
+      : await access.service.from("school_teaching_directors").insert({
+          profile_id: profileId, institution_id: access.instId, teaching_track: track,
+          is_active: true,
+        }).select("profile_id");
+    if (assigned.error || assigned.data?.length !== 1) {
+      await access.service.from("user_roles").delete()
+        .eq("profile_id", profileId).eq("institution_id", access.instId)
+        .eq("role", "teaching_director");
+      return respond({ ok: false, error: "director_assignment_failed" }, 503);
+    }
+    return respond({ ok: true, reused_existing_account: true,
+      director: { track, name: profile.data.display_name,
+        phone: profile.data.phone, email: profile.data.email },
+      message: "Compte enseignant conservé, direction attribuée sans changer le mot de passe.",
+    }, 201);
+  }
   const name = typeof body?.name === "string" ? body.name.trim() : "";
   const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
   const phone = typeof body?.phone === "string" ? body.phone.trim() : "";
