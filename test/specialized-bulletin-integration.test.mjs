@@ -46,6 +46,42 @@ test("a Correspondant Fichier from another school cannot retrieve specialized bu
   assert.equal(db.calls.some(call => call.op !== "read"), false);
 });
 
+test("primary bulletins ignore published devoirs and older written interrogations", async () => {
+  const db = setup();
+  const template = db.tables.grade_evaluations[0];
+  for (const [id, kind, title] of [
+    ["legacy-devoir", "devoir", "Devoir"],
+    ["legacy-interro", "interro_ecrite", "Interrogation écrite"],
+  ]) {
+    db.tables.grade_evaluations.push({
+      ...template, id, eval_kind: kind, title, is_published: true,
+      publication_status: "published",
+    });
+    db.tables.grade_published_scores.push({
+      ...db.tables.grade_published_scores[0],
+      id: "score-" + id, evaluation_id: id, score: 10,
+    });
+  }
+  const result = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url());
+  assert.equal(result.status, 200);
+  const row = (await result.json()).specialized.documents[0];
+  assert.equal(row.document.french.generalAverage, 8);
+  assert.equal(row.document.arabic.generalAverage, 12);
+  assert.equal(row.ready, true);
+});
+test("missing composition is incomplete, never an invented zero or an old devoir average", async () => {
+  const db = setup();
+  db.tables.grade_evaluations[0].eval_kind = "devoir";
+  db.tables.grade_evaluations[0].title = "Devoir";
+  const result = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url());
+  assert.equal(result.status, 200);
+  const row = (await result.json()).specialized.documents[0];
+  assert.equal(row.document.french.generalAverage, null);
+  assert.equal(row.document.arabic.generalAverage, 12);
+  assert.equal(row.programReadiness.french, false);
+  assert.equal(row.ready, false);
+});
+
 test("the existing bulletin endpoint produces a configured ordinary primary bulletin from published marks", async () => {
   const db = setup({ bilingual: false });
   const before = structuredClone(db.tables);
