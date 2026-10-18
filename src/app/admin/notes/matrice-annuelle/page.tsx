@@ -1,5 +1,9 @@
 // src/app/admin/notes/matrice-annuelle/page.tsx
 "use client";
+import SpecializedCorrespondentReports from "@/components/admin/SpecializedCorrespondentReports";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import { isBilingualSchool } from "@/lib/school-student-programs";
+
 
 import React, { useEffect, useMemo, useState } from "react";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
@@ -521,6 +525,14 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 }
 
 export default function AnnualMatrixPage() {
+  const navigation = useSchoolNavigation();
+  if (navigation && isBilingualSchool(navigation.settings)) {
+    return <SpecializedCorrespondentReports mode="annual" />;
+  }
+  return <LegacyAnnualMatrixPage />;
+}
+
+function LegacyAnnualMatrixPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
   const [educationScope, setEducationScope] =
