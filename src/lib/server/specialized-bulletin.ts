@@ -232,7 +232,7 @@ export async function loadSpecializedBulletin(input: {
           year, period: period.label || period.code || "", denominator: draft.maximumScore || 0,
           subjects: draft.subjects.map(subject => ({ id: subject.subjectId, name: subjectNames.get(subject.subjectId) || subject.subjectId,
             coefficient: subject.coefficient, average: subject.average, includeInAverage: subject.includeInAverage })),
-          generalAverage: draft.generalAverage, rank, classSize: students.size,
+          generalAverage: draft.generalAverage, rank, classSize: visibleStudents.length,
           appreciation: draft.status === "ready" ? null : "Résultats incomplets — configuration ou notes à vérifier.",
           directorName: signatories[draft.track]?.name || null,
         };
