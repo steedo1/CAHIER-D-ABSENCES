@@ -264,11 +264,11 @@ function isEvaluationDeletableForTeacher(ev: Evaluation) {
   return isEvaluationEditableForTeacher(ev);
 }
 
-function publicationStatusLabel(ev: Evaluation) {
+function publicationStatusLabel(ev: Evaluation, directPublication = false) {
   const status = getPublicationStatus(ev);
 
   if (ev.is_published === true || status === "published") return "Publié";
-  if (status === "submitted") return "En attente de validation";
+  if (status === "submitted") return directPublication ? "À publier" : "En attente de validation";
   if (status === "changes_requested") return "Correction demandée";
 
   return "Brouillon";
@@ -292,17 +292,17 @@ function publicationStatusClass(ev: Evaluation) {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
-function publicationActionLabel(ev: Evaluation) {
+function publicationActionLabel(ev: Evaluation, directPublication = false) {
   if (isEvaluationPublished(ev)) return "Repasser brouillon";
-  if (isEvaluationSubmitted(ev)) return "Soumis";
-  if (isEvaluationChangesRequested(ev)) return "Soumettre à nouveau";
+  if (isEvaluationSubmitted(ev)) return directPublication ? "Publier" : "Soumis";
+  if (isEvaluationChangesRequested(ev)) return directPublication ? "Publier" : "Soumettre à nouveau";
 
-  return "Soumettre / publier";
+  return directPublication ? "Publier les notes" : "Soumettre / publier";
 }
 
-function publicationLockReason(ev: Evaluation) {
+function publicationLockReason(ev: Evaluation, directPublication = false) {
   if (isEvaluationSubmitted(ev)) {
-    return "Évaluation soumise : l’administration doit valider ou demander une correction.";
+    return directPublication ? "Évaluation à publier : les notes sont verrouillées tant que la publication n’est pas terminée." : "Évaluation soumise : l’administration doit valider ou demander une correction.";
   }
 
   if (isEvaluationPublished(ev)) {
@@ -549,6 +549,7 @@ export default function TeacherNotesPage() {
   /* -------- Données -------- */
   const [roster, setRoster] = useState<RosterItem[]>([]);
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
+  const [directGradePublication, setDirectGradePublication] = useState(false);
   const [grades, setGrades] = useState<GradesByEval>({});
   const [changed, setChanged] = useState<GradesByEval>({});
 
@@ -761,6 +762,7 @@ export default function TeacherNotesPage() {
     if (!selected) {
       setRoster([]);
       setEvaluations([]);
+      setDirectGradePublication(false);
       setGrades({});
       setChanged({});
       setActiveEvalId(null);
@@ -801,6 +803,7 @@ export default function TeacherNotesPage() {
             selectedPeriodId || null
           )
         );
+        setDirectGradePublication(jEvals.direct_publication === true);
         const evals = (jEvals.items || []) as Evaluation[];
         // tri par date croissante (stable)
         evals.sort((a, b) => a.eval_date.localeCompare(b.eval_date));
@@ -1257,7 +1260,7 @@ export default function TeacherNotesPage() {
       return;
     }
 
-    if (isEvaluationSubmitted(ev)) {
+    if (isEvaluationSubmitted(ev) && !directGradePublication) {
       setMsg(
         "Cette évaluation est déjà soumise. Attendez la validation de l’administration ou une demande de correction."
       );
@@ -1298,7 +1301,11 @@ export default function TeacherNotesPage() {
       if (resultAction === "submitted" || updatedStatus === "submitted") {
         setMsg("Demande de publication envoyée ✅. En attente de validation administrative.");
       } else if (updatedStatus === "published" || updated.is_published === true) {
-        setMsg("Évaluation publiée officiellement ✅.");
+        setMsg(directGradePublication
+          ? j?.publication?.push_queued
+            ? "Notes publiées officiellement ✅. Notifications des parents mises en file d’envoi."
+            : "Notes publiées officiellement ✅. Mise en file des notifications non confirmée : vérifiez les notifications parents."
+          : "Évaluation publiée officiellement ✅.");
       } else if (updatedStatus === "draft") {
         setMsg("Évaluation repassée en brouillon.");
       } else {
@@ -2640,7 +2647,7 @@ export default function TeacherNotesPage() {
                   ? CLOUD_ONLY_GRADE_WRITE_MESSAGE
                 : isEvalLocked(ev.id)
                   ? "Cette évaluation est verrouillée."
-                  : publicationLockReason(ev),
+                  : publicationLockReason(ev, directGradePublication),
             }))}
             targetEvaluationId={currentVoiceEvalId}
             onTargetEvaluationChange={(evaluationId) => {
@@ -2719,7 +2726,7 @@ export default function TeacherNotesPage() {
                     }
                     title={
                       !isEvaluationEditableForTeacher(ev)
-                        ? publicationLockReason(ev) || "Évaluation non modifiable"
+                        ? publicationLockReason(ev, directGradePublication) || "Évaluation non modifiable"
                         : locked
                         ? "Déverrouiller cette évaluation (PIN)"
                         : "Verrouiller cette évaluation (PIN)"
@@ -2791,7 +2798,7 @@ export default function TeacherNotesPage() {
                                     publicationStatusClass(ev),
                                   ].join(" ")}
                                 >
-                                  {publicationStatusLabel(ev)}
+                                  {publicationStatusLabel(ev, directGradePublication)}
                                 </span>
                               </div>
                             </div>
@@ -2914,7 +2921,7 @@ export default function TeacherNotesPage() {
                                     : isEvalLocked(ev.id)
                                     ? "Évaluation verrouillée"
                                     : !isEvaluationEditableForTeacher(ev)
-                                    ? publicationLockReason(ev) || "Évaluation non modifiable"
+                                    ? publicationLockReason(ev, directGradePublication) || "Évaluation non modifiable"
                                     : undefined
                                 }
                                 value={current == null ? "" : String(current)}
@@ -2997,7 +3004,7 @@ export default function TeacherNotesPage() {
                               publicationStatusClass(ev),
                             ].join(" ")}
                           >
-                            {publicationStatusLabel(ev)}
+                            {publicationStatusLabel(ev, directGradePublication)}
                           </span>
                         </div>
                       </div>
@@ -3025,7 +3032,7 @@ export default function TeacherNotesPage() {
                                     : isEvalLocked(ev.id)
                                     ? "Évaluation verrouillée"
                                     : !isEvaluationEditableForTeacher(ev)
-                                    ? publicationLockReason(ev) || "Évaluation non modifiable"
+                                    ? publicationLockReason(ev, directGradePublication) || "Évaluation non modifiable"
                                     : undefined
                                 }
                                 value={current == null ? "" : String(current)}
@@ -3347,7 +3354,9 @@ export default function TeacherNotesPage() {
               </GhostButton>
             </div>
             <p className="text-xs md:text-sm text-slate-600 mb-3">
-              Publiez ou soumettez les évaluations selon le mode choisi par l’établissement. Les notes soumises ou publiées ne sont plus modifiables directement.
+              {directGradePublication
+                ? "Enregistrez vos notes, puis cliquez sur Publier : aucune validation administrative n’est requise. Après publication officielle, les notifications parents sont préparées automatiquement."
+                : "Publiez ou soumettez les évaluations selon le mode choisi par l’établissement. Les notes soumises ou publiées ne sont plus modifiables directement."}
             </p>
 
             {evaluations.length === 0 ? (
@@ -3418,7 +3427,7 @@ export default function TeacherNotesPage() {
                                   publicationStatusClass(ev),
                                 ].join(" ")}
                               >
-                                {publicationStatusLabel(ev)}
+                                {publicationStatusLabel(ev, directGradePublication)}
                               </span>
 
                               {ev.review_comment && (
@@ -3441,18 +3450,18 @@ export default function TeacherNotesPage() {
                                 disabled={
                                   !isOnline ||
                                   selectedPeriodClosed ||
-                                  isEvaluationSubmitted(ev) ||
+                                  (isEvaluationSubmitted(ev) && !directGradePublication) ||
                                   !!publishBusy[ev.id]
                                 }
                                 title={
-                                  isEvaluationSubmitted(ev)
+                                  isEvaluationSubmitted(ev) && !directGradePublication
                                     ? "Déjà soumis : attente validation administrative"
                                     : undefined
                                 }
                               >
                                 {publishBusy[ev.id]
                                   ? "Traitement…"
-                                  : publicationActionLabel(ev)}
+                                  : publicationActionLabel(ev, directGradePublication)}
                               </Button>
                             </div>
                           </td>
