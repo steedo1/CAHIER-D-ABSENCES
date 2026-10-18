@@ -244,7 +244,7 @@ export async function loadSpecializedBulletin(input: {
     });
     return json({ ok: true, class: { ...schoolClass, label: schoolClass.label || level },
       period: { from: period.start_date, to: period.end_date, label: period.label, academic_year: year },
-      subjects: [], items: [], specialized: { engine: "specialized", cycle, format: asDirector ? "separate" : selectedBulletinFormat(reports, cycle),
+      subjects: [], items: [], specialized: { engine: "specialized", cycle, format: selectedBulletinFormat(reports, cycle),
         coefficientSource: reports.coefficientSource === "program" ? "program" : "institution", programs, documents },
     });
   } catch (error) {
