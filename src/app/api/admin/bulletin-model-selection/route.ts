@@ -41,6 +41,10 @@ export async function PATCH(req: NextRequest) {
       typeof body.revision !== "string") {
     return response({ ok: false, error: "invalid_model_selection" }, 400);
   }
+  // Le secondaire conserve le bulletin historique. Refus aussi côté API.
+  if (body.cycle === "secondary") {
+    return response({ ok: false, error: "secondary_uses_historical_bulletin" }, 400);
+  }
   const { data: institution, error } = await service.from("institutions")
     .select("settings_json").eq("id", access.instId).maybeSingle();
   if (error || !institution) return response({ ok: false, error: "school_unavailable" }, 503);
