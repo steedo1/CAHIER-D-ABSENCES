@@ -4100,6 +4100,12 @@ function BulletinsPageContent() {
               <p className="text-sm text-slate-500">
                 Charger une classe + période, puis ouvrir l’aperçu A4.
               </p>
+              {institution?.settings_json?.school_cycles_v1?.enabledCycles?.includes("preschool") && (
+                <Link href="/preschool/booklets"
+                  className="mt-2 ml-2 inline-flex rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-900 hover:bg-sky-100">
+                  Livrets de compétences préscolaires
+                </Link>
+              )}
               {canConfigureBulletins && institution?.settings_json?.school_cycles_v1?.enabled === true && (
                 <Link href="/admin/parametres?tab=bulletin-models"
                   className="mt-2 inline-flex rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-100">
