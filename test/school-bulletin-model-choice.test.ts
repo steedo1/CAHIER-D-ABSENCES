@@ -29,13 +29,28 @@ test("one school's chosen model is scoped by cycle with legacy fallback", () => 
   });
   assert.ok(result);
   assert.equal(selectedBulletinFormat(result, "primary"), "combined");
-  assert.equal(selectedBulletinFormat(result, "secondary"), "both");
+  assert.equal(selectedBulletinFormat(result, "secondary"), "separate");
   assert.equal(selectedBulletinFormat(result, "preschool"), "separate");
   assert.equal(result.coefficients[0].coefficient, raw.coefficients[0].coefficient);
   assert.equal(result.coefficients[0].subjectId, raw.coefficients[0].subjectId);
   assert.equal(result.scales[0].maxScore, raw.scales[0].maxScore);
   assert.equal(result.scales[1].maxScore, raw.scales[1].maxScore);
   assert.equal(result.engine, "specialized");
+});
+
+test("old secondary model choices never control printable layout", () => {
+  for (const selected of ["combined", "both", "separate"] as const) {
+    const policy = validateFrancoArabicReportsInput({
+      ...raw, format: selected,
+      formatsByCycle: { primary: "combined", secondary: selected },
+    });
+    assert.ok(policy);
+    assert.equal(selectedBulletinFormat(policy, "secondary"), "separate");
+    assert.equal(selectedBulletinFormat(policy, "primary"), "combined");
+  }
+  const policyWithoutCycleChoice = validateFrancoArabicReportsInput({ ...raw, format: "both" });
+  assert.ok(policyWithoutCycleChoice);
+  assert.equal(selectedBulletinFormat(policyWithoutCycleChoice, "secondary"), "separate");
 });
 
 test("a model choice cannot smuggle invalid cycle names or formats into school settings", () => {
@@ -74,6 +89,8 @@ test("model selection route saves only presentation and uses revision/role guard
   assert.match(route, /writeSchoolSettings/);
   assert.doesNotMatch(route, /from\("student_grades"\)|from\("grade_evaluations"\)|\.delete\(/);
   assert.match(real, /format: selectedBulletinFormat\(reports, cycle\)/);
+  const panel = read("src/components/bulletins/SpecializedBulletinPanel.tsx");
+  assert.ok(panel.includes('data.cycle === "secondary" ? "separate" : data.format'));
   assert.doesNotMatch(ui, /DemoBulletinClient/);
   assert.match(ui, /Correspondant Fichier → Bulletins/);
   assert.match(ui, /item === "primary" \|\| item === "preschool"/);
