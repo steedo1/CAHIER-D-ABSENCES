@@ -403,9 +403,11 @@ export default function GeneralStatisticsPage() {
       specialSchool && track !== "all" ? student.program_class_ids?.[track] || null : student.class_id,
     )), [baseFiltered, specialSchool, track]);
   const academicKey = JSON.stringify([academicYear, academicPeriod, academicClassIds, academicRetry]);
-  const availablePeriods = useMemo(() => academicPeriods.filter((period) =>
-    academicClassIds.some((id) => period.class_ids.includes(id)),
-  ), [academicPeriods, academicClassIds]);
+  // Preserve the historic period selector unchanged for ordinary schools.
+  const availablePeriods = useMemo(() => specialSchool
+    ? academicPeriods.filter((period) => academicClassIds.some((id) => period.class_ids.includes(id)))
+    : academicPeriods,
+  [specialSchool, academicPeriods, academicClassIds]);
   const academicData = academicResult?.key === academicKey ? academicResult.data : null;
   const academicBusy = Boolean(academicPeriod && !academicData && !academicError);
   const averageBounds = statisticsAverageBounds(minAverage, maxAverage);
