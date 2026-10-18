@@ -1,5 +1,9 @@
 // src/app/admin/notes/matrices/page.tsx
 "use client";
+import SpecializedCorrespondentReports from "@/components/admin/SpecializedCorrespondentReports";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import { isBilingualSchool } from "@/lib/school-student-programs";
+
 
 import React, { useEffect, useMemo, useState } from "react";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
@@ -249,6 +253,14 @@ function printHtmlDocument(html: string, onError: (message: string) => void) {
 }
 
 export default function MatricesTrimestriellesPage() {
+  const navigation = useSchoolNavigation();
+  if (navigation && isBilingualSchool(navigation.settings)) {
+    return <SpecializedCorrespondentReports mode="term" />;
+  }
+  return <LegacyMatricesTrimestriellesPage />;
+}
+
+function LegacyMatricesTrimestriellesPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [periods, setPeriods] = useState<PeriodRow[]>([]);
   const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
