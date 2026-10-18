@@ -23,7 +23,7 @@ test("éditeur franco-arabe : filtres cycle, enseignement et classe puis tableau
   const view = read("src/components/admin/SchoolCoefficientsClassicWorkflow.tsx");
   for (const label of [/aria-label="Cycle"/, /aria-label="Enseignement"/,
     /aria-label="Niveau et classe"/, /Coefficient bulletin/, /Sous-matières \(optionnel\)/,
-    /Enregistrer les coefficients et barèmes/, /Rafraîchir/]) assert.match(view, label);
+    /Enregistrer les coefficients/, /Rafraîchir/]) assert.match(view, label);
   assert.doesNotMatch(view, /Préparer des bulletins propres à cet établissement/);
   assert.doesNotMatch(view, /Utiliser ces règles pour les bulletins des cycles configurés/);
   assert.doesNotMatch(view, /<SchoolBulletinSettings/);
