@@ -283,7 +283,8 @@ async function teacherHasAccessToClass(
   institutionId: string,
   profileId: string,
   classId: string,
-  subjectCandidates: string[]
+  subjectCandidates: string[],
+  requireExactSubjectAssignment = false,
 ) {
   if (subjectCandidates.length > 0) {
     const { data } = await srv
@@ -298,6 +299,11 @@ async function teacherHasAccessToClass(
 
     if (Array.isArray(data) && data.length > 0) return true;
   }
+
+  // Franco-Arabic programmes cannot authorize an unrelated discipline
+  // solely because a teacher has another assignment in the same class.
+  // The fallback stays available for classic schools.
+  if (requireExactSubjectAssignment) return false;
 
   const { data: anyRow } = await srv
     .from("class_teachers")
@@ -811,6 +817,8 @@ export async function POST(req: NextRequest) {
       (x): x is string => !!x
     );
 
+    const requireExactSubjectAssignment =
+      !isPrivileged(roles) && await requiresDirectGradePublication(srv, institutionId);
     const accessOk = isPrivileged(roles)
       ? true
       : await teacherHasAccessToClass(
@@ -818,7 +826,8 @@ export async function POST(req: NextRequest) {
           institutionId,
           profileId,
           class_id,
-          subjectCandidates
+          subjectCandidates,
+          requireExactSubjectAssignment
         );
 
     if (!accessOk) {
