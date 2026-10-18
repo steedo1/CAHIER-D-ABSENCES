@@ -1,3 +1,4 @@
+import { componentStorageLevel, selectProgramComponents, type SubjectComponent } from "@/lib/school-subject-components";
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
@@ -25,7 +26,7 @@ export type SpecializedBulletinPayload = {
 type SchoolClass = { id: string; institution_id?: string | null; level?: string | null; label?: string | null; academic_year?: string | null; education_type?: string | null; formation_code?: string | null };
 type Student = { id: string; institution_id: string; full_name: string | null; first_name: string | null; last_name: string | null; matricule: string | null; birthdate: string | null };
 type PublishedScore = { id: string; student_id: string; evaluation_id: string; subject_id: string | null; score: number | null; scale: number; coeff: number; publication_version: number };
-type Evaluation = { id: string; subject_id: string | null; eval_kind: string; title: string | null; is_published: boolean; publication_status: string | null; publication_version: number | null; grading_period_id: string | null };
+type Evaluation = { subject_component_id: string | null; id: string; subject_id: string | null; eval_kind: string; title: string | null; is_published: boolean; publication_status: string | null; publication_version: number | null; grading_period_id: string | null };
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
 
@@ -82,7 +83,7 @@ export async function loadSpecializedBulletin(input: {
       (searchParams.get("period_id") ? row.id === searchParams.get("period_id") :
         row.start_date === searchParams.get("from") && row.end_date === searchParams.get("to")));
     if (!period) return json({ ok: false, error: "PERIOD_NOT_APPLICABLE_TO_CLASS" }, 400);
-    const [enrollments, activeSubjects, coefficientRows, curriculum, evaluations, published] = await Promise.all([
+    const [enrollments, activeSubjects, coefficientRows, curriculum, evaluations, published, componentRows] = await Promise.all([
       pages<{ student_id: string; students: Student | Student[] | null }>((from, to) => service.from("class_enrollments")
         .select("student_id,students(id,institution_id,full_name,first_name,last_name,matricule,birthdate)")
         .eq("class_id", schoolClass.id).is("end_date", null).order("student_id").range(from, to)),
@@ -99,12 +100,15 @@ export async function loadSpecializedBulletin(input: {
           return query.order("id").range(from, to);
         }),
       pages<Evaluation>((from, to) => service.from("grade_evaluations")
-        .select("id,subject_id,eval_kind,title,is_published,publication_status,publication_version,grading_period_id")
+        .select("id,subject_id,subject_component_id,eval_kind,title,is_published,publication_status,publication_version,grading_period_id")
         .eq("class_id", schoolClass.id).gte("eval_date", period.start_date).lte("eval_date", period.end_date).order("id").range(from, to)),
       pages<PublishedScore>((from, to) => service.from("grade_published_scores")
         .select("id,student_id,evaluation_id,subject_id,score,scale,coeff,publication_version")
         .eq("institution_id", institutionId).eq("class_id", schoolClass.id).eq("is_current", true)
         .gte("eval_date", period.start_date).lte("eval_date", period.end_date).order("id").range(from, to)),
+      cycle !== "secondary" ? Promise.resolve([] as SubjectComponent[]) : pages<SubjectComponent>((from, to) => service.from("grade_subject_components")
+        .select("id,subject_id,level,code,label,short_label,coeff_in_subject,order_index,is_active")
+        .eq("institution_id", institutionId).order("order_index").order("id").range(from, to)),
     ]);
     // A specialized teaching class may contain a pupil enrolled administratively
     // in its French/Arabic counterpart. Re-verify home enrollment and grade.
@@ -175,9 +179,19 @@ export async function loadSpecializedBulletin(input: {
       }
       // Null means absent, never a numerical zero.
       if (row.score === null || !row.subject_id) continue;
+      const teachingTrack = cycle === "secondary" && classPolicy?.tracks.length === 1 &&
+          school.subjectTracksByCycle[cycle]?.[row.subject_id]?.includes(classPolicy.tracks[0])
+          ? classPolicy.tracks[0] : trackBySubject.get(row.subject_id) ?? null;
+      if (cycle === "secondary" && evaluation.subject_component_id && teachingTrack) {
+        const allowed = selectProgramComponents(componentRows.filter(component => component.subject_id === row.subject_id),
+          { cycle, track: teachingTrack, level, storageLevel: componentStorageLevel(cycle, teachingTrack, level) });
+        if (!allowed.some(component => component.id === evaluation.subject_component_id)) {
+          publicationProblems.push("evaluation_component_outside_program"); continue;
+        }
+      }
       officialScores.push({ studentId: row.student_id, evaluationId: row.evaluation_id, subjectId: row.subject_id,
         score: row.score, scale: row.scale, evaluationCoefficient: row.coeff, isCurrentPublished: true,
-        teachingTrack: trackBySubject.get(row.subject_id) ?? null });
+        componentId: evaluation.subject_component_id, teachingTrack });
     }
     const allPrograms = school.teachingTracksByCycle[cycle] || [];
     const programs = classPolicy
@@ -230,6 +244,9 @@ export async function loadSpecializedBulletin(input: {
     }
     const results = [...students.values()].map(student => ({ student, drafts: resolved.map(policy => buildProgramBulletinDraft({
       studentId: student.id, cycle, level, track: policy.track, school, reports, officialScores: scoresByStudent.get(student.id) || [],
+      subjectComponents: cycle !== "secondary" ? undefined : policy.policies.flatMap(subject => selectProgramComponents(
+        componentRows.filter(component => component.subject_id === subject.subjectId),
+        { cycle, track: policy.track, level, storageLevel: componentStorageLevel(cycle, policy.track, level) })),
       resolvedPolicies: policy.policies, configurationProblems: [...policy.problems, ...publicationProblems],
       ...(ciPrimaryFrench && policy.track === "french" ? { primaryCiDenominators: ciDenominators } : {}),
     })) }));
@@ -252,7 +269,7 @@ export async function loadSpecializedBulletin(input: {
         const rawSubjectRows = draft.subjects.map(subject => ({ id: subject.subjectId,
           name: subjectNames.get(subject.subjectId) || subject.subjectId,
           coefficient: subject.coefficient, average: subject.average,
-          includeInAverage: subject.includeInAverage, denominator: subject.denominator }));
+          includeInAverage: subject.includeInAverage, denominator: subject.denominator, components: subject.components }));
         const bulletinSubjectRows = isCiPrimaryFrench
           ? ciPrimaryFrenchBulletinRows(level, rawSubjectRows) : rawSubjectRows;
         const program: BulletinProgram = { track: draft.track, cycle: SCHOOL_CYCLE_OPTIONS.find(option => option.id === cycle)?.label || cycle, level, className: schoolClass.label || level,

@@ -578,7 +578,7 @@ export default function TeacherNotesPage() {
   const [selectedComponentId, setSelectedComponentId] = useState<string>("");
 
   const supportsComponents = selected
-    ? selected.education_type && selected.education_type !== "general_secondary"
+    ? (selected.school_cycle === "secondary" && selected.teaching_track === "arabic") ? true : selected.education_type && selected.education_type !== "general_secondary"
       ? true
       : isCollegeLevel(selected.level)
     : false;
@@ -745,10 +745,12 @@ export default function TeacherNotesPage() {
 
   // Rubriques / sous-matières pour les niveaux 6e-3e
   useEffect(() => {
+    let cancelled = false;
     setComponents([]);
     setSelectedComponentId("");
     if (!selected || !selected.subject_id) return;
     if (
+      !(selected.school_cycle === "secondary" && selected.teaching_track === "arabic") &&
       (!selected.education_type || selected.education_type === "general_secondary") &&
       !isCollegeLevel(selected.level)
     ) return;
@@ -771,18 +773,21 @@ export default function TeacherNotesPage() {
             selected.subject_id
           )
         );
+        if (cancelled) return;
         const arr = (j.items || []) as SubjectComponent[];
         setComponents(arr);
         if (arr.length > 0) {
           setSelectedComponentId(arr[0].id);
         }
       } catch {
+        if (cancelled) return;
         setComponents([]);
       } finally {
-        setComponentsLoading(false);
+        if (!cancelled) setComponentsLoading(false);
       }
     })();
-  }, [selected?.class_id, selected?.subject_id, selected?.level]);
+    return () => { cancelled = true; };
+  }, [selected?.class_id, selected?.subject_id, selected?.level, selected?.school_cycle]);
 
   // Roster + évaluations + notes pour la sélection courante
   useEffect(() => {

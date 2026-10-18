@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { sameSchoolLevel } from "@/lib/school-levels";
 import {
   buildGeneralSecondaryCoefficientPreview,
@@ -12,7 +12,7 @@ type Program = { cycle: SchoolCycle; track: TeachingTrack };
 type TeachingClass = { id: string; label: string; level: string | null; cycle: SchoolCycle | null; track: TeachingTrack | null };
 type Subject = { id: string; name: string };
 type LegacyCoefficient = { level: string; subject_id: string; coeff: number };
-type Component = { code: string; label: string; level?: string | null; coeff_in_subject: number; order_index: number; is_active: boolean };
+type Component = { id?: string; code: string; label: string; level?: string | null; coeff_in_subject: number; order_index: number; is_active: boolean };
 type ResponseBase = { ok?: boolean; error?: string; revision?: string };
 type SettingsPayload = ResponseBase & {
   configuration?: {
@@ -66,8 +66,8 @@ function getSavedCoefficient(
 /**
  * The SAME admin workflow as ordinary schools: choose teaching/level,
  * edit the discipline table, then save. Keep the historical secondary French
- * coefficient+subsubject APIs unchanged; Arabic coefficients remain independently
- * scoped by cycle, level, teaching and subject in existing school settings JSON.
+ * coefficient engine unchanged; Arabic coefficients and components remain independently
+ * scoped by cycle, level, teaching and subject using existing storage.
  *
  * No shadow subject catalogue, schema migration, global subject-component edits
  * for Arabic, extra "prepare/activate" toggles, or new publication workflow.
@@ -90,6 +90,9 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const [componentsFor, setComponentsFor] = useState<Subject | null>(null);
   const [components, setComponents] = useState<Component[]>([]);
   const [componentsBusy, setComponentsBusy] = useState(false);
+  const [componentsRevision, setComponentsRevision] = useState("");
+  const [componentsScope, setComponentsScope] = useState("");
+  const contextRef = useRef("");
   const [showCiSecondaryPreview, setShowCiSecondaryPreview] = useState(false);
   const [ciPrimary, setCiPrimary] = useState<{
     matches: Array<{ code: string; label: string; denominator: number }>;
@@ -147,6 +150,8 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const cycle = chosenProgram?.cycle;
   const track = chosenProgram?.track;
   const level = selectedClass?.level || "";
+  const componentScope = [actualClassId, cycle, track, level].join("|");
+  contextRef.current = componentScope;
   const frenchSecondary = cycle === "secondary" && track === "french";
   const arabicSecondary = cycle === "secondary" && track === "arabic";
   const showCoefficients = cycle === "secondary";
@@ -165,6 +170,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
     setLoadingClass(true); setError("");
     setSubjectIds([]); setSubjectClassId("");
     setChanges({}); setScaleChange(""); setCiPrimary(null); setShowCiSecondaryPreview(false);
+    setComponentsFor(null); setComponents([]); setComponentsBusy(false); setComponentsRevision("");
     (async () => {
       try {
         const response = await fetch(classEndpoint + "?class_id=" + encodeURIComponent(actualClassId), {
@@ -318,57 +324,54 @@ export default function SchoolCoefficientsClassicWorkflow() {
   }
 
   async function editComponents(subject: Subject) {
-    if (!frenchSecondary || !level) return;
-    if (settings?.configuration?.subjectTracksByCycle.secondary?.[subject.id]?.includes("arabic")) {
-      setError("Les sous-matières d'une discipline commune ne peuvent pas être modifiées ici : elles appartiennent aux deux enseignements dans la base historique.");
-      return;
-    }
-    setComponentsFor(subject); setComponentsBusy(true); setError("");
+    if (cycle !== "secondary" || !track || !level || isLoadingSubjects) return;
+    const scope = componentScope;
+    setComponentsScope(scope); setComponentsFor(subject); setComponents([]);
+    setComponentsBusy(true); setError("");
     try {
-      // Load all level spellings for this subject, rather than filtering SQL
-      // on one spelling ("6e" vs "6eme"). The historical route canonicalizes
-      // rows after querying; a direct level filter would miss legacy aliases.
-      const response = await fetch(componentsEndpoint +
-        "?subject_id=" + encodeURIComponent(subject.id), { cache: "no-store" });
+      const query = new URLSearchParams({ subject_id: subject.id, class_id: actualClassId, cycle, track, level });
+      const response = await fetch(componentsEndpoint + "?" + query, { cache: "no-store" });
       const payload = await parseResponse<ComponentPayload>(response, "Sous-matières indisponibles");
-      setComponents((payload.items || []).filter(row =>
-        "level" in row && typeof row.level === "string" &&
-        sameSchoolLevel(row.level, level, "secondary")).map((row, i) => ({
-        code: row.code || "c" + (i + 1),
-        label: row.label || "",
+      if (contextRef.current !== scope) return;
+      setComponentsRevision(payload.revision || "");
+      setComponents((payload.items || []).map((row, i) => ({
+        id: row.id, code: row.code || "c" + (i + 1), label: row.label || "",
         coeff_in_subject: Number(row.coeff_in_subject || 0),
         order_index: i + 1, is_active: row.is_active !== false,
       })));
     } catch (e) {
-      setError(errorMessage(e)); setComponentsFor(null);
+      if (contextRef.current === scope) { setError(errorMessage(e)); setComponentsFor(null); }
     } finally {
-      setComponentsBusy(false);
+      if (contextRef.current === scope) setComponentsBusy(false);
     }
   }
 
   async function saveComponents() {
-    if (!componentsFor || !frenchSecondary || componentsBusy) return;
+    if (!componentsFor || cycle !== "secondary" || !track || componentsScope !== componentScope || componentsBusy || !componentsRevision) return;
+    const scope = componentScope;
     const active = components.filter(row => row.label.trim());
     const sum = active.reduce((total, row) => total + Number(row.coeff_in_subject), 0);
     const parent = Number(coeffFor(componentsFor.id));
-    if (active.some(row => !Number.isFinite(row.coeff_in_subject) || row.coeff_in_subject < 0) ||
-      (active.length > 0 && Math.abs(sum - parent) > 0.001)) {
+    if (active.some(row => !Number.isFinite(row.coeff_in_subject) || row.coeff_in_subject <= 0) ||
+      (showCoefficients && active.length > 0 && Math.abs(sum - parent) > 0.001)) {
       setError("La somme des sous-matières doit être égale au coefficient de la discipline."); return;
     }
     setComponentsBusy(true); setError("");
     try {
       const response = await fetch(componentsEndpoint, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject_id: componentsFor.id, level, items: active.map((row, i) => ({
-          code: row.code || "c" + (i + 1), label: row.label.trim(),
+        body: JSON.stringify({ subject_id: componentsFor.id, class_id: actualClassId, cycle, track, level,
+          revision: componentsRevision, items: active.map((row, i) => ({
+          id: row.id, code: row.code, label: row.label.trim(),
           coeff_in_subject: Number(row.coeff_in_subject), order_index: i + 1, is_active: true,
         })) }),
       });
       await parseResponse<ResponseBase>(response, "Enregistrement des sous-matières impossible");
-      setMessage("Sous-matières enregistrées pour " + componentsFor.name + ".");
+      if (contextRef.current !== scope) return;
+      setMessage("Sous-matières enregistrées pour " + componentsFor.name + " — " + trackLabel[track] + ".");
       setComponentsFor(null);
-    } catch (e) { setError(errorMessage(e)); }
-    finally { setComponentsBusy(false); }
+    } catch (e) { if (contextRef.current === scope) setError(errorMessage(e)); }
+    finally { if (contextRef.current === scope) setComponentsBusy(false); }
   }
 
   return <section className="space-y-4 rounded-2xl border bg-white p-5 shadow-sm" id="subject-coeffs">
@@ -447,7 +450,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
           </p>}
         </div>}
         {cycle === "primary" || arabicSecondary ? <label className="inline-block text-sm font-semibold">
-          Barème des notes — {selectedClass.label} (valeur confirmée par l'établissement)
+          Barème des notes — {selectedClass.label} (valeur confirmée par l’établissement)
           <input aria-label="Barème des notes" type="number" min={1} max={100} step={1} className="mt-1 block w-36 rounded-lg border p-2"
             placeholder="À renseigner" disabled={saving}
             value={scaleDisplay} onChange={e => setScaleChange(e.target.value)}/>
@@ -472,9 +475,8 @@ export default function SchoolCoefficientsClassicWorkflow() {
                       placeholder="À renseigner" className="w-24 rounded-lg border px-2 py-1 text-right"/>
                   </td>}
                   <td className="px-3 py-2 text-right">
-                    {frenchSecondary && !settings?.configuration?.subjectTracksByCycle.secondary?.[subject.id]?.includes("arabic")
-                      ? <button type="button" className="rounded-lg border px-2 py-1 text-xs"
-                        onClick={() => void editComponents(subject)}>Ajouter / modifier les sous-matières</button>
+                    {showCoefficients ? <button type="button" className="rounded-lg border px-2 py-1 text-xs"
+                        disabled={componentsBusy || saving} onClick={() => void editComponents(subject)}>Ajouter / modifier les sous-matières</button>
                       : <span className="text-xs text-slate-500">—</span>}
                   </td>
                 </tr>)}
@@ -488,24 +490,24 @@ export default function SchoolCoefficientsClassicWorkflow() {
           </button></div>}
       </div>}
     </>}
-    {componentsFor && <div className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+    {componentsFor && componentsScope === componentScope && <div className="rounded-xl border border-sky-200 bg-sky-50 p-4">
       <h3 className="font-semibold">Sous-matières de {componentsFor.name} — {level}</h3>
-      <p className="mb-3 text-xs text-slate-600">La somme des sous-matières doit correspondre au coefficient total de la matière.</p>
+      <p className="mb-3 text-xs text-slate-600">La somme des sous-matières doit correspondre au coefficient total de la matière. Enregistrez d’abord ce coefficient.</p>
       {componentsBusy && <p>Chargement ou enregistrement…</p>}
       {components.map((row, index) => <div key={index} className="mb-2 grid grid-cols-[1fr_6rem_auto] gap-2">
-        <input aria-label={"Sous-matière " + (index + 1)} className="rounded-lg border p-2 text-sm" value={row.label}
+        <input aria-label={"Sous-matière " + (index + 1)} className="rounded-lg border p-2 text-sm" value={row.label} disabled={componentsBusy}
           onChange={e => setComponents(old => old.map((v, i) => i === index ? { ...v, label: e.target.value } : v))}/>
         <input aria-label={"Coefficient sous-matière " + (index + 1)} className="rounded-lg border p-2 text-sm" type="number" min={0} step={0.5}
-          value={numberInput(row.coeff_in_subject)}
+          disabled={componentsBusy} value={numberInput(row.coeff_in_subject)}
           onChange={e => setComponents(old => old.map((v, i) => i === index ? { ...v, coeff_in_subject: Number(e.target.value) } : v))}/>
-        <button type="button" onClick={() => setComponents(old => old.filter((_, i) => i !== index))} className="rounded-lg border px-2">Retirer</button>
+        <button type="button" disabled={componentsBusy} onClick={() => setComponents(old => old.filter((_, i) => i !== index))} className="rounded-lg border px-2">Retirer</button>
       </div>)}
       <div className="flex flex-wrap gap-2">
-        <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={() => setComponents(old => [...old, {
-          code: "c" + (old.length + 1), label: "", coeff_in_subject: 1,
+        <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={componentsBusy} onClick={() => setComponents(old => [...old, {
+          code: "c_" + crypto.randomUUID(), label: "", coeff_in_subject: 1,
           order_index: old.length + 1, is_active: true,
         }])}>+ Ajouter une sous-matière</button>
-        <button type="button" className="rounded-lg bg-sky-700 px-3 py-2 text-sm text-white" disabled={componentsBusy}
+        <button type="button" className="rounded-lg bg-sky-700 px-3 py-2 text-sm text-white" disabled={componentsBusy || !componentsRevision}
           onClick={() => void saveComponents()}>Enregistrer les sous-matières</button>
         <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={() => setComponentsFor(null)}>Fermer</button>
       </div>

@@ -1,3 +1,4 @@
+import type { SubjectComponent } from "./school-subject-components";
 import {
   type SchoolCycle,
   type SchoolCyclesSettings,
@@ -27,6 +28,7 @@ export type OfficialEvaluationScore = {
   isCurrentPublished: boolean;
   /** Server-resolved program identity; mandatory for any shared subject. */
   teachingTrack?: TeachingTrack | null;
+  componentId?: string | null;
 };
 
 export type SubjectBulletinPolicy = {
@@ -42,6 +44,7 @@ export type ProgramSubjectResult = {
   average: number | null;
   evaluatedCount: number;
   denominator?: number;
+  components?: Array<{ id: string; name: string; coefficient: number; average: number | null; rank: number | null }>;
 };
 
 export type ProgramBulletinDraft = {
@@ -76,6 +79,8 @@ export function buildProgramBulletinDraft(params: {
   configurationProblems?: readonly string[];
   /** Enabled only for classes explicitly assigned the CI French primary reference. */
   primaryCiDenominators?: Readonly<Record<string, number>>;
+  /** Server-selected components for this exact cycle/teaching/level. */
+  subjectComponents?: readonly SubjectComponent[];
 }): ProgramBulletinDraft {
   const { studentId, cycle, level, track, school, reports, officialScores } = params;
   // Preschool must never be forced through a numeric grade engine.
@@ -185,13 +190,32 @@ export function buildProgramBulletinDraft(params: {
       ? params.primaryCiDenominators?.[subjectId] || targetScale
       : null;
     const displayScale = ciPrimary ? ciDenominator : targetScale;
-    const preciseAverage = displayScale !== null && evaluations.length > 0 &&
+    let preciseAverage = displayScale !== null && evaluations.length > 0 &&
       totalEvaluationCoefficient > 0
       ? evaluations.reduce((sum, row) =>
           sum + row.score / row.scale * displayScale *
           (cycle === "primary" ? 1 : row.evaluationCoefficient), 0,
         ) / totalEvaluationCoefficient
       : null;
+    const configuredComponents = (cycle === "secondary" ? params.subjectComponents || [] : []).filter(row => row.subject_id === subjectId && row.is_active !== false);
+    let componentResults: ProgramSubjectResult["components"];
+    if (configuredComponents.length) {
+      componentResults = configuredComponents.map(component => {
+        const scores = evaluations.filter(row => row.componentId === component.id);
+        const denominator = scores.reduce((sum,row) => sum + (cycle === "primary" ? 1 : row.evaluationCoefficient), 0);
+        const value = displayScale !== null && denominator > 0 ? scores.reduce((sum,row) =>
+          sum + row.score / row.scale * displayScale * (cycle === "primary" ? 1 : row.evaluationCoefficient), 0) / denominator : null;
+        return { id: component.id, name: component.label, coefficient: Number(component.coeff_in_subject),
+          average: value, rank: null };
+      });
+      const scored = componentResults.filter(row => row.average !== null && row.coefficient > 0);
+      const weight = scored.reduce((sum,row) => sum + row.coefficient, 0);
+      // Whole-discipline evaluations are a fallback only when no component is scored.
+      if (weight > 0) preciseAverage = scored.reduce((sum,row) => sum + row.average! * row.coefficient, 0) / weight;
+      componentResults = componentResults.map(row => ({ ...row, average: row.average === null ? null : round2(row.average) }));
+      if (evaluations.some(row => row.componentId && !configuredComponents.some(component => component.id === row.componentId)))
+        problems.push("evaluation_component_outside_program");
+    }
     const average = preciseAverage === null ? null : round2(preciseAverage);
 
     // In primary every configured subject has equal arithmetic weight.
@@ -202,6 +226,7 @@ export function buildProgramBulletinDraft(params: {
       subjectId, coefficient: cycle === "secondary" ? rule.coefficient : null,
       includeInAverage: contributes,
       average, evaluatedCount: evaluations.length,
+      ...(componentResults?.length ? { components: componentResults } : {}),
       ...(ciPrimary && ciDenominator !== null ? { denominator: ciDenominator } : {}),
     });
     if (contributes) {

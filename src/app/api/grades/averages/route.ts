@@ -1,3 +1,5 @@
+import { loadClassComponentContext } from "@/lib/server/school-subject-components";
+import { selectProgramComponents, isProgramComponentLevel } from "@/lib/school-subject-components";
 // src/app/api/grades/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -351,7 +353,7 @@ export async function GET(req: NextRequest) {
     // 0) Infos de la classe via SERVICE CLIENT + check établissement
     const { data: cls, error: clsErr } = await svc
       .from("classes")
-      .select("id, level, institution_id")
+      .select("id, level, institution_id, academic_year")
       .eq("id", class_id)
       .maybeSingle();
 
@@ -517,37 +519,24 @@ export async function GET(req: NextRequest) {
       (e) => !!(e as any).subject_component_id
     );
 
-    // 1bis) Rubriques / sous-matières si nécessaire
+    const componentContext = institution_id && cls && effectiveSubjectId
+      ? await loadClassComponentContext(svc, institution_id, cls, effectiveSubjectId) : "legacy";
+    if (componentContext === "invalid") return bad("CLASS_SUBJECT_PROGRAM_INVALID", 409);
+    const scopedComponents = componentContext !== "legacy";
+    const allowComponents = !lycee || (scopedComponents && componentContext.track === "arabic");
     const componentCoeffMap = new Map<string, number>();
-
-    if (!lycee && subject_id && institution_id && hasAnyComponentEval) {
-      // ⚠️ grade_subject_components.subject_id est l’ID local institution_subjects.id
-      const { data: comps, error: cErr } = await svc
-        .from("grade_subject_components")
-        .select("id, coeff_in_subject")
-        .eq("institution_id", institution_id)
-        .eq("subject_id", subject_id)
-        .eq("is_active", true);
-
-      if (cErr) {
-        logError("grade_subject_components error", cErr);
-      } else {
-        for (const c of comps ?? []) {
-          const id = (c as any).id as string;
-          const rawW = (c as any).coeff_in_subject;
-          const w =
-            typeof rawW === "number" && isFinite(rawW) && rawW > 0 ? rawW : 1;
-
-          componentCoeffMap.set(id, w);
-        }
-      }
+    if (allowComponents && effectiveSubjectId && institution_id && hasAnyComponentEval) {
+      const result = await svc.from("grade_subject_components")
+        .select("id,level,coeff_in_subject,is_active")
+        .eq("institution_id", institution_id).eq("subject_id", effectiveSubjectId).eq("is_active", true);
+      if (result.error) return bad("COMPONENTS_UNAVAILABLE", 503);
+      const selected = scopedComponents ? selectProgramComponents(result.data || [], componentContext)
+        : (result.data || []).filter(row => !isProgramComponentLevel(row.level));
+      for (const component of selected) componentCoeffMap.set(component.id, Number(component.coeff_in_subject) || 1);
+      if (scopedComponents && evaluations.some(row => row.subject_component_id && !componentCoeffMap.has(row.subject_component_id)))
+        return bad("SUBJECT_COMPONENT_PROGRAM_MISMATCH", 409);
     }
-
-    const useComponentModel =
-      !lycee &&
-      !!subject_id &&
-      hasAnyComponentEval &&
-      componentCoeffMap.size > 0;
+    const useComponentModel = allowComponents && !!effectiveSubjectId && hasAnyComponentEval && componentCoeffMap.size > 0;
 
     // Pré-calcul : total des coeffs par rubrique pour missing="zero"
     const evalCoeffsByComponent = new Map<string, number>();
@@ -793,6 +782,7 @@ export async function GET(req: NextRequest) {
         let denSubject = 0;
 
         for (const [compKey, compAgg] of Object.entries(per)) {
+          if (scopedComponents && compKey === "__none__" && Object.keys(per).some(key => key !== "__none__")) continue;
           const totalCoeffForComp =
             evalCoeffsByComponent.get(compKey) ?? compAgg.denPresent;
 

@@ -1,3 +1,5 @@
+import { loadClassComponentContext } from "@/lib/server/school-subject-components";
+import { selectProgramComponents } from "@/lib/school-subject-components";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -675,7 +677,9 @@ export async function GET(req: NextRequest) {
       .order("order_index", { ascending: true });
     if (componentsError) throw componentsError;
     const classLevelCode = getClassLevelCode(classRow);
-    const components = (componentsRaw || []).filter((row: any) => {
+    const componentContext = await loadClassComponentContext(srv, institutionId, classRow, subject.globalId);
+    if (componentContext === "invalid") return bad("CLASS_SUBJECT_PROGRAM_INVALID", 409);
+    const components = componentContext !== "legacy" ? selectProgramComponents(componentsRaw || [], componentContext) : (componentsRaw || []).filter((row: any) => {
       const componentLevel = String(row?.level || "").trim();
       return !componentLevel || componentLevel === classLevelCode;
     });
@@ -800,9 +804,14 @@ export async function POST(req: NextRequest) {
           .maybeSingle();
         if (componentError) throw componentError;
         if (!component || component.is_active === false) return bad("INVALID_COMPONENT", 400);
+        const componentContext = await loadClassComponentContext(srv, institutionId, classRow, subject.globalId);
+        if (componentContext !== "legacy") {
+          if (componentContext === "invalid" || selectProgramComponents([component], componentContext).length !== 1)
+            return bad("COMPONENT_CLASS_CONTEXT_MISMATCH", 400);
+        }
         const componentLevel = String(component.level || "").trim();
         if (
-          componentLevel &&
+          componentContext === "legacy" && componentLevel &&
           componentLevel !== getClassLevelCode(classRow)
         ) {
           return bad("COMPONENT_CLASS_CONTEXT_MISMATCH", 400);

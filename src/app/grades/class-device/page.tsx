@@ -87,6 +87,8 @@ type TeachClass = {
   level: string;
   subject_id: string | null;
   subject_name: string | null;
+  school_cycle?: "preschool" | "primary" | "secondary" | null;
+  teaching_track?: "french" | "arabic" | null;
   education_type?: string | null;
   education_label?: string | null;
   formation_code?: string | null;
@@ -594,7 +596,7 @@ export default function ClassDeviceNotesPage() {
   const [selectedComponentId, setSelectedComponentId] = useState<string>("");
 
   const supportsComponents = selected
-    ? selected.education_type && selected.education_type !== "general_secondary"
+    ? (selected.school_cycle === "secondary" && selected.teaching_track === "arabic") ? true : selected.education_type && selected.education_type !== "general_secondary"
       ? true
       : isCollegeLevel(selected.level)
     : false;
@@ -772,6 +774,7 @@ export default function ClassDeviceNotesPage() {
      Chargement des sous-matières (collège)
   ========================================== */
   useEffect(() => {
+    let cancelled = false;
     logInfo(
       "useEffect[components] -> déclenché avec",
       "selected?.class_id=",
@@ -790,7 +793,7 @@ export default function ClassDeviceNotesPage() {
       );
       return;
     }
-    if (!isCollegeLevel(selected.level)) {
+    if (!(selected.school_cycle === "secondary" && selected.teaching_track === "arabic") && !isCollegeLevel(selected.level)) {
       logInfo(
         "useEffect[components] -> niveau non collège, pas de sous-rubriques à charger."
       );
@@ -814,6 +817,7 @@ export default function ClassDeviceNotesPage() {
             selected.subject_id
           )
         );
+        if (cancelled) return;
         const arr = (j.items || []) as SubjectComponent[];
         logInfo("useEffect[components] -> sous-rubriques reçues", arr);
         setComponents(arr);
@@ -825,13 +829,15 @@ export default function ClassDeviceNotesPage() {
           setSelectedComponentId(arr[0].id);
         }
       } catch (err: any) {
+        if (cancelled) return;
         logError("useEffect[components] -> échec de chargement", err);
         setComponents([]);
       } finally {
-        setComponentsLoading(false);
+        if (!cancelled) setComponentsLoading(false);
       }
     })();
-  }, [selected?.class_id, selected?.subject_id, selected?.level]);
+    return () => { cancelled = true; };
+  }, [selected?.class_id, selected?.subject_id, selected?.level, selected?.school_cycle]);
 
   /* ==========================================
      Chargement roster + évaluations + notes

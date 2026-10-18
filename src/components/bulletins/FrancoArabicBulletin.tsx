@@ -198,11 +198,11 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
         {!compact && <td>{number(row.classAverage)}</td>}
         {!compact && <td className={styles.observation}>{row.observation || "—"}</td>}
       </tr>
-      {program.historicalSecondary && (row.components || []).map(component => (
+      {secondary && (row.components || []).map(component => (
           <tr key={`component-${row.id}-${component.id}`} className={styles.subjectComponentRow}>
             <td className={styles.subjectCell}>↳ {component.name}{component.rank != null ? ` · Rang ${component.rank}` : ""}</td>
             {secondary && <td>{number(component.coefficient, 0)}</td>}
-            <td>{component.average === null ? "NC" : number(component.average)}</td>
+            <td>{component.average === null ? (program.historicalSecondary ? "NC" : "—") : number(component.average)}</td>
             {!compact && <td>—</td>}
             {!compact && <td className={styles.observation}>Sous-matière</td>}
           </tr>
