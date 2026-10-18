@@ -34,7 +34,16 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: "no-store", ...init });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || body.ok === false) {
-    throw Error(body.message || body.error || "Chargement indisponible");
+    const humanErrors: Record<string, string> = {
+      settings_changed_reload_required: "La classe a été modifiée par un autre utilisateur. Actualisez les observations avant de réessayer.",
+      competency_removal_requires_archival: "Impossible de supprimer une compétence utilisée : conservez son identifiant, ou archivez-la lors d’une évolution ultérieure.",
+      invalid_preschool_observations: "Les observations contiennent une valeur invalide. Vérifiez la progression et les textes saisis.",
+      class_forbidden: "Cette classe ne fait pas partie de vos affectations autorisées.",
+      student_program_forbidden: "Cet élève n’est pas affecté à cet enseignement dans cette classe.",
+      preschool_store_capacity_reached: "La capacité du stockage actuel est atteinte : une extension du stockage par établissement est nécessaire.",
+      not_preschool_school: "Les livrets de compétences ne sont disponibles que pour les établissements ayant activé le préscolaire.",
+    };
+    throw Error(body.message || humanErrors[body.error] || body.error || "Chargement indisponible");
   }
   return body as T;
 }
