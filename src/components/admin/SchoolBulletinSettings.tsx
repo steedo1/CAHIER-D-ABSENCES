@@ -37,6 +37,11 @@ type CycleResponse = {
   error?: string;
 };
 type AllowedProgram = { cycle: SchoolCycle; track: TeachingTrack };
+type CiReferencePreview = { classId: string; level: string; alreadyApplied: boolean;
+  matches: Array<{ code: string; label: string; subjectId: string; subjectName: string; denominator: number }>;
+  missing: string[]; ambiguous: Array<{ label: string; candidates: string[] }>;
+  existingExtras: string[]; newlyAssociated: string[]; proposedSubjectIds: string[];
+};
 type TeachingClass = { id: string; label: string; level: string | null;
   cycle: SchoolCycle | null; track: TeachingTrack | null };
 
@@ -49,6 +54,9 @@ export default function SchoolBulletinSettings({
   const [teachingClasses, setTeachingClasses] = useState<TeachingClass[]>([]);
   const [focusedClassId, setFocusedClassId] = useState("");
   const [refreshClasses, setRefreshClasses] = useState(0);
+  const [ciPreview, setCiPreview] = useState<CiReferencePreview | null>(null);
+  const [ciBusy, setCiBusy] = useState(false);
+  const [ciNotice, setCiNotice] = useState("");
   const [classSubjectIds, setClassSubjectIds] = useState<string[] | null>(null);
   const [loadingClassSubjects, setLoadingClassSubjects] = useState(false);
   const [classError, setClassError] = useState("");
@@ -155,6 +163,7 @@ export default function SchoolBulletinSettings({
   const classesForProgram = teachingClasses.filter(row =>
     row.cycle === activeProgram?.cycle && row.track === activeProgram?.track);
   const activeTeachingClass = classesForProgram.find(row => row.id === focusedClassId);
+  useEffect(() => { setCiPreview(null); setCiNotice(""); }, [focusedClassId, focusedProgram]);
   const belongsToSelectedLevel = (level: string, cycle: SchoolCycle) =>
     mode !== "coefficients" || !activeTeachingClass?.level ||
     sameSchoolLevel(level, activeTeachingClass.level, cycle);
@@ -271,6 +280,40 @@ export default function SchoolBulletinSettings({
         subjectId: subject.id, coefficient: 0, includeInAverage: false,
       }],
     }));
+  }
+
+  async function runCiPrimaryFrenchReference(apply: boolean) {
+    if (ciBusy || !focusedClassId || activeProgram?.cycle !== "primary" || activeProgram.track !== "french") return;
+    setCiBusy(true);
+    setCiNotice("");
+    try {
+      const res = await fetch("/api/admin/school-class-subjects", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ classId: focusedClassId, revision,
+          action: apply ? "apply_ci_primary_french" : "preview_ci_primary_french" }),
+      });
+      const data = await res.json();
+      if (data.preview) setCiPreview(data.preview as CiReferencePreview);
+      if (!res.ok || !data.ok) throw new Error(data.error || "Référentiel indisponible");
+      if (apply) {
+        setRefreshClasses(old => old + 1);
+        // Refresh the reporting editor too: applying CI sets the /10 report scale.
+        // Keeping an old revision here could silently undo the new scale on save.
+        const refreshed = await fetch("/api/admin/bulletin-templates", { cache: "no-store" });
+        const configuration = await refreshed.json() as ReportResponse;
+        if (!refreshed.ok || !configuration.ok || !configuration.reporting)
+          throw new Error("Référentiel appliqué. Rechargez la page avant de modifier les barèmes.");
+        setSettings(configuration.reporting);
+        setRevision(configuration.revision || data.revision || "");
+        setCiNotice("Référentiel CI associé à la classe. Matières déjà affectées et matières supplémentaires conservées.");
+      } else {
+        setCiNotice("Prévisualisation uniquement : aucune donnée modifiée.");
+      }
+    } catch (error) {
+      setCiNotice(error instanceof Error ? error.message : "Référentiel indisponible");
+    } finally {
+      setCiBusy(false);
+    }
   }
 
   async function save() {
@@ -405,6 +448,57 @@ export default function SchoolBulletinSettings({
               </p>
             )}
           </div>
+          {activeProgram?.cycle === "primary" && activeProgram.track === "french" && activeTeachingClass && (
+            <div className="rounded-xl border border-emerald-200 bg-white p-3">
+              <h3 className="font-bold text-slate-900">Référentiel CI — Primaire français</h3>
+              <p className="mt-1 text-sm text-slate-600">
+                11 matières du bulletin ivoirien, sans coefficient. La correspondance se fait uniquement
+                avec le catalogue ACTIF de cette classe. Les matières supplémentaires et les affectations
+                des enseignants ne sont jamais supprimées ou modifiées.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" disabled={ciBusy || loadingClassSubjects}
+                  onClick={() => void runCiPrimaryFrenchReference(false)}
+                  className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50">
+                  Prévisualiser le référentiel CI
+                </button>
+                <button type="button" disabled={ciBusy || !ciPreview || ciPreview.classId !== focusedClassId ||
+                  ciPreview.matches.length === 0}
+                  onClick={() => void runCiPrimaryFrenchReference(true)}
+                  className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  Appliquer CI
+                </button>
+              </div>
+              {ciNotice && <p role="status" className="mt-2 text-sm text-slate-700">{ciNotice}</p>}
+              {ciPreview?.classId === focusedClassId && (
+                <div className="mt-3 space-y-2 text-sm">
+                  <p className="font-semibold">
+                    {ciPreview.matches.length}/11 matière(s) reconnue(s) ;
+                    {" "}{ciPreview.newlyAssociated.length} à associer ;
+                    {" "}{ciPreview.existingExtras.length} matière(s) existante(s) conservée(s).
+                  </p>
+                  <ul className="grid gap-1 sm:grid-cols-2">
+                    {ciPreview.matches.map(item => <li key={item.code} className="rounded-lg bg-emerald-50 px-2 py-1">
+                      {item.label} → {item.subjectName} (/{item.denominator})
+                    </li>)}
+                  </ul>
+                  {ciPreview.missing.length > 0 && <p className="text-amber-900">
+                    Matières absentes du catalogue actif français : {ciPreview.missing.join(", ")}.
+                    Elles ne seront pas créées automatiquement.
+                  </p>}
+                  {ciPreview.ambiguous.map(item => <p key={item.label} className="text-amber-900">
+                    Correspondance ambiguë pour {item.label} : {item.candidates.join(", ")}.
+                    À vérifier manuellement avant de compléter la classe.
+                  </p>)}
+                  <p className="text-xs text-slate-600">
+                    Notes /10 au CP et au CE. Au CM : Dictée /20,
+                    Exploitation de texte /50, Mathématiques /50, Éveil au milieu /50 ;
+                    les autres rubriques /10. Moyenne générale présentée sur 10.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
           <p className="text-xs text-slate-700">
             Préscolaire : compétences, sans coefficients. Primaire : barèmes par niveau, sans coefficient de matière.
             Secondaire : coefficients propres à chaque niveau et enseignement.
