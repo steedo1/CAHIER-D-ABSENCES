@@ -72,6 +72,12 @@ for (const level of LEVELS) {
     const first = result.documents[0];
     assert.equal(first.document.french.generalAverage, 8, "French homework must not affect composition");
     assert.equal(first.document.arabic.generalAverage, 12, "Arabic homework must not affect composition");
+    // Only a scored subject is printed on the primary document; there must be
+    // no blank phantom rows, while grading catalogs remain unchanged.
+    assert.ok(first.document.french.subjects.length > 0);
+    assert.ok(first.document.arabic.subjects.length > 0);
+    assert.ok(first.document.french.subjects.every(row => row.average !== null));
+    assert.ok(first.document.arabic.subjects.every(row => row.average !== null));
     assert.equal(first.programReadiness.french, true);
     assert.equal(first.programReadiness.arabic, true);
     assert.equal(first.document.french.rank, 1);

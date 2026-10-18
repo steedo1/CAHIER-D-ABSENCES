@@ -7,6 +7,7 @@ import {
 } from "@/lib/default-general-secondary-coefficients-ci";
 import type { SchoolCycle, TeachingTrack } from "@/lib/school-cycles";
 import type { FrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
+import { ciPrimaryFrenchDenominator, ciPrimaryFrenchEntryForName } from "@/lib/primary-french-reference-ci";
 
 type Program = { cycle: SchoolCycle; track: TeachingTrack };
 type TeachingClass = { id: string; label: string; level: string | null; cycle: SchoolCycle | null; track: TeachingTrack | null };
@@ -27,6 +28,7 @@ type ClassPayload = ResponseBase & {
   classes?: TeachingClass[];
   selectedClassId?: string | null;
   selectedSubjectIds?: string[];
+  ciPrimaryFrenchApplied?: boolean;
 };
 type LegacyPayload = ResponseBase & {
   items?: LegacyCoefficient[];
@@ -80,6 +82,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const [classId, setClassId] = useState("");
   const [subjectIds, setSubjectIds] = useState<string[]>([]);
   const [subjectClassId, setSubjectClassId] = useState("");
+  const [ciPrimaryApplied, setCiPrimaryApplied] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingClass, setLoadingClass] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -162,13 +165,25 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const currentScale = reporting?.scales.find(row => row.cycle === cycle && row.track === track &&
     sameSchoolLevel(row.level, level, row.cycle));
   const scaleDisplay = scaleChange || numberInput(currentScale?.maxScore);
+  const primaryFrenchReferenceApplied = cycle === "primary" && track === "french" && ciPrimaryApplied;
+  // CI primary scales are per subject, independent of the bulletin-wide /10 scale.
+  // They are read-only here: editing a denominator without changing validation
+  // and printed reports would create inconsistent official marks.
+  function primaryCompositionScale(subject: Subject): number | null {
+    if (primaryFrenchReferenceApplied) {
+      const reference = ciPrimaryFrenchEntryForName(subject.name);
+      return reference ? ciPrimaryFrenchDenominator(level, reference.code) : null;
+    }
+    const common = Number(scaleDisplay);
+    return Number.isInteger(common) && common > 0 ? common : null;
+  }
   const isLoadingSubjects = loading || loadingClass || (Boolean(actualClassId) && subjectClassId !== actualClassId);
 
   useEffect(() => {
     if (!actualClassId) { setSubjectIds([]); setSubjectClassId(""); return; }
     const controller = new AbortController();
     setLoadingClass(true); setError("");
-    setSubjectIds([]); setSubjectClassId("");
+    setSubjectIds([]); setSubjectClassId(""); setCiPrimaryApplied(false);
     setChanges({}); setScaleChange(""); setCiPrimary(null); setShowCiSecondaryPreview(false);
     setComponentsFor(null); setComponents([]); setComponentsBusy(false); setComponentsRevision("");
     (async () => {
@@ -178,7 +193,11 @@ export default function SchoolCoefficientsClassicWorkflow() {
         });
         const data = await parseResponse<ClassPayload>(response, "Matières de classe indisponibles");
         if (data.selectedClassId !== actualClassId) throw new Error("Classe sélectionnée incohérente");
-        if (!controller.signal.aborted) { setSubjectIds(data.selectedSubjectIds || []); setSubjectClassId(actualClassId); }
+        if (!controller.signal.aborted) {
+          setSubjectIds(data.selectedSubjectIds || []);
+          setCiPrimaryApplied(data.ciPrimaryFrenchApplied === true);
+          setSubjectClassId(actualClassId);
+        }
       } catch (e) {
         if (!controller.signal.aborted) setError(errorMessage(e));
       } finally {
@@ -243,6 +262,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
         setSettings(updated);
         setSubjectIds(data.preview?.proposedSubjectIds || []);
         setSubjectClassId(actualClassId);
+        setCiPrimaryApplied(true);
         setScaleChange("");
         setMessage("Référentiel CI appliqué à la classe : disciplines supplémentaires conservées.");
       } else {
@@ -378,7 +398,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
     <header className="flex flex-wrap justify-between gap-3">
       <div>
         <p className="text-xs font-bold uppercase tracking-wider text-sky-700">Notation</p>
-        <h2 className="text-lg font-bold text-slate-900">Coefficients des disciplines par niveau</h2>
+        <h2 className="text-lg font-bold text-slate-900">{cycle === "primary" ? "Barèmes des disciplines par matière" : "Coefficients des disciplines par niveau"}</h2>
         <p className="text-sm text-slate-600">Le même parcours que dans les établissements classiques. Les données restent séparées par enseignement.</p>
       </div>
       <button type="button" disabled={loading || saving} onClick={() => void refresh()}
@@ -450,11 +470,16 @@ export default function SchoolCoefficientsClassicWorkflow() {
           </p>}
         </div>}
         {cycle === "primary" || arabicSecondary ? <label className="inline-block text-sm font-semibold">
-          Barème des notes — {selectedClass.label} (valeur confirmée par l’établissement)
+          {cycle === "primary" ? "Barème général du bulletin" : "Barème des notes"} — {selectedClass.label} (valeur confirmée par l’établissement)
           <input aria-label="Barème des notes" type="number" min={1} max={100} step={1} className="mt-1 block w-36 rounded-lg border p-2"
             placeholder="À renseigner" disabled={saving}
             value={scaleDisplay} onChange={e => setScaleChange(e.target.value)}/>
         </label> : null}
+        {cycle === "primary" && <p className="text-xs text-slate-600">
+          {primaryFrenchReferenceApplied
+            ? "Référentiel CI appliqué : les barèmes de composition sont affichés pour chaque matière. Ils ne sont pas des coefficients. La moyenne générale du bulletin reste sur /10."
+            : "Le barème affiché par matière est celui de l'enseignement. Les barèmes spécifiques non confirmés ne sont pas déduits automatiquement."}
+        </p>}
         {isLoadingSubjects ? <p className="text-sm text-slate-600">Chargement des disciplines de la classe…</p> :
           configuredSubjects.length === 0 ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
             Aucune matière affectée à cette classe et à cet enseignement. Utilisez « Répartition des matières » et « Matières par classe » ci-dessous.
@@ -462,8 +487,10 @@ export default function SchoolCoefficientsClassicWorkflow() {
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-slate-600"><tr>
                 <th className="px-3 py-2 text-left">Discipline</th>
-                {showCoefficients && <th className="px-3 py-2 text-right">Coefficient bulletin</th>}
-                <th className="px-3 py-2 text-right">Sous-matières (optionnel)</th>
+                {showCoefficients ? <>
+                  <th className="px-3 py-2 text-right">Coefficient bulletin</th>
+                  <th className="px-3 py-2 text-right">Sous-matières (optionnel)</th>
+                </> : <th className="px-3 py-2 text-right">Barème de composition</th>}
               </tr></thead>
               <tbody className="divide-y">
                 {configuredSubjects.map(subject => <tr key={subject.id}>
@@ -477,7 +504,9 @@ export default function SchoolCoefficientsClassicWorkflow() {
                   <td className="px-3 py-2 text-right">
                     {showCoefficients ? <button type="button" className="rounded-lg border px-2 py-1 text-xs"
                         disabled={componentsBusy || saving} onClick={() => void editComponents(subject)}>Ajouter / modifier les sous-matières</button>
-                      : <span className="text-xs text-slate-500">—</span>}
+                      : <span aria-label={"Barème de composition " + subject.name} className="font-semibold text-slate-800">
+                          {primaryCompositionScale(subject) === null ? "Non défini" : "/" + primaryCompositionScale(subject)}
+                        </span>}
                   </td>
                 </tr>)}
               </tbody>
@@ -486,7 +515,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
         {configuredSubjects.length > 0 && !isLoadingSubjects &&
           <div className="flex justify-end"><button type="button" disabled={saving}
             onClick={() => void save()} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            {saving ? "Enregistrement…" : "Enregistrer les coefficients"}
+            {saving ? "Enregistrement…" : cycle === "primary" ? "Enregistrer le barème général" : "Enregistrer les coefficients"}
           </button></div>}
       </div>}
     </>}

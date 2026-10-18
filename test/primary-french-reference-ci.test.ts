@@ -75,17 +75,67 @@ test("only school classes explicitly marked in the existing curriculum use CI", 
   assert.deepEqual(readClassSubjects(data)?.years["2026-2027"].classes[classId], [sid(1)]);
 });
 
-test("CI bulletin shows all 11 lines in order, without inventing scores, plus other real school subjects", () => {
+test("primary CI bulletin omits blank subjects but preserves graded ones in official order", () => {
   const rows = ciPrimaryFrenchBulletinRows("CP1", [
     { id: sid(1), name: "Lecture", average: 8, coefficient: null },
     { id: sid(2), name: "Maths", average: 7, coefficient: null },
     { id: sid(3), name: "Informatique", average: 6, coefficient: null },
+    { id: sid(4), name: "Éveil au milieu", average: null, coefficient: null },
+    { id: sid(5), name: "EPS", average: 0, coefficient: null },
   ]);
-  assert.equal(rows.length, 12);
-  assert.deepEqual(rows.slice(0, 11).map(row => row.name), CI_PRIMARY_FRENCH_REFERENCE.map(row => row.label));
-  assert.equal(rows[1].average, null);
-  assert.equal(rows[11].name, "Informatique");
-  assert.equal(rows[0].denominator, 10);
+  assert.deepEqual(rows.map(row => row.name),
+    ["Lecture", "Mathématiques", "EPS", "Informatique"]);
+  assert.deepEqual(rows.map(row => row.average), [8, 7, 0, 6],
+    "a real zero must remain a graded subject, while null is not a score");
+  assert.deepEqual(rows.map(row => row.denominator), [10, 10, 10, undefined]);
+  assert.deepEqual(ciPrimaryFrenchBulletinRows("CP1", [
+    { id: sid(1), name: "Lecture", average: null, coefficient: null },
+  ]), []);
+});
+
+test("CP bulletin with 7 actual marks prints 7/11 disciplines and preserves 56/70 = 8/10", () => {
+  const catalog = CI_PRIMARY_FRENCH_REFERENCE.map((entry, index) => ({
+    ...subject(index + 1, entry.label), code: entry.code,
+  }));
+  const marks: Record<string, number> = {
+    lecture: 8, ecriture_copie: 10, orthographe_dictee: 10,
+    expression_ecrite: 10, mathematiques: 8,
+    chant_poeme: 5, dessin: 5,
+  };
+  const school = parseSchoolCyclesSettings({ school_cycles_v1: {
+    version: 1, enabled: true, enabledCycles: ["primary"],
+    teachingTracksByCycle: { primary: ["french"] },
+    subjectTracksByCycle: { primary: Object.fromEntries(catalog.map(row => [row.id, ["french"]])) },
+  } });
+  const reports = parseFrancoArabicReportsSettings({ franco_arabic_reports_v1: {
+    version: 1, enabled: true, format: "separate",
+    scales: [{ cycle: "primary", track: "french", level: "CP1", maxScore: 10 }],
+    coefficients: [],
+  } });
+  const draft = buildProgramBulletinDraft({
+    studentId: "A", cycle: "primary", level: "CP1", track: "french",
+    school, reports,
+    resolvedPolicies: catalog.map(row => ({
+      subjectId: row.id, coefficient: 1, includeInAverage: true,
+    })),
+    officialScores: catalog.filter(row => Object.hasOwn(marks, row.code)).map(row => ({
+      studentId: "A", subjectId: row.id, evaluationId: row.code,
+      score: marks[row.code], scale: 10, evaluationCoefficient: 1,
+      isCurrentPublished: true,
+    })),
+    primaryCiDenominators: Object.fromEntries(catalog.map(row => [row.id, 10])),
+  });
+  const rows = ciPrimaryFrenchBulletinRows("CP1", draft.subjects.map(row => ({
+    id: row.subjectId, name: catalog.find(item => item.id === row.subjectId)!.name,
+    average: row.average, coefficient: row.coefficient,
+  })));
+  assert.equal(rows.length, 7);
+  assert.equal(rows.reduce((sum, row) => sum + row.average!, 0), 56);
+  assert.equal(rows.reduce((sum, row) => sum + row.denominator!, 0), 70);
+  assert.equal(draft.generalAverage, 8);
+  assert.equal(draft.status, "ready");
+  assert.equal(draft.subjects.length, 11, "all configured subjects remain in calculations and teacher's catalogue");
+  assert.equal(draft.subjects.filter(row => row.average === null).length, 4);
 });
 
 test("applied primary CI computes total points over actual barèmes and ignores blank subjects", () => {
