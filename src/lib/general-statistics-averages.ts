@@ -10,6 +10,7 @@ export type StatisticsAverage = { value: number | null; partial: boolean };
 export type StatisticsTeachingTrack = "french" | "arabic";
 type SpecializedProgram = {
   generalAverage: number | null;
+  denominator: number;
   subjects: { id: string; name: string; average: number | null }[];
 };
 type SpecializedBulletinDocument = {
@@ -109,8 +110,16 @@ export function statisticsStudentAverage(
       if (!row || row.programReadiness?.[track] !== true) return null;
       const program = row.document[track];
       if (!program) return null;
-      if (subjectId === "all") return numericAverage(program.generalAverage);
-      return numericAverage(program.subjects.find((subject) => subject.id === subjectId)?.average);
+      // The specialized grade scale is configurable (e.g. /10 or /20).
+      // Statistics always compare normalized scores on /20, without mixing tracks.
+      const raw = subjectId === "all"
+        ? program.generalAverage
+        : program.subjects.find((subject) => subject.id === subjectId)?.average;
+      const scale = Number(program.denominator);
+      const score = raw === null || raw === undefined ? NaN : Number(raw);
+      if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(score) ||
+          score < 0 || score > scale) return null;
+      return Number((score * 20 / scale).toFixed(4));
     };
     if (selection !== "annual") {
       return { value: specializedAverage(periods[0]), partial: false };
