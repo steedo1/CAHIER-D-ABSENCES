@@ -6,7 +6,6 @@ import {
 } from "@/lib/school-cycles";
 import {
   getConfiguredScoringScale,
-  getConfiguredPrimarySubjectScale,
   getConfiguredSubjectCoefficients,
   type FrancoArabicReportsSettings,
 } from "@/lib/franco-arabic-reporting";
@@ -186,16 +185,11 @@ export function buildProgramBulletinDraft(params: {
     const totalEvaluationCoefficient = cycle === "primary"
       ? evaluations.length
       : evaluations.reduce((sum, row) => sum + row.evaluationCoefficient, 0);
-    const isCiPrimary = cycle === "primary" && params.primaryCiDenominators !== undefined;
-    const isArabicPrimary = cycle === "primary" && track === "arabic";
-    const primarySubjectSpecific = isCiPrimary || isArabicPrimary;
-    const subjectDenominator = isArabicPrimary
-      ? getConfiguredPrimarySubjectScale(reports, level, subjectId)
-      : isCiPrimary ? params.primaryCiDenominators?.[subjectId] || targetScale : null;
-    if (isArabicPrimary && subjectDenominator === null) {
-      problems.push("primary_arabic_subject_scale_not_configured");
-    }
-    const displayScale = primarySubjectSpecific ? subjectDenominator : targetScale;
+    const ciPrimary = cycle === "primary" && params.primaryCiDenominators !== undefined;
+    const ciDenominator = ciPrimary
+      ? params.primaryCiDenominators?.[subjectId] || targetScale
+      : null;
+    const displayScale = ciPrimary ? ciDenominator : targetScale;
     let preciseAverage = displayScale !== null && evaluations.length > 0 &&
       totalEvaluationCoefficient > 0
       ? evaluations.reduce((sum, row) =>
@@ -233,17 +227,17 @@ export function buildProgramBulletinDraft(params: {
       includeInAverage: contributes,
       average, evaluatedCount: evaluations.length,
       ...(componentResults?.length ? { components: componentResults } : {}),
-      ...(primarySubjectSpecific && subjectDenominator !== null ? { denominator: subjectDenominator } : {}),
+      ...(ciPrimary && ciDenominator !== null ? { denominator: ciDenominator } : {}),
     });
     if (contributes) {
       // Empty primary CI bulletin cells are blank, never zero. The total is
       // the SUM of actual points / SUM of the corresponding denominators.
       // Thus a /50 exam is a barème, not a configurable coefficient.
       if (average === null) {
-        if (!primarySubjectSpecific) problems.push("included_subject_without_score");
+        if (!ciPrimary) problems.push("included_subject_without_score");
       } else {
-        generalSum += (preciseAverage as number) * (primarySubjectSpecific ? 1 : weight);
-        generalCoefficientSum += primarySubjectSpecific ? subjectDenominator! : weight;
+        generalSum += (preciseAverage as number) * (ciPrimary ? 1 : weight);
+        generalCoefficientSum += ciPrimary ? ciDenominator! : weight;
       }
     }
   }
@@ -262,8 +256,7 @@ export function buildProgramBulletinDraft(params: {
     studentId, cycle, level, track,
     maximumScore: targetScale,
     status,
-    generalAverage: complete ? round2(generalSum / generalCoefficientSum *
-      (cycle === "primary" && (params.primaryCiDenominators || track === "arabic") ? targetScale! : 1)) : null,
+    generalAverage: complete ? round2(generalSum / generalCoefficientSum * (params.primaryCiDenominators ? targetScale! : 1)) : null,
     subjects,
     problems: [...new Set(problems)],
   };
