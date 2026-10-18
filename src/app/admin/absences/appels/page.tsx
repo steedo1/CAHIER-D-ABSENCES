@@ -1,5 +1,8 @@
 "use client";
 
+import DocumentDirectionSignatures from "@/components/DocumentDirectionSignatures";
+import type { TeachingDocumentSignatory } from "@/lib/franco-arabic-document-signatories";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -77,6 +80,7 @@ type TeacherControlRow = {
 };
 
 type ReportContext = {
+  document_signatories?: TeachingDocumentSignatory[] | null;
   institution_name: string;
   logo_url: string | null;
   head_name: string | null;
@@ -335,6 +339,7 @@ export default function SurveillanceAppelsPage() {
         if (!payload?.institution_name) throw new Error("report_context");
         if (controller.signal.aborted) return;
         setReportContext({
+          document_signatories: payload.document_signatories,
           institution_name: String(payload.institution_name),
           logo_url: payload.logo_url ? String(payload.logo_url) : null,
           head_name: payload.head_name ? String(payload.head_name) : null,
@@ -904,8 +909,10 @@ export default function SurveillanceAppelsPage() {
             <strong>Règle de lecture :</strong> seuls les cours déjà contrôlables au moment de la génération entrent dans le bilan. Les cours non encore commencés ou encore en phase de démarrage ne sont pas comptés. Les retards et sorties anticipées correspondent aux heures réellement enregistrées par le cahier d’appel. Aucune franchise ni tolérance utilisée pour la paie n’est appliquée à ce rapport.
           </div>
           <div style={{ textAlign: "right" }}>
-            {reportContext.head_title || "Administration"}
-            {reportContext.head_name ? <><br /><strong>{reportContext.head_name}</strong></> : null}
+            {reportContext.document_signatories != null
+              ? <DocumentDirectionSignatures signatories={reportContext.document_signatories} />
+              : <>{reportContext.head_title || "Administration"}
+                {reportContext.head_name ? <><br /><strong>{reportContext.head_name}</strong></> : null}</>}
           </div>
         </div>
       </section>

@@ -138,3 +138,87 @@ test("un clic d'enregistrement arabe ne touche JAMAIS aux coefficients historiqu
     }
   }
 });
+
+
+test("primaire : disciplines françaises/arabe de CP1 à CM2, changements de classe et absence de sous-matières", async () => {
+  const win = new Window({ url: "https://fixture.invalid" });
+  const keys = ["window", "document", "navigator", "IS_REACT_ACT_ENVIRONMENT", "fetch"];
+  const descriptors = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const primaryClasses = ["CP1", "CP2", "CE1", "CE2", "CM1", "CM2"].flatMap((level, index) =>
+    ["french", "arabic"].map((track, n) => ({
+      id: `cccc3333-3333-4333-8333-${String(index * 2 + n + 1).padStart(12, "0")}`,
+      level, label: `${level} ${track}`, cycle: "primary", track,
+    })));
+  const allClasses = [...classes, ...primaryClasses];
+  const shared = "99999999-9999-4999-8999-999999999999";
+  const subjects = [...names, { id: shared, name: "Mathématiques communes" }];
+  const configurationWithPrimary = { ...configuration, enabledCycles: ["secondary", "primary"],
+    teachingTracksByCycle: { secondary: ["french", "arabic"], primary: ["french", "arabic"] },
+    subjectTracksByCycle: { ...configuration.subjectTracksByCycle,
+      primary: { [subjectFrench]: ["french"], [subjectArabic]: ["arabic"], [shared]: ["french", "arabic"] } } };
+  const requests = [];
+  let emptyClass = "";
+  for (const [key, value] of Object.entries({ window: win, document: win.document,
+    navigator: win.navigator, IS_REACT_ACT_ENVIRONMENT: true,
+    fetch: async (uri, init = {}) => {
+      const url = String(uri);
+      requests.push({ url, method: init.method || "GET" });
+      if (url === "/api/admin/bulletin-templates") return payload({ ok: true,
+        configuration: configurationWithPrimary, reporting, subjects, revision: "read-only-test" });
+      if (url === "/api/admin/institution/subject-coeffs") return payload({ ok: true, items: [] });
+      if (url === "/api/admin/school-class-subjects") return payload({ ok: true, classes: allClasses });
+      if (url.startsWith("/api/admin/school-class-subjects?")) {
+        const classId = new URL(url, "https://fixture.invalid").searchParams.get("class_id");
+        const selected = allClasses.find(row => row.id === classId);
+        return payload({ ok: true, selectedClassId: classId, classes: allClasses,
+          selectedSubjectIds: classId === emptyClass ? []
+            : [selected?.track === "arabic" ? subjectArabic : subjectFrench,
+              ...(selected?.cycle === "primary" ? [shared] : [])] });
+      }
+      throw Error("unexpected primary endpoint " + url);
+    },
+  })) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const container = win.document.createElement("div");
+  win.document.body.append(container);
+  const root = createRoot(container);
+  try {
+    const load = createFixtureRouteLoader(createMulticycleFixture(), "unused-user");
+    const Component = load("src/components/admin/SchoolCoefficientsClassicWorkflow.tsx").default;
+    await act(async () => root.render(React.createElement(Component)));
+    await flush(); await flush();
+    await changeValue(win, container.querySelector('select[aria-label="Cycle"]'), "primary");
+    await flush(); await flush();
+    for (const track of ["french", "arabic"]) {
+      await changeValue(win, container.querySelector('select[aria-label="Enseignement"]'), track);
+      await flush(); await flush();
+      for (const schoolClass of primaryClasses.filter(row => row.track === track)) {
+        await changeValue(win, container.querySelector('select[aria-label="Niveau et classe"]'), schoolClass.id);
+        await flush(); await flush();
+        const rows = [...container.querySelectorAll("tbody tr")].map(row => row.textContent);
+        assert.equal(rows.length, 2, schoolClass.label);
+        assert.ok(rows.some(row => row.includes(track === "french" ? "Français" : "Arabe")), schoolClass.label);
+        assert.ok(rows.some(row => row.includes("Mathématiques communes")), schoolClass.label);
+        assert.ok(rows.every(row => !row.includes(track === "french" ? "Arabe" : "Français")), schoolClass.label);
+        assert.equal(container.querySelector('input[aria-label^="Coefficient "]'), null);
+        assert.equal([...container.querySelectorAll("button")].some(button => /Ajouter.*sous-matières/.test(button.textContent)), false);
+      }
+    }
+    // The real school's French primary has no selected curriculum yet:
+    // do not pretend that catalog subjects have already been assigned to it.
+    emptyClass = primaryClasses.find(row => row.track === "french").id;
+    await changeValue(win, container.querySelector('select[aria-label="Enseignement"]'), "french");
+    await flush(); await flush();
+    assert.match(container.querySelector('[role="alert"]')?.textContent || "", /Aucune matière affectée/);
+    assert.equal(container.querySelectorAll("tbody tr").length, 0);
+    assert.equal(requests.some(request => request.method !== "GET"), false);
+    assert.equal(requests.some(request => request.url.includes("subject-components")), false);
+    assert.equal(container.querySelectorAll("select").length, 3);
+  } finally {
+    await act(async () => root.unmount());
+    await win.happyDOM.close();
+    for (const [key, desc] of descriptors) {
+      if (desc) Object.defineProperty(globalThis, key, desc);
+      else delete globalThis[key];
+    }
+  }
+});

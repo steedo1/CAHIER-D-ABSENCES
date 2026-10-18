@@ -1,5 +1,7 @@
 "use client";
 
+import { resolveTeachingDocumentSignatories } from "@/lib/franco-arabic-document-signatories";
+
 import React, { useEffect, useMemo, useState } from "react";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import {
@@ -66,6 +68,7 @@ type GradePeriod = {
 };
 
 type InstitutionMeta = {
+  settings_json?: unknown;
   institution_name: string;
   institution_logo_url?: string;
   institution_region?: string;
@@ -406,6 +409,10 @@ function CertificateFrame({
   verificationCode?: string;
   verificationQr?: string;
 }) {
+  const direction = resolveTeachingDocumentSignatories(institution.settings_json, {
+    academicYear, classIds: [candidate.class_id], institutionHeadName: institution.institution_head_name,
+    institutionHeadTitle: institution.institution_head_title,
+  });
   const distinctionLabel =
     mode === "individual"
       ? tierShortLabel(candidate.tier)
@@ -491,11 +498,11 @@ function CertificateFrame({
           </div>
           <div>
             <div className="mx-auto flex h-16 w-52 items-end justify-center font-serif text-xl font-bold italic text-blue-950">
-              {institution.institution_head_name || ""}
+              {direction == null ? institution.institution_head_name || "" : direction[0]?.name || "Nom du directeur non renseigné"}
             </div>
             <div className="mx-auto w-52 border-b border-slate-500" />
             <p className="mt-2 text-xs font-black uppercase tracking-wide">
-              {safeText(institution.institution_head_title, "La Direction")}
+              {direction == null ? safeText(institution.institution_head_title, "La Direction") : direction[0]?.title || "Directeur"}
             </p>
           </div>
         </div>
@@ -573,6 +580,10 @@ function PodiumSheet({
   verificationCodes?: Record<string, string>;
   verificationQrs?: Record<string, string>;
 }) {
+  const direction = resolveTeachingDocumentSignatories(institution.settings_json, {
+    academicYear, classIds: [...new Set(candidates.map(candidate => candidate.class_id))],
+    institutionHeadName: institution.institution_head_name, institutionHeadTitle: institution.institution_head_title,
+  });
   return (
     <section className="print-sheet podium-sheet relative mx-auto overflow-hidden bg-[#fffdf7] p-[12mm] text-slate-900 shadow-2xl print:shadow-none">
       <div className="absolute inset-[6mm] border-[3px] border-double border-amber-700" />
@@ -618,9 +629,9 @@ function PodiumSheet({
             <p className="mt-2 text-[10px] font-black uppercase tracking-wide">Le professeur principal</p>
           </div>
           <div>
-            <div className="mx-auto flex h-12 w-52 items-end justify-center font-serif text-lg font-bold italic text-blue-950">{institution.institution_head_name || ""}</div>
+            <div className="mx-auto flex h-12 w-52 items-end justify-center font-serif text-lg font-bold italic text-blue-950">{direction == null ? institution.institution_head_name || "" : direction[0]?.name || "Nom du directeur non renseigné"}</div>
             <div className="mx-auto w-52 border-b border-slate-500" />
-            <p className="mt-2 text-[10px] font-black uppercase tracking-wide">{safeText(institution.institution_head_title, "La Direction")}</p>
+            <p className="mt-2 text-[10px] font-black uppercase tracking-wide">{direction == null ? safeText(institution.institution_head_title, "La Direction") : direction[0]?.title || "Directeur"}</p>
           </div>
         </div>
 

@@ -1,3 +1,4 @@
+import { resolveTeachingDocumentSignatories } from "@/lib/franco-arabic-document-signatories";
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -55,6 +56,9 @@ export async function GET() {
   };
 
   return NextResponse.json({
+    document_signatories: resolveTeachingDocumentSignatories(institution?.settings_json, {
+      institutionHeadName: institution?.head_name, institutionHeadTitle: institution?.head_title,
+    }),
     institution_id: institutionId,
     institution_name:
       String(institution?.name || "").trim() ||

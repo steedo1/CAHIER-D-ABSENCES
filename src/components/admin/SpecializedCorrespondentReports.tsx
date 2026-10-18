@@ -1,5 +1,6 @@
 "use client";
 
+import DocumentDirectionSignatures from "@/components/DocumentDirectionSignatures";
 import { useEffect, useMemo, useState } from "react";
 import type { TeachingTrack } from "@/lib/school-cycles";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
@@ -315,6 +316,11 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
           </table>
           {!display.length && <p className="p-4 text-sm text-slate-500">Aucun élève correspondant à ce rapport.</p>}
         </div>
+        <DocumentDirectionSignatures className="mt-4" signatories={[{
+          track: selectedTrack, title: "Directeur",
+          name: reports.flatMap(report => report.payload.documents).find(entry =>
+            entry.document[selectedTrack]?.directorName)?.document[selectedTrack]?.directorName || "Nom du directeur non renseigné",
+        }]} />
         {!printable && mode !== "unclassified" && <p className="text-sm font-semibold text-rose-700 print:hidden">
           Impression bloquée tant que certains résultats du programme sont incomplets.
         </p>}

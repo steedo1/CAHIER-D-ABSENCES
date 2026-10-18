@@ -114,6 +114,8 @@ export default function DemoBulletinClient({
       ...demo.school,
       name: schoolName,
       code: schoolCode,
+      isFrancoArabic: cycleHasArabic,
+      generalDirectorName: "Responsable général (exemple)", generalDirectorTitle: "Directeur général",
       subtitle: cycleHasArabic ? "Maquette pédagogique franco-arabe" : "Maquette pédagogique scolaire",
     },
     french: demo.french ? {

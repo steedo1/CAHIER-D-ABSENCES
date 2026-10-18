@@ -1,6 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import DocumentDirectionSignatures from "@/components/DocumentDirectionSignatures";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
+import { resolveEvaluationTeachingTrack } from "@/lib/pedagogical-engine";
+import { resolveTeachingDocumentSignatories, type TeachingDocumentSignatory } from "@/lib/franco-arabic-document-signatories";
 import React from "react";
 import {
   AlertTriangle,
@@ -121,6 +125,9 @@ type BlockMeta = {
 };
 
 type InstitutionInfo = {
+  settingsJson: unknown;
+  headName: string;
+  headTitle: string;
   name: string;
   academicYear: string;
   bp: string;
@@ -594,6 +601,9 @@ function getInstitutionInfo(
       : {};
 
   return {
+    settingsJson: live.settings_json || source.settings_json || {},
+    headName: emptyToBlank(live.institution_head_name || live.head_name || source.head_name || source.institution_head_name),
+    headTitle: emptyToBlank(live.institution_head_title || live.head_title || source.head_title || source.institution_head_title),
     name: emptyToBlank(
       source.name ||
         source.school_name ||
@@ -889,10 +899,12 @@ function TeacherServiceSummary({
   label,
   items,
   snapshot,
+  signatories,
 }: {
   label: string;
   items: Assignment[];
   snapshot?: SourceSnapshot | null;
+  signatories?: TeachingDocumentSignatory[] | null;
 }) {
   const teacher = getSnapshotTeacher(snapshot, items, label);
   const rows = buildTeacherServiceRows(items);
@@ -1003,11 +1015,11 @@ function TeacherServiceSummary({
 
       <div className="flex justify-end gap-8 text-center text-[10px] text-black print:text-[7.2px]">
         <span>Fait à ................, le ................</span>
-        <span>
+        {signatories != null ? <DocumentDirectionSignatures inline signatories={signatories} /> : <span>
           Cachet, signature, Nom et Prénoms
           <br />
           du Chef d’établissement
-        </span>
+        </span>}
       </div>
     </div>
   );
@@ -1256,6 +1268,20 @@ function OfficialClassSheet({
   const teacherRows = buildTeacherRows(items);
   const isClassMode = mode === "class";
   const info = getInstitutionInfo(snapshot, institutionSettings);
+  const classIds = [...new Set(items.map(item => item.class_id).filter((id): id is string => Boolean(id)))];
+  const classYears = [...new Set((snapshot?.classes || []).filter(row => classIds.includes(row.id))
+    .map(row => row.academic_year).filter(Boolean))];
+  const school = parseSchoolCyclesSettings(info.settingsJson);
+  const itemTracks = items.map(item => {
+    const schoolClass = (snapshot?.classes || []).find(row => row.id === item.class_id);
+    const cycle = resolveSchoolCycleForClass({ ...schoolClass, id: item.class_id || "" }, school);
+    return resolveEvaluationTeachingTrack(info.settingsJson, cycle, item.catalog_subject_id || item.subject_id || "");
+  });
+  const signatories = resolveTeachingDocumentSignatories(info.settingsJson, {
+    academicYear: classYears.length === 1 ? classYears[0] : info.academicYear, classIds,
+    tracks: itemTracks.length && itemTracks.every(track => track !== null) ? [...new Set(itemTracks)] : undefined,
+    institutionHeadName: info.headName, institutionHeadTitle: info.headTitle,
+  });
 
   return (
     <section className="edt-sheet relative min-w-[1120px] overflow-hidden rounded-[18px] border border-slate-300 bg-white shadow-sm print:min-w-0 print:break-after-page print:overflow-visible print:rounded-none print:border-0 print:shadow-none">
@@ -1361,7 +1387,7 @@ function OfficialClassSheet({
 
       {!isClassMode ? (
         <div className="mx-3 mb-3 print:mx-0 print:mb-0 print:mt-3">
-          <TeacherServiceSummary label={label} items={items} snapshot={snapshot} />
+          <TeacherServiceSummary label={label} items={items} snapshot={snapshot} signatories={signatories} />
         </div>
       ) : null}
 
@@ -1399,6 +1425,7 @@ function OfficialClassSheet({
           </table>
         </div>
       ) : null}
+      {isClassMode && <DocumentDirectionSignatures className="mx-3 mb-2 print:mx-0" signatories={signatories} />}
     </section>
   );
 }

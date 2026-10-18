@@ -13,8 +13,10 @@ export type BulletinVariant = BulletinTrack | "combined" | "ordinary";
 export type BulletinSchool = {
   name: string;
   code?: string | null;
-  /** Provenance serveur : seul un établissement franco-arabe adopte « Le Directeur ». */
+  /** Provenance serveur : seul un établissement franco-arabe adopte « Directeur ». */
   isFrancoArabic?: boolean;
+  generalDirectorName?: string | null;
+  generalDirectorTitle?: string | null;
   subtitle?: string | null;
   motto?: string | null;
   city?: string | null;
@@ -294,10 +296,13 @@ function Footer({ model, programs, ordinary }: {
 }) {
   return <footer className={styles.footer}>
     <div className={styles.signatures}>
-      {programs.map(p => <Signature
+      {model.school.isFrancoArabic && programs.length > 1 ? <Signature
+        name={model.school.generalDirectorName}
+        title={model.school.generalDirectorTitle?.trim() || "Directeur"}
+      /> : programs.map(p => <Signature
         key={p.track}
         name={p.directorName}
-        title={model.school.isFrancoArabic ? "Le Directeur" : ordinary ? "Direction de l’établissement" : (p.track === "french" ? "Directeur de l’enseignement français" : "Directeur de l’enseignement arabe")}
+        title={model.school.isFrancoArabic ? "Directeur" : ordinary ? "Direction de l’établissement" : (p.track === "french" ? "Directeur de l’enseignement français" : "Directeur de l’enseignement arabe")}
       />)}
       <div className={styles.stampBox}>
         <span>Cachet de l’établissement</span><div className={styles.stampSpace}/>

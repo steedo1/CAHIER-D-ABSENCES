@@ -1,5 +1,7 @@
 "use client";
 
+import DocumentDirectionSignatures from "@/components/DocumentDirectionSignatures";
+import type { TeachingDocumentSignatory } from "@/lib/franco-arabic-document-signatories";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PreschoolAttainment, PreschoolCompetency } from "@/lib/preschool-assessments";
 import type { PreschoolRecord, PreschoolMark } from "@/lib/preschool-booklet-store";
@@ -18,6 +20,8 @@ type FormData = {
   catalogs: Partial<Record<TeachingTrack, PreschoolCompetency[]>>;
   records: Record<string, Partial<Record<TeachingTrack, Slot>>>;
   schoolName: string; schoolCode: string;
+  isFrancoArabic?: boolean;
+  documentSignatories?: Record<"french" | "arabic" | "combined", TeachingDocumentSignatory[] | null>;
   signatories: { french?: { name: string }; arabic?: { name: string } };
   admin: boolean; editable: boolean;
 };
@@ -142,7 +146,7 @@ export default function PreschoolBookletPage() {
     setCatalogDraft(catalog.map(item => [item.id, item.domain, item.label].join(" | ")).join("\n"));
   }, [data, studentId, effectiveTrack]);
 
-  const availableVariants = useMemo(() => {
+  const availableVariants = useMemo<Array<TeachingTrack | "combined">>(() => {
     if (enabledTracks.length === 1) return [enabledTracks[0]];
     if (data?.format === "combined") return ["combined"];
     if (data?.format === "separate") return enabledTracks;
@@ -343,12 +347,13 @@ export default function PreschoolBookletPage() {
             </table>
             {block.record?.teacherComment && <p className="mt-2 text-xs">
               <strong>Appréciation :</strong> {block.record.teacherComment}</p>}
-            <p className="mt-5 text-right text-xs">
-              Directeur de l’enseignement {block.track === "french" ? "français" : "arabe"} :
+            {!data.isFrancoArabic && <p className="mt-5 text-right text-xs">
+              {block.track === "french" ? "Directeur de l’enseignement français" : "Directeur de l’enseignement arabe"} :
               {" "}{data.signatories?.[block.track]?.name || "Signature à renseigner"}
-            </p>
+            </p>}
           </section>)}
-          <p className="border-t pt-3 text-xs">Visa de l’enseignant · Visa du directeur général</p>
+          <DocumentDirectionSignatures className="mt-5" signatories={data.documentSignatories?.[previewVariant]} />
+          <p className="border-t pt-3 text-xs">{data.isFrancoArabic ? "Visa de l’enseignant" : "Visa de l’enseignant · Visa du directeur général"}</p>
           {!printable && <p className="rounded bg-amber-100 p-3 text-center text-xs font-bold text-amber-900">
             BROUILLON — LIVRET INCOMPLET / NON VALIDÉ
           </p>}

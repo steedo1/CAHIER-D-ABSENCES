@@ -1,5 +1,7 @@
 "use client";
 
+import { resolveTeachingDocumentSignatories, teachingDocumentSignaturesHtml, type TeachingDocumentContext } from "@/lib/franco-arabic-document-signatories";
+
 import React, { useEffect, useMemo, useState } from "react";
 import { Calendar, Filter, RefreshCw, Download, FileText } from "lucide-react";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
@@ -156,6 +158,7 @@ type TopStudent = MatrixStudent & { total: number };
 type TopSubject = MatrixSubject & { total: number };
 
 type PdfPrintOptions = {
+  directionContext?: TeachingDocumentContext;
   title: string;
   subtitle: string;
   tableHtml: string;
@@ -356,6 +359,7 @@ function openPdfPrintWindow({
   tableHtml,
   summaryHtml,
   institution,
+  directionContext,
 }: PdfPrintOptions) {
   if (typeof window === "undefined") return;
 
@@ -816,6 +820,11 @@ function openPdfPrintWindow({
     <section class="table-wrap">
       ${tableHtml}
     </section>
+
+    ${teachingDocumentSignaturesHtml(resolveTeachingDocumentSignatories(institution?.settings_json, {
+      ...directionContext, institutionHeadName: institution?.institution_head_name,
+      institutionHeadTitle: institution?.institution_head_title,
+    }))}
 
     <footer class="footer">
       <div>
@@ -1512,6 +1521,7 @@ export default function AbsencesMatrixOnly() {
       summaryHtml,
       tableHtml,
       institution,
+      directionContext: { academicYear: selectedAcademicYear, classIds: [selectedClassId] },
     });
   }
 

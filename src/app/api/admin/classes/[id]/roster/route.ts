@@ -1,3 +1,4 @@
+import { resolveTeachingDocumentSignatories } from "@/lib/franco-arabic-document-signatories";
 // src/app/api/admin/classes/[id]/roster/route.ts
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
@@ -663,6 +664,10 @@ export async function GET(
       regional_direction: institution?.regional_direction ?? null,
       postal_address: institution?.postal_address ?? null,
       status: institution?.status ?? null,
+      document_signatories: resolveTeachingDocumentSignatories(institution?.settings_json, {
+        academicYear: String((cls as any).academic_year || academicYear || ""), classIds: [classId],
+        institutionHeadName: institution?.head_name, institutionHeadTitle: institution?.head_title,
+      }),
       head_name: institution?.head_name ?? null,
       head_title: institution?.head_title ?? null,
       country_name: institution?.country_name ?? null,

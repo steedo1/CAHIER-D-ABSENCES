@@ -47,6 +47,7 @@ async function pages<T>(query: (from: number, to: number) => PromiseLike<{ data:
 export async function loadSpecializedBulletin(input: {
   service: SupabaseClient; institutionId: string; schoolClass: SchoolClass;
   settingsJson: unknown; institutionName: string | null; institutionCode: string | null;
+  institutionHeadName?: string | null; institutionHeadTitle?: string | null;
   searchParams: URLSearchParams; role: string;
   /** SERVER-ONLY callback into the identical historical bulletin route. */
   loadHistoricalFrench: (period: { from: string; to: string; academicYear: string; verifiedLinkedStudentIds: string[] }) =>
@@ -257,7 +258,8 @@ export async function loadSpecializedBulletin(input: {
 
     const documents: SpecializedBulletinPayload["documents"] = results.map(({ student, drafts }) => {
       const document: BulletinDocument = {
-        school: { name: input.institutionName || "", code: input.institutionCode, isFrancoArabic: isBilingualSchool(school) },
+        school: { name: input.institutionName || "", code: input.institutionCode, isFrancoArabic: isBilingualSchool(school),
+          generalDirectorName: input.institutionHeadName, generalDirectorTitle: input.institutionHeadTitle },
         student: { id: student.id, firstName: student.first_name || "", lastName: student.last_name || student.full_name || "",
           matricule: student.matricule, birthDate: student.birthdate },
       };
