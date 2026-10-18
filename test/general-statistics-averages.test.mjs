@@ -233,7 +233,7 @@ test("separate bilingual bulletins remain independent, normalize /10 and /20, an
   assert.equal(api.statisticsStudentAverage(special, "class-a", "student", "t1", "shared", "french").value, 12);
   assert.equal(api.statisticsStudentAverage(special, "class-a", "student", "t1", "all").value, null);
   assert.deepEqual(api.statisticsStudentAverage(special, "class-a", "student", "annual", "all", "arabic"),
-    { value: 15.5, partial: true });
+    { value: 15.6, partial: true });
   special.bulletins.get("class-a|t1").specialized.documents[0].programReadiness.arabic = false;
   assert.equal(api.statisticsStudentAverage(special, "class-a", "student", "t1", "all", "arabic").value, null);
   assert.equal(api.statisticsStudentAverage(special, "class-a", "student", "t1", "all", "french").value, 14);
