@@ -167,7 +167,7 @@ test("teacher class selector resolves all six primary levels and their separatel
   assert.equal(payload.items.length, 12);
   for (const level of PRIMARY_LEVELS) {
     const choices = payload.items.filter(item => item.level === level);
-    assert.equal(choices.length, 2, `${level}: two subject-specific choices`);
+    assert.equal(choices.length, 2, `${level}: two subject-specific choices; received ${JSON.stringify(payload.items.map(item => ({ class_id: item.class_id, level: item.level, subject_id: item.subject_id, school_cycle: item.school_cycle, teaching_track: item.teaching_track })))}`);
     const frenchRow = choices.find(item => item.subject_id === french);
     const arabicRow = choices.find(item => item.subject_id === arabic);
     assert.equal(frenchRow?.school_cycle, "primary", `${level}: French in primary`);
