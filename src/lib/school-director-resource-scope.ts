@@ -3,10 +3,12 @@ import {
 } from "@/lib/school-cycles";
 import {
   expandPedagogicalEnrollments, programsForStudent, readStudentProgramSettings,
-  type ActiveProgramEnrollment, type ActiveProgramClass,
+  type ActiveProgramEnrollment,
 } from "@/lib/school-student-programs";
 
-export type DirectorClass = ActiveProgramClass & {
+export type DirectorClass = {
+  id: string;
+  level?: string | null;
   label: string;
   academic_year: string;
 };
