@@ -14,6 +14,16 @@ function load(path, imports = {}) {
   return exports;
 }
 const api = load("src/lib/general-statistics-averages.ts");
+const fakeSchoolLevels = {
+  normalizeSchoolLevel: (value) => String(value || ""), sameSchoolLevel: (a, b) => a === b,
+};
+const schoolCycles = load("src/lib/school-cycles.ts", { "./school-levels": fakeSchoolLevels });
+const studentPrograms = load("src/lib/school-student-programs.ts", {
+  "./school-cycles": schoolCycles, "./school-levels": fakeSchoolLevels,
+});
+const schoolPeriods = load("src/lib/school-grading-periods.ts", {
+  "./school-cycles": schoolCycles, "./school-student-programs": studentPrograms,
+});
 const periods = [1, 2, 3].map((n) => ({ id: `t${n}`, label: `Trimestre ${n}`, start_date: `2027-0${n}-01`,
   end_date: `2027-0${n}-28`, coeff: n === 1 ? 1 : 2, class_ids: ["class-a"] }));
 function bulletin(period, item = {}, classId = "class-a") {
@@ -110,6 +120,8 @@ test("period lookups are grouped by education context and retain class applicabi
     "@/lib/education-grading-periods": { listApplicableGradePeriods: async (...args) => {
       calls.push(args); return { items: [{ ...periods[0], id: args[3] === "primary" ? "semester" : "t1" }] };
     } },
+    "@/lib/school-grading-periods": schoolPeriods,
+    "@/lib/school-cycles": schoolCycles,
   });
   const loaded = await helper.loadStatisticsGradePeriods({}, "school", "2026-2027", [
     ...Array.from({ length: 19 }, (_, i) => ({ id: `class-${i}`, education_type: "general_secondary" })),
@@ -121,13 +133,27 @@ test("period lookups are grouped by education context and retain class applicabi
   assert.deepEqual(loaded.find((p) => p.id === "semester").class_ids, ["primary"]);
 });
 
-function routeFixture({ role = "file_correspondent", institution = "school", failPeriods = false, authenticated = true } = {}) {
+function routeFixture({ role = "file_correspondent", institution = "school", failPeriods = false, authenticated = true, bilingual = false } = {}) {
   let periodReads = 0;
+  const classId = bilingual ? "11111111-1111-4111-8111-111111111111" : "class-a";
+  const studentId = bilingual ? "22222222-2222-4222-8222-222222222222" : "student";
+  const settings = bilingual ? {
+    school_cycles_v1: { version: 1, enabled: true, enabledCycles: ["primary"],
+      classCycleById: { [classId]: "primary" },
+      teachingTracksByCycle: { primary: ["french", "arabic"] },
+      subjectTracksByCycle: {}, defaultView: "all", preferredLanguage: "fr" },
+    school_student_programs_v1: { version: 1, years: {
+      "2026-2027": { classes: { [classId]: { tracks: ["french", "arabic"], students: {} } } },
+    } },
+  } : {};
   const tables = {
     profiles: [{ id: "actor", institution_id: "school" }], user_roles: [{ profile_id: "actor", role, institution_id: institution }],
+    institutions: [{ id: "school", settings_json: settings }],
+    classes: [{ id: classId, level: bilingual ? "CP1" : "6e", institution_id: "school", academic_year: "2026-2027" }],
     academic_years: [{ institution_id: "school", code: "2026-2027", is_current: true }], student_year_profiles: [],
-    class_enrollments: [{ institution_id: "school", student_id: "student", class_id: "class-a", end_date: null,
-      students: { id: "student", full_name: "ÉLÈVE TEST" }, classes: { id: "class-a", institution_id: "school", academic_year: "2026-2027" } }],
+    class_enrollments: [{ institution_id: "school", student_id: studentId, class_id: classId, end_date: null,
+      students: { id: studentId, full_name: "ÉLÈVE TEST" },
+      classes: { id: classId, institution_id: "school", academic_year: "2026-2027", level: bilingual ? "CP1" : "6e" } }],
   };
   function query(table) {
     assert.ok(table in tables, table); let rows = [...tables[table]];
@@ -144,9 +170,11 @@ function routeFixture({ role = "file_correspondent", institution = "school", fai
     "@/lib/supabase-server": { getSupabaseServerClient: async () => session },
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => service },
     "@/lib/server/general-statistics-periods": { loadStatisticsGradePeriods: async (_srv, inst, year, classes) => {
-      assert.equal(inst, "school"); assert.equal(year, "2026-2027"); assert.deepEqual(classes.map((c) => c.id), ["class-a"]);
+      assert.equal(inst, "school"); assert.equal(year, "2026-2027"); assert.deepEqual(classes.map((c) => c.id), [classId]);
       periodReads++; if (failPeriods) throw new Error("unavailable"); return periods;
     } },
+    "@/lib/school-cycles": schoolCycles,
+    "@/lib/school-student-programs": studentPrograms,
   });
   return { get: route.GET, periodReads: () => periodReads };
 }
@@ -168,4 +196,78 @@ test("an unavailable period configuration does not break the existing demographi
   const response = await routeFixture({ failPeriods: true }).get(), body = await response.json();
   assert.equal(response.status, 200); assert.equal(body.items.length, 1);
   assert.deepEqual(body.academic_periods, []); assert.match(body.academic_filter_error, /périodes/);
+});
+
+test("bilingual school statistics count a shared enrolment once while exposing both verified teachings", async () => {
+  const { get } = routeFixture({ bilingual: true });
+  const response = await get(), body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.items.length, 1);
+  assert.equal(body.school_configuration.enabled, true);
+  assert.deepEqual(body.school_configuration.enabled_cycles, ["primary"]);
+  assert.equal(body.items[0].school_cycle, "primary");
+  assert.deepEqual(body.items[0].teaching_tracks.sort(), ["arabic", "french"]);
+  assert.equal(body.items[0].program_class_ids.french, body.items[0].class_id);
+  assert.equal(body.items[0].program_class_ids.arabic, body.items[0].class_id);
+});
+test("separate bilingual bulletins remain independent, normalize /10 and /20, and refuse missing approvals", async () => {
+  const one = (term, arabic, ready = true) => ({
+    ok: true,
+    class: { id: "class-a", academic_year: "2026-2027" },
+    period: { from: term.start_date, to: term.end_date }, items: [], subjects: [],
+    specialized: { engine: "specialized", documents: [{
+      studentId: "student", ready, programReadiness: { french: true, arabic: ready },
+      document: {
+        french: { denominator: 20, generalAverage: 14, subjects: [{ id: "shared", name: "Langue", average: 12 }] },
+        arabic: { denominator: 10, generalAverage: arabic, subjects: [{ id: "shared", name: "لغة", average: 8 }] },
+      },
+    }] },
+  });
+  const special = { periods, bulletins: new Map(periods.map((period, i) =>
+    [`class-a|${period.id}`, one(period, [9, 7, 8][i])])), subjects: [] };
+  assert.deepEqual(api.statisticsStudentAverage(special, "class-a", "student", "t1", "all", "french"),
+    { value: 14, partial: false });
+  assert.deepEqual(api.statisticsStudentAverage(special, "class-a", "student", "t1", "all", "arabic"),
+    { value: 18, partial: false });
+  assert.equal(api.statisticsStudentAverage(special, "class-a", "student", "t1", "shared", "arabic").value, 16);
+  assert.equal(api.statisticsStudentAverage(special, "class-a", "student", "t1", "shared", "french").value, 12);
+  assert.equal(api.statisticsStudentAverage(special, "class-a", "student", "t1", "all").value, null);
+  assert.deepEqual(api.statisticsStudentAverage(special, "class-a", "student", "annual", "all", "arabic"),
+    { value: 15.5, partial: true });
+  special.bulletins.get("class-a|t1").specialized.documents[0].programReadiness.arabic = false;
+  assert.equal(api.statisticsStudentAverage(special, "class-a", "student", "t1", "all", "arabic").value, null);
+  assert.equal(api.statisticsStudentAverage(special, "class-a", "student", "t1", "all", "french").value, 14);
+  const loaded = await api.loadStatisticsAcademicData({ classIds: ["class-a"], selection: "t1",
+    academicYear: "2026-2027", periods, cache: new Map(), signal: new AbortController().signal,
+    fetcher: async () => Response.json(special.bulletins.get("class-a|t1")),
+  });
+  assert.deepEqual(loaded.subjects.map((subject) => subject.track).sort(), ["arabic", "french"]);
+  assert.equal(loaded.subjects.filter((subject) => subject.id === "shared").length, 2);
+});
+test("separate programme periods never get grouped merely by their general_secondary education type", async () => {
+  const french = "11111111-1111-4111-8111-111111111111";
+  const arabic = "22222222-2222-4222-8222-222222222222";
+  const settings = {
+    school_cycles_v1: { version: 1, enabled: true, enabledCycles: ["primary"],
+      classCycleById: { [french]: "primary", [arabic]: "primary" },
+      teachingTracksByCycle: { primary: ["french", "arabic"] }, subjectTracksByCycle: {} },
+    school_student_programs_v1: { version: 1, years: { "2026-2027": {
+      classes: { [french]: { tracks: ["french"], students: {} },
+        [arabic]: { tracks: ["arabic"], students: {} } },
+    } } },
+  };
+  const calls = [];
+  const helper = load("src/lib/server/general-statistics-periods.ts", {
+    "@/lib/school-cycles": schoolCycles, "@/lib/school-grading-periods": schoolPeriods,
+    "@/lib/education-grading-periods": { listApplicableGradePeriods: async (_s, _i, _y, id) => {
+      calls.push(id); return { items: [{ ...periods[0], id: id === french ? "french-period" : "arabic-period" }] };
+    } },
+  });
+  const entries = await helper.loadStatisticsGradePeriods({}, "school", "2026-2027", [
+    { id: french, level: "CP1", education_type: "general_secondary" },
+    { id: arabic, level: "CP1", education_type: "general_secondary" },
+  ], settings);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(entries.find((p) => p.id === "french-period").class_ids, [french]);
+  assert.deepEqual(entries.find((p) => p.id === "arabic-period").class_ids, [arabic]);
 });
