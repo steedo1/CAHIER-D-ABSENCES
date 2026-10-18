@@ -16,7 +16,7 @@ type GradePeriod = {
 const endpoint = "/api/admin/school-grading-periods";
 let nextTemporaryId = 0;
 
-export default function SchoolGradingPeriodsEditor({ academicYear }: { academicYear: string }) {
+export default function SchoolGradingPeriodsEditor({ academicYear, allowedPrograms }: { academicYear: string; allowedPrograms?: Program[] }) {
   const navigation = useSchoolNavigation();
   const [programs, setPrograms] = useState<Program[]>([]);
   const [programKey, setProgramKey] = useState("");
@@ -32,6 +32,15 @@ export default function SchoolGradingPeriodsEditor({ academicYear }: { academicY
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    if (allowedPrograms) {
+      // Director portal receives only the server-authorized track/cycles.
+      // Do not call the admin-only bulletin-templates API or show other tracks.
+      const unique = [...new Map(allowedPrograms.map(p => [`${p.cycle}|${p.track}`, p])).values()];
+      setPrograms(unique);
+      setProgramKey(unique[0] ? `${unique[0].cycle}|${unique[0].track}` : "");
+      setLoading(false);
+      return () => { active = false; controller.abort(); };
+    }
     (async () => {
       try {
         const response = await fetch("/api/admin/bulletin-templates", {
