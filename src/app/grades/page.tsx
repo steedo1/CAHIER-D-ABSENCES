@@ -15,6 +15,7 @@ import {
   Unlock,
 } from "lucide-react";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
+import Link from "next/link";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
   gradesClassesKey,
@@ -2397,6 +2398,13 @@ export default function TeacherNotesPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {teachClasses.some(item => /^(ps|ms|gs|maternelle|petite section|moyenne section|grande section)/i
+              .test(String(item.level || "").trim())) && (
+              <Link href="/preschool/booklets"
+                className="inline-flex items-center rounded-lg border border-indigo-200/30 bg-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-950">
+                Livret maternelle
+              </Link>
+            )}
             <Button
               tone="amber"
               onClick={() => window.location.reload()}
