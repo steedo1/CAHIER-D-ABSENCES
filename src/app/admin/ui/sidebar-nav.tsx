@@ -30,6 +30,7 @@ import React from "react";
 import type { AppRole } from "@/lib/auth/role";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import { isFileCorrespondentPathAllowed } from "@/lib/auth/file-correspondent";
+import { isBilingualSchool } from "@/lib/school-student-programs";
 
 type NavItem = {
   href: string;
@@ -794,6 +795,7 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
   const currentTab = searchParams.get("tab");
   const schoolNavigation = useSchoolNavigation();
   const specializedSettingsEnabled = Boolean(schoolNavigation);
+  const directSchoolGradePublication = Boolean(schoolNavigation && isBilingualSchool(schoolNavigation.settings));
 
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
   const isResizingRef = React.useRef(false);
@@ -928,7 +930,7 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
   }, [role]);
 
   React.useEffect(() => {
-    if (role !== "admin" && role !== "super_admin" && role !== "educator") return;
+    if (directSchoolGradePublication || (role !== "admin" && role !== "super_admin" && role !== "educator")) return;
     let cancelled = false;
 
     async function loadPendingGradePublicationCount() {
@@ -977,7 +979,7 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [role]);
+  }, [role, directSchoolGradePublication]);
 
   const isEducator = role === "educator";
   const isInfirmier = role === "infirmier";
@@ -1117,9 +1119,11 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
       NOTES_ITEMS.filter((item) => {
         if (isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
+        if (directSchoolGradePublication && (item.href === "/admin/notes/publication-requests" ||
+            item.href === "/admin/notes/publication-settings")) return false;
         return true;
       }),
-    [isFileCorrespondent, isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
+    [isFileCorrespondent, isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell, directSchoolGradePublication],
   );
 
   const settingsItems = React.useMemo(
