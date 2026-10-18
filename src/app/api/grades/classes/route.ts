@@ -10,6 +10,10 @@ import {
   type EducationType,
 } from "@/lib/education-organization";
 import { resolveClassDeviceClassIds } from "@/lib/class-device-identity";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, type SchoolCycle, type TeachingTrack } from "@/lib/school-cycles";
+import { readStudentProgramSettings } from "@/lib/school-student-programs";
+import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
+import { resolvePrimaryTeachingTrack } from "@/lib/grades/primary-evaluation-kind";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +31,9 @@ type TeachClass = {
   formation_code: string | null;
   formation_label: string | null;
   formation_level_code: string | null;
+  school_cycle: SchoolCycle | null;
+  teaching_track: TeachingTrack | null;
+  configured_scale: number | null;
 };
 
 
@@ -65,12 +72,18 @@ async function buildFormationLabelMap(
     map.set(`custom:${id}`, name ? `${diploma} — ${name}` : diploma);
   }
 
-  return map;
+  return { map, settings };
 }
 
 function classContext(
   cls: any,
   formationLabels: Map<string, string>,
+  classId: string,
+  year: string,
+  subjectId: string | null,
+  school: ReturnType<typeof parseSchoolCyclesSettings>,
+  programs: ReturnType<typeof readStudentProgramSettings>,
+  reports: ReturnType<typeof parseFrancoArabicReportsSettings>,
 ): Pick<
   TeachClass,
   | "education_type"
@@ -78,14 +91,30 @@ function classContext(
   | "formation_code"
   | "formation_label"
   | "formation_level_code"
+  | "school_cycle"
+  | "teaching_track"
+  | "configured_scale"
 > {
   const educationType: EducationType = isEducationType(cls?.education_type)
     ? cls.education_type
     : "general_secondary";
   const formationCode = String(cls?.formation_code || "").trim() || null;
+  const cycle = school.enabled ? resolveSchoolCycleForClass({ id: classId, level: cls?.level }, school) : null;
+  const tracks = cycle ? programs.years[year]?.classes[classId]?.tracks || [] : [];
+  const track = cycle === "primary"
+    ? resolvePrimaryTeachingTrack({
+        offeredTracks: school.teachingTracksByCycle.primary || [],
+        classTracks: tracks,
+        subjectTracks: subjectId ? school.subjectTracksByCycle.primary?.[subjectId] : undefined,
+      })
+    : cycle && tracks.length === 1 && school.teachingTracksByCycle[cycle]?.includes(tracks[0])
+      ? tracks[0] : null;
   return {
     education_type: educationType,
     education_label: educationLabel(educationType),
+    school_cycle: cycle,
+    teaching_track: track,
+    configured_scale: cycle && track ? getConfiguredScoringScale(reports, cycle, String(cls?.level || ""), track) : null,
     formation_code: formationCode,
     formation_label: formationCode
       ? formationLabels.get(formationCode) || formationCode
@@ -137,10 +166,14 @@ export async function GET(_req: NextRequest) {
     const isClassDevice = roleSet.has("class_device");
 
     const srv = getSupabaseServiceClient();
-    const formationLabels = await buildFormationLabelMap(
+    const institutionContext = await buildFormationLabelMap(
       srv,
       profile.institution_id,
     );
+    const formationLabels = institutionContext.map;
+    const school = parseSchoolCyclesSettings(institutionContext.settings);
+    const programs = readStudentProgramSettings(institutionContext.settings);
+    const reports = parseFrancoArabicReportsSettings(institutionContext.settings);
 
     const items: TeachClass[] = [];
     const seen = new Set<string>();
@@ -200,7 +233,7 @@ export async function GET(_req: NextRequest) {
     if (isTeacher) {
       const { data: rows, error } = await supabase
         .from("class_teachers")
-        .select("class_id,subject_id,classes:class_id(label,level,education_type,formation_code,formation_level_code)")
+        .select("class_id,subject_id,classes:class_id(label,level,academic_year,education_type,formation_code,formation_level_code)")
         .eq("teacher_id", profile.id)
         .eq("institution_id", profile.institution_id)
         .is("end_date", null);
@@ -217,7 +250,7 @@ export async function GET(_req: NextRequest) {
             level: String(cls.level ?? "—"),
             subject_id: row.subject_id || null,
             subject_name: null,
-            ...classContext(cls, formationLabels),
+            ...classContext(cls, formationLabels, String(row.class_id), String(cls.academic_year || ""), row.subject_id || null, school, programs, reports),
           });
         });
       }
@@ -273,7 +306,7 @@ export async function GET(_req: NextRequest) {
               level: String(cls.level ?? "—"),
               subject_id: row.subject_id || null,
               subject_name: null,
-              ...classContext(cls, formationLabels),
+              ...classContext(cls, formationLabels, String(row.class_id), String(cls.academic_year || ""), row.subject_id || null, school, programs, reports),
             });
           });
         }

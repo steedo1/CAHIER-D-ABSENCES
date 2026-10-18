@@ -9,6 +9,10 @@ import {
   unpublishEvaluationOfficially,
 } from "@/lib/grades/publication";
 import { computeAcademicYear } from "@/lib/academicYear";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
+import { resolveEvaluationTeachingTrack } from "@/lib/pedagogical-engine";
+import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
+import { encodePrimaryEvaluation, isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
 import {
   autoDetectApplicableGradePeriod,
   getApplicableGradePeriodById,
@@ -17,7 +21,7 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
+type EvalKind = "devoir" | "composition" | "interro_ecrite" | "interro_orale";
 type Role =
   | "super_admin"
   | "admin"
@@ -44,6 +48,7 @@ type EvalRow = {
   teacher_id: string | null;
   eval_date: string;
   eval_kind: EvalKind;
+  title?: string | null;
   scale: number;
   coeff: number;
   is_published: boolean;
@@ -570,6 +575,7 @@ const EVALUATION_SELECT = [
   "teacher_id",
   "eval_date",
   "eval_kind",
+  "title",
   "scale",
   "coeff",
   "is_published",
@@ -582,6 +588,26 @@ const EVALUATION_SELECT = [
   "review_comment",
   "publication_version",
 ].join(",");
+
+/**
+ * Uses only school and class settings already configured by the school.
+ * Historical schools retain the original evaluation contract.
+ */
+async function primarySchoolContext(
+  srv: ReturnType<typeof getSupabaseServiceClient>, institutionId: string, classId: string,
+): Promise<{ isPrimary: boolean; settings: unknown; level: string; scale: number | null }> {
+  const [institution, schoolClass] = await Promise.all([
+    srv.from("institutions").select("settings_json").eq("id", institutionId).maybeSingle(),
+    srv.from("classes").select("id,level").eq("id", classId).eq("institution_id", institutionId).maybeSingle(),
+  ]);
+  if (institution.error || schoolClass.error || !institution.data || !schoolClass.data) {
+    throw Error("primary_school_context_unavailable");
+  }
+  const settings = institution.data.settings_json;
+  const school = parseSchoolCyclesSettings(settings);
+  const isPrimary = school.enabled && resolveSchoolCycleForClass(schoolClass.data, school) === "primary";
+  return { isPrimary, settings, level: String(schoolClass.data.level || ""), scale: null };
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -692,7 +718,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
 
-    const items = (data ?? []) as unknown as EvalRow[];
+    const schoolCtx = await primarySchoolContext(srv, institutionId, classId);
+    const items = ((data ?? []) as unknown as EvalRow[]).map(item =>
+      schoolCtx.isPrimary && isPrimaryComposition(item)
+        ? { ...item, eval_kind: "composition" as const } : item
+    );
 
     const direct_publication = await requiresDirectGradePublication(srv, institutionId);
     return NextResponse.json({ items, direct_publication }, { status: 200 });
@@ -779,6 +809,36 @@ export async function POST(req: NextRequest) {
       institutionId,
       subjRaw
     );
+    const schoolCtx = await primarySchoolContext(srv, institutionId, class_id);
+    let storedKind: "devoir" | "interro_ecrite" | "interro_orale" = "devoir";
+    let storedTitle: string | null = null;
+    let primaryScale: number | null = null;
+    if (schoolCtx.isPrimary) {
+      if (eval_kind !== "devoir" && eval_kind !== "composition") {
+        return NextResponse.json({ ok: false, error: "primary_eval_kind_not_allowed" }, { status: 400 });
+      }
+      const track = globalId
+        ? resolveEvaluationTeachingTrack(schoolCtx.settings, "primary", globalId) : null;
+      if (!track) {
+        return NextResponse.json({ ok: false, error: "primary_subject_teaching_unconfigured" }, { status: 409 });
+      }
+      primaryScale = getConfiguredScoringScale(
+        parseFrancoArabicReportsSettings(schoolCtx.settings), "primary", schoolCtx.level, track);
+      if (primaryScale == null) {
+        return NextResponse.json({ ok: false, error: "primary_scale_not_configured" }, { status: 409 });
+      }
+      if (!Number.isFinite(scale) || scale !== primaryScale || coeff !== 1) {
+        return NextResponse.json({ ok: false, error: "primary_scale_or_weight_mismatch" }, { status: 400 });
+      }
+      const encoded = encodePrimaryEvaluation(eval_kind);
+      storedKind = encoded.eval_kind;
+      storedTitle = encoded.title;
+    } else {
+      if (eval_kind !== "devoir" && eval_kind !== "interro_ecrite" && eval_kind !== "interro_orale") {
+        return NextResponse.json({ ok: false, error: "invalid_eval_kind" }, { status: 400 });
+      }
+      storedKind = eval_kind;
+    }
 
     const componentValidation = await validateSubjectComponentForClass(
       srv,
@@ -841,6 +901,9 @@ export async function POST(req: NextRequest) {
     const explicitGradingPeriodId =
       normalizeUuidLike(gradingPeriodId) ??
       normalizeUuidLike(grading_period_id_raw);
+    if (schoolCtx.isPrimary && !explicitGradingPeriodId) {
+      return NextResponse.json({ ok: false, error: "primary_grading_period_required" }, { status: 400 });
+    }
 
     let academic_year: string;
 
@@ -907,9 +970,10 @@ export async function POST(req: NextRequest) {
         academic_year,
         teacher_id: profileId,
         eval_date,
-        eval_kind,
+        eval_kind: storedKind,
+        title: storedTitle,
         scale,
-        coeff: typeof coeff === "number" ? coeff : 1,
+        coeff: schoolCtx.isPrimary ? 1 : (typeof coeff === "number" ? coeff : 1),
         is_published: false,
         published_at: null,
         publication_status: "draft",
@@ -928,8 +992,10 @@ export async function POST(req: NextRequest) {
     }
 
     const item = data as unknown as EvalRow;
+    const visible = schoolCtx.isPrimary && isPrimaryComposition(item)
+      ? { ...item, eval_kind: "composition" as const } : item;
 
-    return NextResponse.json({ ok: true, item }, { status: 200 });
+    return NextResponse.json({ ok: true, item: visible }, { status: 200 });
   } catch (e: any) {
     console.error("[teacher/grades/evaluations] unexpected POST", e);
 

@@ -4,6 +4,8 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { computeAcademicYear } from "@/lib/academicYear";
 import { getApplicableGradePeriodById } from "@/lib/education-grading-periods";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
+import { isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,6 +68,8 @@ type EvaluationRow = {
   subject_component_id?: string | null;
   grading_period_id?: string | null;
   is_published: boolean;
+  eval_kind?: string | null;
+  title?: string | null;
   scale: number;
   coeff: number;
 };
@@ -165,11 +169,11 @@ export async function GET(req: NextRequest) {
 
     // Compatibilité : on conserve le défaut historique à 0.
     // Les écrans officiels peuvent forcer published_only=1.
-    const published_only = (searchParams.get("published_only") ?? "0") === "1";
+    let published_only = (searchParams.get("published_only") ?? "0") === "1";
 
     // ignore = absence de note ignorée.
     // zero = absence de note comptée comme 0 seulement si explicitement demandé.
-    const missing = (searchParams.get("missing") ?? "ignore") as
+    let missing = (searchParams.get("missing") ?? "ignore") as
       | "ignore"
       | "zero";
 
@@ -229,6 +233,22 @@ export async function GET(req: NextRequest) {
       | undefined;
 
     const lycee = isLyceeLevel(classLevel ?? null);
+    let primaryFrancoArabic = false;
+    if (institution_id && cls) {
+      const { data: institution, error: schoolError } = await svc.from("institutions")
+        .select("settings_json").eq("id", institution_id).maybeSingle();
+      if (schoolError || !institution) return bad("SCHOOL_CONFIGURATION_UNAVAILABLE", 503);
+      const school = parseSchoolCyclesSettings(institution.settings_json);
+      primaryFrancoArabic = school.enabled &&
+        resolveSchoolCycleForClass(cls, school) === "primary";
+    }
+    if (primaryFrancoArabic) {
+      // On the teacher's primary screen, report exactly the official
+      // compositions, never draft devoirs or hypothetical missing zeros.
+      published_only = true;
+      missing = "ignore";
+      if (!grading_period_id) return bad("PRIMARY_PERIOD_REQUIRED", 400);
+    }
 
     console.log(LOG_PREFIX, "class info", cls);
 
@@ -269,7 +289,7 @@ export async function GET(req: NextRequest) {
     let qEvals = supabase
       .from("grade_evaluations")
       .select(
-        "id, scale, coeff, class_id, subject_id, subject_component_id, grading_period_id, is_published"
+        "id, scale, coeff, class_id, subject_id, subject_component_id, grading_period_id, is_published, eval_kind, title"
       )
       .eq("class_id", class_id)
       .eq("academic_year", academic_year);
@@ -285,7 +305,8 @@ export async function GET(req: NextRequest) {
     const { data: evals, error: eErr } = await qEvals;
     if (eErr) return bad(eErr.message || "EVALS_FETCH_FAILED", 400);
 
-    const evaluations = (evals ?? []) as unknown as EvaluationRow[];
+    const evaluations = ((evals ?? []) as unknown as EvaluationRow[]).filter(e =>
+      !primaryFrancoArabic || (e.grading_period_id === grading_period_id && isPrimaryComposition(e)));
     const evaluationIds = evaluations.map((e) => e.id);
 
     console.log(LOG_PREFIX, "evals loaded", {
@@ -457,7 +478,7 @@ export async function GET(req: NextRequest) {
     const bonusMap = new Map<string, number>();
     const bonusPriorityMap = new Map<string, number>();
 
-    for (const r of (bonuses ?? []) as unknown as BonusRow[]) {
+    for (const r of (primaryFrancoArabic ? [] : (bonuses ?? [])) as unknown as BonusRow[]) {
       const sid = String((r as any).student_id || "").trim();
       const b = Number((r as any).bonus ?? 0);
       const rowSubj = (r as any).subject_id ?? null;
