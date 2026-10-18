@@ -17,6 +17,7 @@ import SchoolStudentProgramsEditor from "@/components/admin/SchoolStudentProgram
 import SchoolClassSubjectsEditor from "@/components/admin/SchoolClassSubjectsEditor";
 import { isBilingualSchool } from "@/lib/school-student-programs";
 import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
+import SchoolCoefficientsClassicWorkflow from "@/components/admin/SchoolCoefficientsClassicWorkflow";
 import SchoolBulletinModelPicker from "@/components/admin/SchoolBulletinModelPicker";
 import SchoolGradingPeriodsEditor from "@/components/admin/SchoolGradingPeriodsEditor";
 import EducationScopeSwitcher, {
@@ -4237,7 +4238,9 @@ export default function AdminSettingsPage() {
 
         {activeTab === "coefficients" && (
           <>
-            {hasSpecializedSettings ? (
+            {hasBilingualPrograms ? (
+              <SchoolCoefficientsClassicWorkflow />
+            ) : hasSpecializedSettings ? (
               <SchoolBulletinSettings mode="coefficients" />
             ) : (
               <>
