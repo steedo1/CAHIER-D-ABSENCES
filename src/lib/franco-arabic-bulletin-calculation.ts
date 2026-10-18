@@ -41,6 +41,7 @@ export type ProgramSubjectResult = {
   includeInAverage: boolean;
   average: number | null;
   evaluatedCount: number;
+  denominator?: number;
 };
 
 export type ProgramBulletinDraft = {
@@ -73,6 +74,8 @@ export function buildProgramBulletinDraft(params: {
   /** Resolved on the server from the selected single coefficient authority. */
   resolvedPolicies?: readonly SubjectBulletinPolicy[];
   configurationProblems?: readonly string[];
+  /** Enabled only for classes explicitly assigned the CI French primary reference. */
+  primaryCiDenominators?: Readonly<Record<string, number>>;
 }): ProgramBulletinDraft {
   const { studentId, cycle, level, track, school, reports, officialScores } = params;
   // Preschool must never be forced through a numeric grade engine.
@@ -177,10 +180,15 @@ export function buildProgramBulletinDraft(params: {
     const totalEvaluationCoefficient = cycle === "primary"
       ? evaluations.length
       : evaluations.reduce((sum, row) => sum + row.evaluationCoefficient, 0);
-    const preciseAverage = targetScale !== null && evaluations.length > 0 &&
+    const ciPrimary = cycle === "primary" && params.primaryCiDenominators !== undefined;
+    const ciDenominator = ciPrimary
+      ? params.primaryCiDenominators?.[subjectId] || targetScale
+      : null;
+    const displayScale = ciPrimary ? ciDenominator : targetScale;
+    const preciseAverage = displayScale !== null && evaluations.length > 0 &&
       totalEvaluationCoefficient > 0
       ? evaluations.reduce((sum, row) =>
-          sum + row.score / row.scale * targetScale *
+          sum + row.score / row.scale * displayScale *
           (cycle === "primary" ? 1 : row.evaluationCoefficient), 0,
         ) / totalEvaluationCoefficient
       : null;
@@ -194,12 +202,17 @@ export function buildProgramBulletinDraft(params: {
       subjectId, coefficient: cycle === "secondary" ? rule.coefficient : null,
       includeInAverage: contributes,
       average, evaluatedCount: evaluations.length,
+      ...(ciPrimary && ciDenominator !== null ? { denominator: ciDenominator } : {}),
     });
     if (contributes) {
-      if (average === null) problems.push("included_subject_without_score");
-      else {
-        generalSum += (preciseAverage as number) * weight;
-        generalCoefficientSum += weight;
+      // Empty primary CI bulletin cells are blank, never zero. The total is
+      // the SUM of actual points / SUM of the corresponding denominators.
+      // Thus a /50 exam is a barème, not a configurable coefficient.
+      if (average === null) {
+        if (!ciPrimary) problems.push("included_subject_without_score");
+      } else {
+        generalSum += (preciseAverage as number) * (ciPrimary ? 1 : weight);
+        generalCoefficientSum += ciPrimary ? ciDenominator! : weight;
       }
     }
   }
@@ -218,7 +231,7 @@ export function buildProgramBulletinDraft(params: {
     studentId, cycle, level, track,
     maximumScore: targetScale,
     status,
-    generalAverage: complete ? round2(generalSum / generalCoefficientSum) : null,
+    generalAverage: complete ? round2(generalSum / generalCoefficientSum * (params.primaryCiDenominators ? targetScale! : 1)) : null,
     subjects,
     problems: [...new Set(problems)],
   };
