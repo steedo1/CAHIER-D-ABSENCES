@@ -135,10 +135,9 @@ test("CP1 arabe: saisir, enregistrer et retrouver Coran/Hadith après rafraîchi
       { cycle: "primary", track: "arabic", level: "CP1", subjectId: hadith, maxScore: 10 },
     ]);
     // A save may reposition the edited level, but must preserve every scale.
-    assert.deepEqual(
-      new Set(saves[0].scales.map(row => [row.cycle, row.level, row.track, row.maxScore].join("|"))),
-      new Set(original.scales.map(row => [row.cycle, row.level, row.track, row.maxScore].join("|"))),
-    );
+    const normalize = rows => rows.map(row =>
+      [row.cycle, row.level, row.track, row.maxScore].join("|")).sort();
+    assert.deepEqual(normalize(saves[0].scales), normalize(original.scales));
     await act(async () => { [...container.querySelectorAll("button")].find(b => b.textContent.includes("Rafraîchir")).click(); });
     await flush(); await flush();
     assert.equal(container.querySelector('input[aria-label="Barème de composition Coran"]').value, "20");
