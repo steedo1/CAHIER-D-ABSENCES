@@ -1,3 +1,5 @@
+import { scopedSubjectComponents } from "@/lib/server/scoped-subject-components-api";
+import { isProgramComponentLevel } from "@/lib/school-subject-components";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -226,6 +228,9 @@ export async function GET(req: NextRequest) {
     return error(g.error, status);
   }
 
+  const scoped = await scopedSubjectComponents(req, srv, g.instId);
+  if (scoped) return scoped;
+
   const url = new URL(req.url);
   const subjectIdFilter = (url.searchParams.get("subject_id") || "").trim();
   const levelFilter = (url.searchParams.get("level") || "").trim(); // niveau
@@ -257,6 +262,7 @@ export async function GET(req: NextRequest) {
   const byKey = new Map<string, { item: SubjectComponentRow; score: number }>();
 
   (data || []).forEach((row: any) => {
+    if (isProgramComponentLevel(row.level)) return;
     const rawLevel = row.level ? String(row.level) : null;
     const level = canonicalLevel(rawLevel);
 
@@ -326,7 +332,13 @@ export async function PUT(req: NextRequest) {
     return error(g.error, status);
   }
 
-  const body = (await req.json().catch(() => ({}))) as {
+  const origin = req.headers.get("origin");
+  if (origin && origin !== req.nextUrl.origin) return error("invalid_origin", 403);
+  if (!req.headers.get("content-type")?.includes("application/json")) return error("expected_json", 415);
+  const rawBody = await req.json().catch(() => ({}));
+  const scoped = await scopedSubjectComponents(req, srv, g.instId, rawBody);
+  if (scoped) return scoped;
+  const body = rawBody as {
     subject_id?: string;
     level?: string | null; // niveau
     items?: IncomingComponent[];

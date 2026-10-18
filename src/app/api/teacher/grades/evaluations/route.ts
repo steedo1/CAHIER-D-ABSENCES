@@ -1,3 +1,5 @@
+import { loadClassComponentContext } from "@/lib/server/school-subject-components";
+import { selectProgramComponents } from "@/lib/school-subject-components";
 // src/app/api/teacher/grades/evaluations/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -473,7 +475,7 @@ async function validateSubjectComponentForClass(
 
   const { data: cls, error: classError } = await srv
     .from("classes")
-    .select("id,institution_id,level")
+    .select("id,institution_id,level,academic_year")
     .eq("id", classId)
     .eq("institution_id", institutionId)
     .maybeSingle();
@@ -525,6 +527,16 @@ async function validateSubjectComponentForClass(
         resolvedSubjectId,
       },
     };
+  }
+
+  const context = await loadClassComponentContext(srv, institutionId, classRow, resolvedSubjectId);
+  if (context !== "legacy") {
+    if (context === "invalid") return { ok: false, error: "CLASS_SUBJECT_PROGRAM_INVALID" };
+    const available = await srv.from("grade_subject_components")
+      .select("id,level,is_active").eq("institution_id", institutionId).eq("subject_id", resolvedSubjectId);
+    if (available.error || !selectProgramComponents(available.data || [], context).some(row => row.id === subjectComponentId))
+      return { ok: false, error: "SUBJECT_COMPONENT_PROGRAM_MISMATCH" };
+    return { ok: true };
   }
 
   const classLevel = normalizeLevelKey(classRow.level);

@@ -10,6 +10,8 @@ import {
   type EducationType,
 } from "@/lib/education-organization";
 
+import DocumentDirectionSignatures from "@/components/DocumentDirectionSignatures";
+import type { TeachingDocumentSignatory } from "@/lib/franco-arabic-document-signatories";
 import { fitClassListName, estimateClassListNameWidth } from "@/lib/class-list-name";
 
 type ProfileMini = {
@@ -69,6 +71,7 @@ type ClassListPayload = {
     regional_direction: string | null;
     postal_address: string | null;
     status: string | null;
+    document_signatories?: TeachingDocumentSignatory[] | null;
     head_name: string | null;
     head_title: string | null;
     country_name: string | null;
@@ -1462,8 +1465,10 @@ export default function ClassListPrintPage() {
                 <strong>Éducateur de niveau :</strong> {selectedEducator}
               </div>
               <div>
-                <strong>{classListHeadRoleLabel(data.institution)} :</strong>{" "}
-                {data.institution.head_name || "À renseigner"}
+                {data.institution.document_signatories != null
+                  ? <DocumentDirectionSignatures inline signatories={data.institution.document_signatories} />
+                  : <><strong>{classListHeadRoleLabel(data.institution)} :</strong>{" "}
+                    {data.institution.head_name || "À renseigner"}</>}
               </div>
             </div>
 

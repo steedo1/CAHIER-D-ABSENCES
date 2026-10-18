@@ -1,4 +1,6 @@
 // src/app/api/teacher/grades/components/route.ts
+import { loadClassComponentContext } from "@/lib/server/school-subject-components";
+import { selectProgramComponents, isProgramComponentLevel } from "@/lib/school-subject-components";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -106,6 +108,7 @@ async function resolveSubjectIdToGlobal(
     .from("institution_subjects")
     .select("id, subject_id")
     .eq("id", rawSubjectId)
+    .eq("institution_id", institutionId)
     .maybeSingle();
 
   if (error) {
@@ -152,7 +155,7 @@ export async function GET(req: NextRequest) {
 
     const { data: cls, error: classError } = await supaService
       .from("classes")
-      .select("id, institution_id, level, official_track_code")
+      .select("id, institution_id, level, official_track_code, academic_year")
       .eq("id", classId)
       .eq("institution_id", institutionId)
       .maybeSingle();
@@ -238,7 +241,9 @@ export async function GET(req: NextRequest) {
         typeof row.is_active === "boolean" ? row.is_active : true,
     }));
 
-    const activeRows = rows.filter((row) => row.is_active ?? true);
+    const context = await loadClassComponentContext(supaService, institutionId, cls, globalSubjectId);
+    if (context === "invalid") return NextResponse.json({ error: "CLASS_SUBJECT_PROGRAM_INVALID" }, { status: 409 });
+    const activeRows = rows.filter((row) => (row.is_active ?? true) && !isProgramComponentLevel(row.level));
     const exactLevelRows = normalizedClassLevel
       ? activeRows.filter(
           (row) => normalizeLevelKey(row.level) === normalizedClassLevel
@@ -248,7 +253,7 @@ export async function GET(req: NextRequest) {
     // Règle métier : pour une classe de collège, on privilégie STRICTEMENT
     // les sous-rubriques du niveau réel de la classe. Les anciennes lignes
     // sans niveau ne servent que de fallback si aucun référentiel niveau n'existe.
-    const filteredRows =
+    const filteredRows = context !== "legacy" ? selectProgramComponents(rows, context) :
       exactLevelRows.length > 0
         ? exactLevelRows
         : activeRows.filter((row) => !normalizeLevelKey(row.level));

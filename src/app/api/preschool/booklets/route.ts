@@ -1,3 +1,4 @@
+import { resolveTeachingDocumentSignatories } from "@/lib/franco-arabic-document-signatories";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -6,7 +7,7 @@ import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import { resolveEvaluationTeachingTrack } from "@/lib/pedagogical-engine";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, isTeachingTrack, type TeachingTrack } from "@/lib/school-cycles";
 import {
-  expandPedagogicalEnrollments, programsForStudent, readStudentProgramSettings,
+  expandPedagogicalEnrollments, programsForStudent, readStudentProgramSettings, isBilingualSchool,
 } from "@/lib/school-student-programs";
 import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
 import {
@@ -47,7 +48,7 @@ async function context() {
     auth.error === "unauthorized" ? 401 : 403) } as const;
   const [roles, institution] = await Promise.all([
     getRequestRoles(client, service, auth.user.id),
-    service.from("institutions").select("settings_json,name,code_unique").eq("id", auth.instId).maybeSingle(),
+    service.from("institutions").select("settings_json,name,code_unique,head_name,head_title").eq("id", auth.instId).maybeSingle(),
   ]);
   if (roles.error || institution.error || !institution.data) {
     return { error: response({ ok: false, error: "school_unavailable" }, 503) } as const;
@@ -65,6 +66,7 @@ async function context() {
   return {
     service, school, admin, teacher, instId: auth.instId, userId: auth.user.id,
     settings: institution.data.settings_json,
+    generalDirectorName: institution.data.head_name, generalDirectorTitle: institution.data.head_title,
     schoolName: institution.data.name, schoolCode: institution.data.code_unique,
   } as const;
 }
@@ -195,12 +197,20 @@ export async function GET(request: NextRequest) {
         };
       }
     }
+    const directionContext = { academicYear: year, classIds: [classId],
+      institutionHeadName: scoped.generalDirectorName, institutionHeadTitle: scoped.generalDirectorTitle };
+    const documentSignatories = {
+      french: resolveTeachingDocumentSignatories(scoped.settings, { ...directionContext, tracks: ["french"] }),
+      arabic: resolveTeachingDocumentSignatories(scoped.settings, { ...directionContext, tracks: ["arabic"] }),
+      combined: resolveTeachingDocumentSignatories(scoped.settings, { ...directionContext, tracks: ["french", "arabic"] }),
+    };
     return response({ ok: true, year, schoolClass: full.selected,
       students: full.students, periods: full.periods,
       programs: scoped.school.teachingTracksByCycle.preschool || [],
       format: (scoped.settings as Record<string, any>)?.franco_arabic_reports_v1?.formatsByCycle?.preschool || "separate",
       catalogs: store.catalogs, catalogRevisions: store.revisions,
-      records, schoolName: scoped.schoolName,
+      records, isFrancoArabic: isBilingualSchool(scoped.school), documentSignatories,
+      schoolName: scoped.schoolName,
       schoolCode: scoped.schoolCode,
       signatories: readSchoolTeachingSignatories(scoped.settings),
       admin: scoped.admin, editable: scoped.admin || scoped.teacher,

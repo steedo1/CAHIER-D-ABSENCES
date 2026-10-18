@@ -1,5 +1,7 @@
 "use client";
 
+import DocumentDirectionSignatures from "@/components/DocumentDirectionSignatures";
+import { resolveTeachingDocumentSignatories } from "@/lib/franco-arabic-document-signatories";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BarChart3, Printer, RotateCcw } from "lucide-react";
@@ -32,6 +34,9 @@ type Student = {
 };
 
 type Institution = {
+  settings_json?: unknown;
+  institution_head_name?: string | null;
+  institution_head_title?: string | null;
   institution_name?: string | null;
   name?: string | null;
   institution_logo_url?: string | null;
@@ -1067,6 +1072,14 @@ export default function GeneralStatisticsPage() {
             </tr>
           </tfoot>
         </table>
+        <DocumentDirectionSignatures className="mt-3" signatories={resolveTeachingDocumentSignatories(institution.settings_json, {
+          academicYear, cycle, tracks: track === "all" ? undefined : [track],
+          institutionHeadName: institution.institution_head_name,
+          institutionHeadTitle: institution.institution_head_title,
+          classIds: [...new Set(filtered.flatMap(student => track !== "all"
+            ? [student.program_class_ids?.[track] || student.class_id || ""]
+            : [...Object.values(student.program_class_ids || {}), student.class_id || ""]).filter(Boolean))],
+        })} />
 
       </section>, printTarget)}
     </>

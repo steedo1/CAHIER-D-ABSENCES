@@ -77,7 +77,7 @@ export function createMulticycleFixture() {
       profiles: [{ id: superId, institution_id: null }, { id: legacyAdminId, institution_id: legacyId }],
       user_roles: [{ id: crypto.randomUUID(), profile_id: superId, institution_id: null, role: "super_admin" },
         { id: crypto.randomUUID(), profile_id: legacyAdminId, institution_id: legacyId, role: "admin" }],
-      classes: [], academic_years: [], institution_subjects: [], subjects: [], class_enrollments: [], class_teachers: [],
+      grade_subject_components: [], classes: [], academic_years: [], institution_subjects: [], subjects: [], class_enrollments: [], class_teachers: [],
     },
   };
   fixture.user = (id, email) => ({ id, email, aud: "authenticated", role: "authenticated", app_metadata: {}, user_metadata: {},

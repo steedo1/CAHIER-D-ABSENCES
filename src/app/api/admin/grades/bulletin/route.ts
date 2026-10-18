@@ -1724,10 +1724,12 @@ async function loadBulletin(
   let bulletinSignaturesEnabled = false;
   let institutionMeta: InstitutionMeta = { id: institutionId };
   let institutionSettingsJson: unknown = {};
+  let institutionHeadName: string | null = null;
+  let institutionHeadTitle: string | null = null;
   {
     const { data: instRow } = await srvClient
       .from("institutions")
-      .select("id, name, code_unique, acronym, bulletin_signatures_enabled, settings_json")
+      .select("id, name, code_unique, acronym, bulletin_signatures_enabled, settings_json, head_name, head_title")
       .eq("id", institutionId)
       .maybeSingle();
 
@@ -1738,6 +1740,8 @@ async function loadBulletin(
       acronym: (instRow as any)?.acronym ?? null,
     };
     institutionSettingsJson = (instRow as any)?.settings_json || {};
+    institutionHeadName = (instRow as any)?.head_name ?? null;
+    institutionHeadTitle = (instRow as any)?.head_title ?? null;
 
     const col = (instRow as any)?.bulletin_signatures_enabled;
     if (typeof col === "boolean") bulletinSignaturesEnabled = col;
@@ -1751,7 +1755,8 @@ async function loadBulletin(
     const specialized = await loadSpecializedBulletin({
       service: srvClient, institutionId, schoolClass: classRow,
       settingsJson: institutionSettingsJson, institutionName: institutionMeta.name || null,
-      institutionCode: institutionMeta.code_unique || null, searchParams, role: ctx.role,
+      institutionCode: institutionMeta.code_unique || null,
+      institutionHeadName, institutionHeadTitle, searchParams, role: ctx.role,
       loadHistoricalFrench: async (period) => {
         // Re-enter THE SAME historical computation instead of implementing
         // a second secondary-French formula. Rendering is handled separately.

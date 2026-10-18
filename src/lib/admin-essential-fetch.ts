@@ -1,5 +1,7 @@
 "use client";
 
+import { resolveTeachingDocumentSignatories } from "./franco-arabic-document-signatories";
+
 import { cacheGet, cacheSet } from "@/lib/offline";
 import { getOfflineAccessIntent } from "@/lib/offline-auth-client";
 import { getRelayConfig } from "@/lib/local-relay";
@@ -516,6 +518,11 @@ function relayRosterResponse(
           postal_address:
             settings.institution_postal_address || settings.postal_address || null,
           status: settings.institution_status || settings.status || null,
+          document_signatories: resolveTeachingDocumentSignatories(settings.settings_json, {
+            academicYear: classRow.academic_year || roster.academic_year, classIds: [classRow.id],
+            institutionHeadName: settings.institution_head_name || settings.head_name,
+            institutionHeadTitle: settings.institution_head_title || settings.head_title,
+          }),
           head_name: settings.institution_head_name || settings.head_name || null,
           head_title: settings.institution_head_title || settings.head_title || null,
           country_name: settings.country_name || null,
