@@ -10,6 +10,7 @@ import {
   issueOfflineAccessGrant,
 } from "@/lib/offline-auth-contract";
 import { relayEnabledForInstitutionServer } from "@/lib/relay-capability-server";
+import { offlineRoleForDirectorTeacher } from "@/lib/auth/director-offline-role";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,6 +75,7 @@ export async function GET(request: NextRequest) {
   let institutionId = primaryRow?.institution_id
     ? String(primaryRow.institution_id)
     : "";
+  const offlineRole = offlineRoleForDirectorTeacher(primary, rows ?? [], institutionId);
   let classId: string | null = null;
   if (primary === "class_device") {
     const classScope = await resolveClassDeviceScope(user);
@@ -95,8 +97,8 @@ export async function GET(request: NextRequest) {
   } | null = null;
 
   if (
-    primary &&
-    isOfflineAccessRole(primary) &&
+    offlineRole &&
+    isOfflineAccessRole(offlineRole) &&
     institutionId &&
     /^[A-Za-z0-9:_-]{16,128}$/.test(deviceId) &&
     secret.length >= 32
@@ -111,7 +113,7 @@ export async function GET(request: NextRequest) {
         institutionId,
         classId,
         deviceId,
-        role: primary,
+        role: offlineRole,
       });
       offlineAccess = {
         token: grant.token,
