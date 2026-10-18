@@ -109,3 +109,17 @@ test("no legacy grade approval screens or polling remain for Franco-Arabic admin
   assert.match(teacher,/Publier les notes/);
   assert.match(teacher,/Notifications des parents mises en file d’envoi/);
 });
+
+test("Franco-Arabic evaluation creation requires exact subject assignment, not just class access", () => {
+  const route = readFileSync("src/app/api/teacher/grades/evaluations/route.ts", "utf8");
+  const helper = route.slice(route.indexOf("async function teacherHasAccessToClass("),
+    route.indexOf("async function getGradePeriodById("));
+  const creation = route.slice(route.indexOf("export async function POST("),
+    route.indexOf("export async function PATCH("));
+  assert.match(helper, /requireExactSubjectAssignment = false/);
+  assert.match(helper, /if \(requireExactSubjectAssignment\) return false;/);
+  assert.match(creation, /!isPrivileged\(roles\) && await requiresDirectGradePublication\(srv, institutionId\)/);
+  assert.match(creation, /subjectCandidates,\s*requireExactSubjectAssignment/);
+  assert.match(helper, /\.eq\("class_id", classId\)/);
+  assert.match(helper, /\.in\("subject_id", subjectCandidates\)/);
+});
