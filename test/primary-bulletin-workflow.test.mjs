@@ -172,3 +172,13 @@ test("linked Arabic pupil appears in the teacher and paper rosters and can be gr
   const stale = await teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cAr}`));
   assert.equal(stale.status, 409, "stale level cannot authorize a linked pupil");
 });
+
+test("classic schools retain their existing RLS-authorized grade-write rights", async () => {
+  const db = setup("CP1");
+  db.tables.institutions[0].settings_json = { legacy_school: true };
+  db.tables.profiles.find(row => row.id === teacherFr).institution_id = null;
+  const helper = createFixtureRouteLoader(db, teacherFr)("src/lib/server/school-linked-class-roster.ts");
+  assert.equal(await helper.specializedGradeStudentsAllowed(db.service, teacherFr, cFr, ["student-0"], teacherAr), true);
+  db.tables.institutions[0].settings_json = setup("CP1").tables.institutions[0].settings_json;
+  assert.equal(await helper.specializedGradeStudentsAllowed(db.service, teacherFr, cFr, ["student-0"], teacherAr), false);
+});

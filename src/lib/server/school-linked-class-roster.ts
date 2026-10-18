@@ -43,13 +43,13 @@ export async function specializedGradeStudentsAllowed(service: SupabaseClient, a
     service.from("profiles").select("institution_id").eq("id", actorId).maybeSingle(),
     service.from("classes").select("id,institution_id,level,academic_year").eq("id", classId).maybeSingle(),
   ]);
-  if (profile.error || classroom.error || !classroom.data || !profile.data?.institution_id ||
-    classroom.data?.institution_id !== profile.data.institution_id) return false;
-  const institutionId = profile.data.institution_id;
+  if (classroom.error || !classroom.data?.institution_id) return false;
+  const institutionId = classroom.data.institution_id;
   const { data: institution, error } = await service.from("institutions").select("settings_json")
     .eq("id", institutionId).maybeSingle();
   if (error || !institution) return false;
   if (!parseSchoolCyclesSettings(institution.settings_json).enabled) return true;
+  if (profile.error || profile.data?.institution_id !== institutionId) return false;
   if (ownerProfileId !== undefined && ownerProfileId !== actorId) {
     const { data: roles, error: roleError } = await service.from("user_roles").select("role")
       .eq("profile_id", actorId).eq("institution_id", institutionId);
