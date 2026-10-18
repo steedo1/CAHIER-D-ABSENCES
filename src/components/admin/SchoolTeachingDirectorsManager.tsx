@@ -7,7 +7,9 @@ type Director = {
   track: TeachingTrack; active: boolean; updated_at: string;
   profile: { id: string; display_name: string | null; phone: string | null; email: string | null } | null;
 };
-type Result = { ok?: boolean; directors?: Director[]; director?: unknown; temporary_password?: string; error?: string };
+type Candidate = { id: string; display_name: string | null; phone: string | null; email: string | null };
+type Result = { ok?: boolean; directors?: Director[]; candidates?: Candidate[]; reused_existing_account?: boolean;
+  director?: unknown; temporary_password?: string; error?: string };
 
 const tracks: { value: TeachingTrack; label: string }[] = [
   { value: "french", label: "Enseignement français" },
@@ -16,6 +18,8 @@ const tracks: { value: TeachingTrack; label: string }[] = [
 
 export default function SchoolTeachingDirectorsManager() {
   const [directors, setDirectors] = useState<Director[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [existingProfileId, setExistingProfileId] = useState("");
   const [track, setTrack] = useState<TeachingTrack>("french");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -31,6 +35,7 @@ export default function SchoolTeachingDirectorsManager() {
     const result = await response.json() as Result;
     if (!response.ok || !result.ok) throw new Error(result.error || "Liste des directions indisponible.");
     setDirectors(result.directors || []);
+    setCandidates(result.candidates || []);
   }
 
   useEffect(() => {
@@ -39,7 +44,7 @@ export default function SchoolTeachingDirectorsManager() {
       .then(async response => {
         const body = await response.json() as Result;
         if (!response.ok || !body.ok) throw new Error(body.error || "Chargement impossible.");
-        if (active) setDirectors(body.directors || []);
+        if (active) { setDirectors(body.directors || []); setCandidates(body.candidates || []); }
       })
       .catch(cause => { if (active) setError(String(cause instanceof Error ? cause.message : cause)); })
       .finally(() => { if (active) setLoading(false); });
@@ -55,13 +60,17 @@ export default function SchoolTeachingDirectorsManager() {
     try {
       const response = await fetch("/api/admin/school-directors", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ track, name: name.trim(), phone: phone.trim(), email: email.trim() }),
+        body: JSON.stringify(existingProfileId
+          ? { track, existing_profile_id: existingProfileId }
+          : { track, name: name.trim(), phone: phone.trim(), email: email.trim() }),
       });
       const data = await response.json() as Result;
       if (!response.ok || !data.ok) throw new Error(data.error || "Création impossible.");
       setSecret(data.temporary_password || "");
-      setMessage("Compte directeur créé. Notez et transmettez le mot de passe provisoire via un canal sûr.");
-      setName(""); setPhone(""); setEmail("");
+      setMessage(data.reused_existing_account
+        ? "Direction attribuée au compte enseignant existant. Aucun mot de passe n'a été changé."
+        : "Compte directeur créé. Notez et transmettez le mot de passe provisoire via un canal sûr.");
+      setName(""); setPhone(""); setEmail(""); setExistingProfileId("");
       try { await refresh(); } catch {}
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Erreur de création.");
@@ -114,11 +123,27 @@ export default function SchoolTeachingDirectorsManager() {
           {tracks.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
       </label>
+      {candidates.length > 0 && !current && <label className="block text-sm font-medium">
+        Nommer un enseignant déjà inscrit (compte conservé)
+        <select className="mt-1 block w-full rounded-lg border bg-white p-2"
+          value={existingProfileId} onChange={event => { setExistingProfileId(event.target.value); setSecret(""); }}>
+          <option value="">Créer un nouveau compte à la place</option>
+          {candidates.map(person => <option key={person.id} value={person.id}>
+            {person.display_name || "Enseignant"} — {person.phone || person.email || "Sans contact"}
+          </option>)}
+        </select>
+      </label>}
       {current ? <div className="space-y-2">
         <p className="text-sm">Ce poste a déjà un directeur. Suspendre l'accès avant de nommer un remplaçant.</p>
         <button type="button" disabled={busy} onClick={() => void revoke()}
           className="rounded-lg border border-red-300 px-4 py-2 text-sm font-semibold text-red-800">
           Suspendre cet accès
+        </button>
+      </div> : existingProfileId ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+        <p className="text-sm font-medium">Le compte enseignant sera conservé, avec ses affectations et son mot de passe actuel.</p>
+        <button type="submit" disabled={busy}
+          className="mt-3 rounded-lg bg-emerald-700 px-5 py-3 font-semibold text-white disabled:opacity-40">
+          {busy ? "Nomination…" : "Nommer directeur de cet enseignement"}
         </button>
       </div> : <div className="grid gap-3 md:grid-cols-2">
         <label className="block text-sm">Nom du directeur
