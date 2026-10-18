@@ -1649,7 +1649,7 @@ async function attachOfficialEndOfYearDecisions(
 /* ───────── GET /api/admin/grades/bulletin ───────── */
 async function loadBulletin(
   req: NextRequest, createQr: boolean,
-  options: { reuseHistoricalFrenchSecondary?: boolean } = {},
+  options: { reuseHistoricalFrenchSecondary?: boolean; verifiedLinkedStudentIds?: string[] } = {},
 ) {
   // Internal, server-only reuse by the specialized presentation. Never driven
   // by a query parameter: a user cannot bypass the specialized engine.
@@ -1761,7 +1761,10 @@ async function loadBulletin(
         url.searchParams.set("academic_year", period.academicYear);
         url.searchParams.set("export_light", "1"); // no QR or PNG side effects
         const nested = new NextRequest(url, { headers: req.headers, method: "GET" });
-        const response = await loadBulletin(nested, false, { reuseHistoricalFrenchSecondary: true });
+        const response = await loadBulletin(nested, false, {
+          reuseHistoricalFrenchSecondary: true,
+          verifiedLinkedStudentIds: period.verifiedLinkedStudentIds,
+        });
         return { status: response.status, data: await response.json() };
       },
     });
@@ -1996,6 +1999,35 @@ async function loadBulletin(
     if (!classStudentMap.has(sid)) classStudentMap.set(sid, row);
   }
 
+  if (frenchSecondaryOnly && options.verifiedLinkedStudentIds?.length) {
+    // The specialized server route already verified the current home-class
+    // enrollment, institution, year and level for these linked pupils.
+    // Load their identity from the SAME institution, without inserting or
+    // transferring an enrollment, so the historical French calculation can
+    // rank them with their classmates.
+    const missing = [...new Set(options.verifiedLinkedStudentIds)]
+      .filter(studentId => !classStudentMap.has(studentId) && isUuid(studentId));
+    if (missing.length > 500) return NextResponse.json({
+      ok: false, error: "SECONDARY_FRENCH_LINKED_LIMIT",
+    }, { status: 409 });
+    if (missing.length) {
+      const { data: linkedStudents, error: linkedError } = await srvClient
+        .from("students")
+        .select("id,institution_id,first_name,last_name,full_name,matricule,photo_path,photo_updated_at,gender,birthdate,birth_place,nationality,regime,is_repeater,is_boarder,is_affecte")
+        .eq("institution_id", institutionId).in("id", missing);
+      if (linkedError || !linkedStudents || linkedStudents.length !== missing.length) {
+        return NextResponse.json({ ok: false, error: "SECONDARY_FRENCH_LINKED_STUDENTS_UNAVAILABLE" }, { status: 409 });
+      }
+      const byId = new Map(linkedStudents.map(student => [student.id, student]));
+      for (const id of missing) {
+        const student = byId.get(id);
+        if (!student) return NextResponse.json({
+          ok: false, error: "SECONDARY_FRENCH_LINKED_STUDENT_INVALID",
+        }, { status: 409 });
+        classStudentMap.set(id, { student_id: id, students: student });
+      }
+    }
+  }
   const classStudents = Array.from(classStudentMap.values());
   const studentIds = classStudents.map((cs) => cs.student_id);
 
