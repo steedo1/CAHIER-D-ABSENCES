@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReportFormat, FrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
 import type { SchoolCycle, TeachingTrack } from "@/lib/school-cycles";
-import DemoBulletinClient from "@/app/admin/bulletins/modeles/DemoBulletinClient";
 
 type Configuration = {
   enabled: boolean;
@@ -32,7 +31,6 @@ export default function SchoolBulletinModelPicker() {
   const [revision, setRevision] = useState("");
   const [config, setConfig] = useState<Configuration | null>(null);
   const [report, setReport] = useState<FrancoArabicReportsSettings | null>(null);
-  const [school, setSchool] = useState({ name: "", code: "" });
   const [cycle, setCycle] = useState<SchoolCycle>("primary");
   const [draftFormats, setDraftFormats] = useState<Partial<Record<SchoolCycle, ReportFormat>>>({});
   const [error, setError] = useState("");
@@ -54,11 +52,10 @@ export default function SchoolBulletinModelPicker() {
         setConfig(body.configuration);
         setReport(body.reporting);
         setRevision(body.revision || "");
-        setSchool({ name: body.institution?.name || "Établissement",
-          code: body.institution?.code || "" });
-        const initial = body.configuration.enabledCycles.includes("primary")
-          ? "primary" : body.configuration.enabledCycles[0] || "secondary";
-        setCycle(initial);
+        // Le secondaire garde sa présentation historique.
+        const available = body.configuration.enabledCycles.filter(item =>
+          item === "primary" || item === "preschool");
+        setCycle(available.includes("primary") ? "primary" : available[0] || "primary");
         setDraftFormats(body.reporting.formatsByCycle || {});
       } catch (err) {
         if (alive && !controller.signal.aborted) setError(
@@ -70,6 +67,8 @@ export default function SchoolBulletinModelPicker() {
     return () => { alive = false; controller.abort(); };
   }, []);
 
+  const availableCycles = (config?.enabledCycles || []).filter(item =>
+    item === "primary" || item === "preschool");
   const tracks = config?.teachingTracksByCycle[cycle] || [];
   const bilingual = tracks.includes("french") && tracks.includes("arabic");
   const onlyArabic = tracks.includes("arabic") && !tracks.includes("french");
@@ -123,12 +122,24 @@ export default function SchoolBulletinModelPicker() {
     {error || "Les modèles ne sont pas disponibles pour cet établissement."}
   </p>;
 
+  if (availableCycles.length === 0) return <section className="rounded-2xl border bg-white p-6">
+    <h2 className="text-xl font-bold text-slate-900">Bulletins de notes</h2>
+    <p className="mt-2 text-sm text-slate-700">
+      Aucun modèle primaire ou préscolaire à configurer pour cet établissement.
+      Le secondaire conserve le bulletin historique et ses calculs.
+    </p>
+    <a href="/admin/bulletins" className="mt-4 inline-flex rounded-xl bg-emerald-700 px-4 py-2 font-semibold text-white">
+      Correspondant Fichier → Bulletins
+    </a>
+  </section>;
+
   return <section className="space-y-6">
     <div className="rounded-2xl border bg-white p-5">
       <h2 className="text-xl font-bold text-slate-900">Choisir le modèle de bulletin</h2>
       <p className="mt-2 text-sm text-slate-600">
-        Sélectionnez la présentation, vérifiez son aperçu A4, puis enregistrez-la pour votre établissement.
-        Les notes, moyennes et coefficients ne sont pas modifiés.
+        Choisissez la présentation du primaire ou du préscolaire, puis enregistrez-la.
+        Les véritables notes et les calculs se consultent dans Correspondant Fichier → Bulletins.
+        Aucun résultat fictif n'est présenté ici.
       </p>
       <label className="mt-4 block text-sm font-semibold text-slate-800">
         Cycle scolaire
@@ -136,13 +147,13 @@ export default function SchoolBulletinModelPicker() {
           onChange={event => { setCycle(event.target.value as SchoolCycle); setError(""); setNotice(""); }}
           aria-label="Cycle du bulletin"
           className="mt-2 block w-full max-w-sm rounded-lg border bg-white px-3 py-2">
-          {config.enabledCycles.map(item =>
+          {availableCycles.map(item =>
             <option key={item} value={item}>{cycles[item]}</option>)}
         </select>
       </label>
       <p className="mt-3 text-sm text-slate-700">
         <strong>Présentation enregistrée :</strong> {
-          isPreschool ? "Livret de compétences (maquette)" :
+          isPreschool ? "Livret de compétences" :
           options.find(item => item.id === saved)?.title || "Bulletin ordinaire"
         }
       </p>
@@ -173,7 +184,7 @@ export default function SchoolBulletinModelPicker() {
           <h3 className="font-bold text-slate-900">Modèle à utiliser — {cycles[cycle]}</h3>
           <p className="text-sm text-slate-600">
             {isPreschool
-              ? "Aperçu de livret uniquement : la génération officielle des compétences n'est pas encore disponible."
+              ? "Le livret de compétences est distinct des bulletins chiffrés. Sa génération officielle reste à vérifier dans le module préscolaire."
               : active
                 ? "Les bulletins de ce cycle utilisent la présentation enregistrée."
                 : "Le choix est mémorisé. Le moteur de bulletins spécialisés n'est pas encore actif."}
@@ -195,10 +206,26 @@ export default function SchoolBulletinModelPicker() {
       </p>}
     </div>
 
-    <DemoBulletinClient hasArabic={bilingual}
-      schoolName={school.name} schoolCode={school.code}
-      enabledCycles={config.enabledCycles}
-      tracksByCycle={config.teachingTracksByCycle}
-      embedded previewCycle={cycle} previewFormat={chosen}/>
+    <div className="rounded-2xl border bg-white p-5">
+      <h3 className="font-bold text-slate-900">Vérifier les vrais bulletins et leurs calculs</h3>
+      <p className="mt-2 text-sm text-slate-700">
+        Ouvrez Correspondant Fichier → Bulletins, sélectionnez l'année scolaire,
+        la période et la classe. Les matières, les notes, les moyennes et les rangs
+        proviennent des données officielles de l'établissement, jamais d'une maquette.
+      </p>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <a href="/admin/bulletins"
+          className="inline-flex rounded-xl bg-emerald-700 px-4 py-2 font-semibold text-white">
+          Correspondant Fichier → Bulletins
+        </a>
+        {config.enabledCycles.includes("preschool") && <a href="/preschool/booklets"
+          className="inline-flex rounded-xl border border-slate-300 px-4 py-2 font-semibold text-slate-800">
+          Livrets de compétences préscolaires
+        </a>}
+      </div>
+      {config.enabledCycles.includes("secondary") && <p className="mt-3 text-sm text-slate-600">
+        Secondaire : bulletin historique conservé, sans choix de modèle dans cette page.
+      </p>}
+    </div>
   </section>;
 }
