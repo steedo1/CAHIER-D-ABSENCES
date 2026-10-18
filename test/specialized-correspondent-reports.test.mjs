@@ -57,7 +57,7 @@ test("specialized workspace displays all five educational report modes", () => {
     },
   }).outputText;
   const m = { exports: {} };
-  new Function("require", "module", "exports", code)((id) => require(id), m, m.exports);
+  new Function("require", "module", "exports", code)((id) => id.endsWith(".css") ? {} : require(id), m, m.exports);
   const Panel = m.exports.default;
   for (const [_, __, mode] of pageRoutes) {
     const html = renderToStaticMarkup(React.createElement(Panel, { mode }));
@@ -87,4 +87,23 @@ test("file correspondent school detection uses the authenticated settings API, n
   assert.match(hook, /setResolved\(null\)/);
   assert.match(hook, /loading: !error && resolved === null/);
   assert.match(read("src/app/admin/layout.tsx"), /primaryRole === "file_correspondent"/);
+});
+
+test("annual matrix preserves students introduced in later periods and refuses missing period results", () => {
+  const src = read("src/components/admin/SpecializedCorrespondentReports.tsx");
+  assert.match(src, /!previous\.document\[selectedTrack\] && entry\.document\[selectedTrack\]/);
+  assert.match(src, /mode === "annual" \? unique/);
+  assert.match(src, /const annualFullyCovered = unique\.every/);
+  assert.match(src, /return !!programFor\(row, selectedTrack\)/);
+  assert.match(src, /mode !== "annual" \|\| annualFullyCovered/);
+});
+
+test("printing a specialized report hides other dashboard content and repeats matrix headers", () => {
+  const src = read("src/components/admin/SpecializedCorrespondentReports.tsx");
+  const css = read("src/components/admin/SpecializedCorrespondentReports.print.css");
+  assert.match(src, /import "\.\/SpecializedCorrespondentReports\.print\.css"/);
+  assert.match(css, /body:has\(#specialized-correspondent-report\) \*/);
+  assert.match(css, /visibility: hidden !important/);
+  assert.match(css, /#specialized-correspondent-report/);
+  assert.match(css, /display: table-header-group/);
 });
