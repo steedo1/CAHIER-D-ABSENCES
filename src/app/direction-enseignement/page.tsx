@@ -64,6 +64,18 @@ export default async function TeachingDirectionHome() {
       </div>
       <TrueLogoutButton />
     </header>
+    {access.principal.hasTeacherRole && <nav className="flex flex-wrap gap-3 rounded-xl border bg-white p-4">
+      <span className="w-full text-sm font-semibold">Mon compte enseignant existant</span>
+      <a href="/attendance" className="rounded-lg border px-4 py-2 text-sm font-medium">
+        Cahier d'absences
+      </a>
+      <a href="/grades" className="rounded-lg border px-4 py-2 text-sm font-medium">
+        Cahier de notes
+      </a>
+      <span className="w-full text-xs text-slate-500">
+        Vos anciennes affectations et autorisations d'enseignant restent inchangées.
+      </span>
+    </nav>}
     <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
       Portail de direction isolé. La gestion des notes, des bulletins et des enseignants sera
       ouverte progressivement après vérification des permissions serveur de chaque module.
