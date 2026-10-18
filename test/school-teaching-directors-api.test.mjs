@@ -84,7 +84,7 @@ test("nomination reuses EPC teacher profile and preserves password, marks and hi
   const profileId = "55555555-5555-4555-8555-555555555555";
   db.tables.profiles.push({
     id: profileId, institution_id: db.legacyId,
-    display_name: "Directeur enseignant existant", phone: "+2250757003961",
+    display_name: "Directeur enseignant existant", phone: "+2250700000000",
   });
   db.tables.user_roles.push({
     id: "77777777-7777-4777-8777-777777777777",
