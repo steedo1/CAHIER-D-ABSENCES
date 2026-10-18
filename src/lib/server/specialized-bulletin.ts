@@ -190,8 +190,8 @@ export async function loadSpecializedBulletin(input: {
     const signatories = readSchoolTeachingSignatories(input.settingsJson);
     let historicalFrenchPrograms = new Map<string, BulletinProgram>();
     if (useHistoricalFrench) {
-      const history = await input.loadHistoricalFrench({ from: period.start_date,
-        to: period.end_date, academicYear: year });
+      const history = await input.loadHistoricalFrench({ from: String(period.start_date),
+        to: String(period.end_date), academicYear: String(year) });
       if (history.status !== 200) return json({
         ok: false, error: "SECONDARY_FRENCH_HISTORICAL_ENGINE_UNAVAILABLE",
         historicalStatus: history.status,
