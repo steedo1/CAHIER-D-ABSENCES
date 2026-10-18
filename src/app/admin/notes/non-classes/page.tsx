@@ -1,5 +1,9 @@
 // src/app/admin/notes/non-classes/page.tsx
 "use client";
+import SpecializedCorrespondentReports from "@/components/admin/SpecializedCorrespondentReports";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import { isBilingualSchool } from "@/lib/school-student-programs";
+
 
 import React, { useEffect, useMemo, useState } from "react";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
@@ -336,6 +340,14 @@ function parseApiArray<T>(json: any): T[] {
 }
 
 export default function NonClassesPage() {
+  const navigation = useSchoolNavigation();
+  if (navigation && isBilingualSchool(navigation.settings)) {
+    return <SpecializedCorrespondentReports mode="unclassified" />;
+  }
+  return <LegacyNonClassesPage />;
+}
+
+function LegacyNonClassesPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
   const [educationScope, setEducationScope] =
