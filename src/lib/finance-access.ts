@@ -186,6 +186,8 @@ export async function getFinanceAccessForCurrentUser(
   }
 
   const expiresAt = institution?.subscription_expires_at ?? null;
+  const subscriptionValid =
+    !!expiresAt && new Date(`${expiresAt}T23:59:59`).getTime() >= Date.now();
 
   const hasBilingualGeneralDirectorGrant = financeRoles.some((row: any) =>
     String(row.role || "") === "admin" &&
@@ -212,7 +214,8 @@ export async function getFinanceAccessForCurrentUser(
   // Admins des établissements ordinaires : paie seulement.
   // Le DG franco-arabe conserve l'accès complet, soumis aux contrôles
   // Finance Premium et validité d'abonnement ci-dessous.
-  if (requiredScope === "payroll" && !canAccessFullFinance) {
+  if (requiredScope === "payroll" && !hasFullFinanceRole &&
+      (!hasBilingualGeneralDirectorGrant || !subscriptionValid)) {
     return {
       ok: true,
       scope: "payroll",
@@ -254,9 +257,6 @@ export async function getFinanceAccessForCurrentUser(
   // that school-wide administrator. Other existing Finance users keep the
   // exact same Premium entitlement rules.
   const effectiveFinanceEnabled = premiumEnabled || hasBilingualGeneralDirectorGrant;
-
-  const subscriptionValid =
-    !!expiresAt && new Date(`${expiresAt}T23:59:59`).getTime() >= Date.now();
 
   if (!effectiveFinanceEnabled) {
     return {
