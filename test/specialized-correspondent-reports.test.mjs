@@ -19,8 +19,10 @@ const pageRoutes = [
 test("the five Correspondant screens reuse specialized results only in opted-in Arabic schools", () => {
   for (const [path, component, mode] of pageRoutes) {
     const src = read(path);
-    assert.match(src, /useSchoolNavigation/);
-    assert.match(src, /isBilingualSchool\(navigation.settings\)/);
+    assert.match(src, /useBilingualCorrespondentMode/);
+    assert.match(src, /if \(loading\)/);
+    assert.match(src, /if \(error\)/);
+    assert.match(src, /if \(isBilingual\)/);
     assert.ok(src.includes('mode="' + mode + '"'), path);
     assert.ok(src.includes("return <Legacy" + component + " />"), path);
     assert.ok(src.includes("function Legacy" + component + "()"), path);
@@ -76,4 +78,13 @@ test("official DESPS export fails closed for bilingual schools until authority v
   }
   assert.match(read("src/app/api/admin/exports/averages/route.ts"),
     /DESPS_FRANCO_ARABIC_MODEL_NOT_VALIDATED/);
+});
+
+test("file correspondent school detection uses the authenticated settings API, not admin-only navigation", () => {
+  const hook = read("src/hooks/useBilingualCorrespondentMode.ts");
+  assert.match(hook, /\/api\/admin\/institution\/settings/);
+  assert.match(hook, /isBilingualSchool\(parseSchoolCyclesSettings\(data.settings_json\)\)/);
+  assert.match(hook, /setResolved\(null\)/);
+  assert.match(hook, /loading: !error && resolved === null/);
+  assert.match(read("src/app/admin/layout.tsx"), /primaryRole === "file_correspondent"/);
 });
