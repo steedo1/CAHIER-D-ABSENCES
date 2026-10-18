@@ -45,6 +45,8 @@ export async function loadSpecializedBulletin(input: {
   settingsJson: unknown; institutionName: string | null; institutionCode: string | null;
   institutionContacts?: { logoUrl?: string | null; phone?: string | null; email?: string | null; address?: string | null; regionalDirection?: string | null };
   searchParams: URLSearchParams; role: string;
+  /** Verified by the director-only route. Never accept this from a client payload. */
+  authorizedTrack?: TeachingTrack;
 }): Promise<NextResponse | null> {
   const selected = resolvePedagogicalEngine(input.settingsJson, input.schoolClass);
   if (selected.engine === "legacy") return null;
@@ -52,7 +54,9 @@ export async function loadSpecializedBulletin(input: {
     message: "La configuration des bulletins spécialisés contient des valeurs contradictoires ou invalides. Vérifiez les niveaux, barèmes et coefficients avant l’édition." }, 409);
   if (input.schoolClass.institution_id !== input.institutionId) return json({ ok: false, error: "CLASS_FORBIDDEN" }, 403);
   // Restricted directors are not provisioned until every grade route is scoped.
-  if (input.role !== "admin") return json({ ok: false, error: "FORBIDDEN" }, 403);
+  const asDirector = input.role === "teaching_director" &&
+    (input.authorizedTrack === "french" || input.authorizedTrack === "arabic");
+  if (input.role !== "admin" && !asDirector) return json({ ok: false, error: "FORBIDDEN" }, 403);
   const { cycle, school, reports } = selected;
   if (cycle === "preschool") return json({ ok: false, error: "PRESCHOOL_QUALITATIVE_STORAGE_REQUIRED",
     message: "Le livret de compétences nécessite un catalogue et des observations validés. Aucun calcul de moyenne n’est appliqué au préscolaire." }, 409);
@@ -66,6 +70,13 @@ export async function loadSpecializedBulletin(input: {
   const classPolicy = storedYear?.classes[schoolClass.id];
   if (classPolicy && !classPolicy.tracks.length) {
     return json({ ok: false, error: "CLASS_TEACHING_NOT_CONFIGURED" }, 409);
+  }
+  // The director's official bulletin may use only a class explicitly mapped
+  // to their one teaching. Mixed or unmapped classes fail closed until grade
+  // evaluations carry an unambiguous teaching marker.
+  if (asDirector && (classPolicy?.tracks.length !== 1 ||
+      classPolicy.tracks[0] !== input.authorizedTrack)) {
+    return json({ ok: false, error: "DIRECTOR_CLASS_SCOPE_FORBIDDEN" }, 403);
   }
   try {
     const periods = await listApplicableGradePeriods(service, institutionId, year, schoolClass.id);
@@ -157,18 +168,22 @@ export async function loadSpecializedBulletin(input: {
       if (!evaluation || !evaluation.is_published || (evaluation.publication_status && evaluation.publication_status !== "published")) continue;
       if (evaluation.grading_period_id && evaluation.grading_period_id !== period.id) continue;
       if (evaluation.subject_id !== row.subject_id || row.publication_version !== evaluation.publication_version) {
-        publicationProblems.push("official_publication_version_mismatch"); continue;
+        if (!asDirector || (row.subject_id && trackBySubject.get(row.subject_id) === input.authorizedTrack)) {
+          publicationProblems.push("official_publication_version_mismatch");
+        }
+        continue;
       }
       // Null means absent, never a numerical zero.
       if (row.score === null || !row.subject_id) continue;
+      if (asDirector && trackBySubject.get(row.subject_id) !== input.authorizedTrack) continue;
       officialScores.push({ studentId: row.student_id, evaluationId: row.evaluation_id, subjectId: row.subject_id,
         score: row.score, scale: row.scale, evaluationCoefficient: row.coeff, isCurrentPublished: true,
         teachingTrack: trackBySubject.get(row.subject_id) ?? null });
     }
     const allPrograms = school.teachingTracksByCycle[cycle] || [];
-    const programs = classPolicy
+    const programs = (classPolicy
       ? allPrograms.filter(track => classPolicy.tracks.includes(track))
-      : allPrograms;
+      : allPrograms).filter(track => !asDirector || track === input.authorizedTrack);
     const resolved = programs.map(track => ({ track, ...resolveProgramCoefficients({
       cycle, level, track, settingsJson: input.settingsJson,
       activeSubjectIds: activeSubjects.map(row => row.subject_id),
@@ -182,7 +197,11 @@ export async function loadSpecializedBulletin(input: {
       const rows = scoresByStudent.get(score.studentId) || [];
       rows.push(score); scoresByStudent.set(score.studentId, rows);
     }
-    const results = [...students.values()].map(student => ({ student, drafts: resolved.map(policy => buildProgramBulletinDraft({
+    const visibleStudents = [...students.values()].filter(student => !asDirector ||
+      (input.authorizedTrack && programsForStudent(
+        classPolicy, student.id, school.teachingTracksByCycle[cycle] || [],
+      ).includes(input.authorizedTrack)));
+    const results = visibleStudents.map(student => ({ student, drafts: resolved.map(policy => buildProgramBulletinDraft({
       studentId: student.id, cycle, level, track: policy.track, school, reports, officialScores: scoresByStudent.get(student.id) || [],
       resolvedPolicies: policy.policies, configurationProblems: [...policy.problems, ...publicationProblems],
     })) }));
@@ -225,7 +244,7 @@ export async function loadSpecializedBulletin(input: {
     });
     return json({ ok: true, class: { ...schoolClass, label: schoolClass.label || level },
       period: { from: period.start_date, to: period.end_date, label: period.label, academic_year: year },
-      subjects: [], items: [], specialized: { engine: "specialized", cycle, format: selectedBulletinFormat(reports, cycle),
+      subjects: [], items: [], specialized: { engine: "specialized", cycle, format: asDirector ? "separate" : selectedBulletinFormat(reports, cycle),
         coefficientSource: reports.coefficientSource === "program" ? "program" : "institution", programs, documents },
     });
   } catch (error) {
