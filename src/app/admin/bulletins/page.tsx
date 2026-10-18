@@ -1393,6 +1393,8 @@ type StudentBulletinCardProps = {
 
   // ✅ pour calculer le "fit-to-page" malgré le zoom d’aperçu
   previewZoomForMeasure: number;
+  /** An official QR must never be simulated for a specialized document. */
+  disableLocalQr?: boolean;
 };
 
 function StudentBulletinCard({
@@ -1414,6 +1416,7 @@ function StudentBulletinCard({
   conductTotalMax,
   signaturesEnabled,
   previewZoomForMeasure,
+  disableLocalQr = false,
 }: StudentBulletinCardProps) {
   const signaturesActive = !!signaturesEnabled;
 
@@ -1897,6 +1900,10 @@ function StudentBulletinCard({
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    if (disableLocalQr) {
+      setQrDataUrl(null);
+      return;
+    }
     let cancelled = false;
     (async () => {
       const url = await generateQrDataUrl(qrText, QR_SIZE);
@@ -1905,9 +1912,9 @@ function StudentBulletinCard({
     return () => {
       cancelled = true;
     };
-  }, [qrText]);
+  }, [qrText, disableLocalQr]);
 
-  const qrImgSrc = item.qr_png || qrDataUrl;
+  const qrImgSrc = disableLocalQr ? null : item.qr_png || qrDataUrl;
 
   const totalTableRows = useMemo(() => {
     const subjectRows = subjectsForTable.reduce((acc, s) => {
@@ -4068,7 +4075,7 @@ function BulletinsPageContent() {
               </p>
             )}
             <div className="preview-pages flex flex-col gap-6 pb-6">
-              {secondaryViews.map((row, index) => (
+              {secondaryPrintReady && secondaryViews.map((row, index) => (
                 <StudentBulletinCard key={selectedSecondaryTrack + ":" + row.studentId}
                   index={index} total={secondaryViews.length}
                   item={row.item} subjects={row.subjects}
@@ -4092,7 +4099,7 @@ function BulletinsPageContent() {
                   } : null}
                   stats={secondaryStatistics}
                   conduct={null} signaturesEnabled={false}
-                  previewZoomForMeasure={previewZoom}
+                  disableLocalQr previewZoomForMeasure={previewZoom}
                 />
               ))}
             </div>
