@@ -1,3 +1,5 @@
+import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
+import { isBilingualSchool } from "@/lib/school-student-programs";
 // src/app/api/admin/exports/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
@@ -4589,11 +4591,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "INVALID_EXPORT_KIND" }, { status: 400 });
   }
 
-  const { data: institution } = await supabase
+  const { data: institution, error: institutionError } = await supabase
     .from("institutions")
     .select("name,status,settings_json")
     .eq("id", institutionId)
     .maybeSingle();
+  if (institutionError || !institution) {
+    return NextResponse.json({
+      ok: false, error: "INSTITUTION_SETTINGS_UNAVAILABLE",
+    }, { status: 503 });
+  }
+
+  // This official DESPS schema is for the historical programme. Until the
+  // Franco-Arabic authority validates per-teaching columns and annual rules,
+  // never export a misleading mixed French/Arabic official workbook.
+  if (isBilingualSchool(parseSchoolCyclesSettings(institution.settings_json))) {
+    return NextResponse.json({
+      ok: false,
+      error: "DESPS_FRANCO_ARABIC_MODEL_NOT_VALIDATED",
+      message: "Export officiel indisponible pour les écoles franco-arabes : modèle réglementaire par enseignement non validé.",
+    }, { status: 409 });
+  }
 
   const institutionInfo = resolveInstitutionExportInfo(institution);
   const institutionName = institutionInfo.name;

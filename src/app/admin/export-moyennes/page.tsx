@@ -1,5 +1,7 @@
 // src/app/admin/export-moyennes/page.tsx
 import { redirect } from "next/navigation";
+import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
+import { isBilingualSchool } from "@/lib/school-student-programs";
 import {
   FileSpreadsheet,
   GraduationCap,
@@ -232,6 +234,29 @@ function RapportFCard({
 
 export default async function ExportDespsPage() {
   const { supabase, institutionId } = await getAdminContext();
+  const { data: school, error: settingsError } = await supabase.from("institutions")
+    .select("settings_json").eq("id", institutionId).maybeSingle();
+  if (settingsError || !school) {
+    return <section className="m-6 rounded-xl border border-rose-200 bg-rose-50 p-6" role="alert">
+      Le type de l’établissement n’a pas pu être vérifié. Export DESPS indisponible.
+    </section>;
+  }
+  if (isBilingualSchool(parseSchoolCyclesSettings(school.settings_json))) {
+    return <main className="min-h-screen bg-slate-50 p-6">
+      <section className="mx-auto max-w-3xl rounded-2xl border border-amber-200 bg-white p-6">
+        <h1 className="text-xl font-bold">Export DESPS · Établissement franco-arabe</h1>
+        <p className="mt-3 text-sm text-slate-700">
+          Les modèles officiels DESPS historiques sont prévus pour le secondaire général.
+          Ils ne distinguent pas les résultats des enseignements français et arabe.
+          L’export est suspendu pour cet établissement jusqu’à la validation
+          d’un modèle administratif propre au programme concerné.
+        </p>
+        <p className="mt-3 text-sm font-semibold text-amber-900">
+          Aucun fichier avec des moyennes ou des effectifs mélangés ne sera produit.
+        </p>
+      </section>
+    </main>;
+  }
 
   const [{ data: classesData }, { data: periodsData }] = await Promise.all([
     supabase

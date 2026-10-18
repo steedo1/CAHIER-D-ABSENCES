@@ -1,3 +1,5 @@
+import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
+import { isBilingualSchool } from "@/lib/school-student-programs";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -49,6 +51,17 @@ export async function GET(req: NextRequest) {
   }
 
   const admin = getSupabaseServiceClient();
+  const { data: school, error: schoolError } = await admin.from("institutions")
+    .select("settings_json").eq("id", String(role.institution_id)).maybeSingle();
+  if (schoolError || !school) {
+    return NextResponse.json({ error: "Configuration scolaire indisponible." }, { status: 503 });
+  }
+  if (isBilingualSchool(parseSchoolCyclesSettings(school.settings_json))) {
+    return NextResponse.json({
+      error: "DESPS_FRANCO_ARABIC_MODEL_NOT_VALIDATED",
+      message: "Export DESPS non validé pour ce type d'établissement.",
+    }, { status: 409 });
+  }
   let query = admin.from("classes").select("id,label,code,academic_year")
     .eq("institution_id", String(role.institution_id))
     .eq("academic_year", academicYear)

@@ -1,5 +1,8 @@
 // src/app/admin/notes/bilan/page.tsx
 "use client";
+import SpecializedCorrespondentReports from "@/components/admin/SpecializedCorrespondentReports";
+import { useBilingualCorrespondentMode } from "@/hooks/useBilingualCorrespondentMode";
+
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -508,6 +511,18 @@ function printHtmlDocument(html: string, onError: (message: string) => void) {
 }
 
 export default function BilanTrimestrielAnnuelPage() {
+  const { isBilingual, loading, error } = useBilingualCorrespondentMode();
+  if (loading) return <p className="rounded-xl border p-5" role="status">Vérification du type d’établissement…</p>;
+  if (error) return <p className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-800" role="alert">
+    Le type de l’établissement n’a pas pu être vérifié : {error}
+  </p>;
+  if (isBilingual) {
+    return <SpecializedCorrespondentReports mode="balance" />;
+  }
+  return <LegacyBilanTrimestrielAnnuelPage />;
+}
+
+function LegacyBilanTrimestrielAnnuelPage() {
   const [data, setData] = useState<ReportData | null>(null);
   const [academicYear, setAcademicYear] = useState("");
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
