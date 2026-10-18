@@ -49,7 +49,7 @@ test("arabe secondaire : sauvegarde par cycle/niveau/enseignement/matière, jama
   assert.match(view, /if \(frenchSecondary\) \{/);
   assert.match(view, /if \(!frenchSecondary \|\| !level\)/);
   assert.match(view, /reporting\.coefficients\.find\(row => row\.cycle === cycle && row\.track === track/);
-  assert.match(read("src/lib/pedagogical-engine.ts"), /policy\.cycle === cycle/);
+  assert.match(read("src/lib/franco-arabic-reporting.ts"), /policy\.cycle === cycle && policy\.track === track/);
   assert.match(read("src/app/api/admin/bulletin-templates/route.ts"), /subject_not_configured_for_program/);
 });
 
