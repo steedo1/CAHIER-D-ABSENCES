@@ -1,3 +1,4 @@
+import { loadLinkedClassEnrollments } from "@/lib/server/school-linked-class-roster";
 //src/app/api/teacher/roster/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest) {
 
   const { data: classRow, error: classError } = await srv
     .from("classes")
-    .select("id,institution_id")
+    .select("id,institution_id,level,academic_year")
     .eq("id", class_id)
     .eq("institution_id", inst)
     .maybeSingle();
@@ -75,12 +76,22 @@ export async function GET(req: NextRequest) {
       students:student_id ( id, first_name, last_name, matricule )
     `)
     .eq("class_id", class_id)
+    .eq("institution_id", inst)
     .is("end_date", null);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
+  const { data: institution, error: institutionError } = await srv.from("institutions")
+    .select("settings_json").eq("id", inst).maybeSingle();
+  if (institutionError) return NextResponse.json({ error: "school_configuration_unavailable" }, { status: 503 });
+  let linked;
+  try { linked = await loadLinkedClassEnrollments(srv, inst, classRow, institution?.settings_json); }
+  catch { return NextResponse.json({ error: "STUDENT_PROGRAM_LINK_STALE" }, { status: 409 }); }
+  const ids = new Set((data || []).map((row: any) => row.student_id));
+  const allEnrollments = [...(data || []), ...linked.filter(row => !ids.has(row.student_id))];
+
   // map + tri "Nom puis Pr�nom"
-  const items = (data ?? [])
+  const items = allEnrollments
     .map((row: any) => {
       const s = row.students || {};
       const full = [s.last_name, s.first_name].filter(Boolean).join(" ").trim() || "Élève";

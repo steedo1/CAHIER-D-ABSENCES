@@ -1,3 +1,4 @@
+import { loadPrimaryClassRoster } from "@/lib/server/primary-class-roster";
 import { resolveTeachingDocumentSignatories } from "@/lib/franco-arabic-document-signatories";
 // src/app/api/admin/classes/[id]/roster/route.ts
 import { revalidatePath } from "next/cache";
@@ -575,7 +576,17 @@ export async function GET(
     );
   }
 
-  const students = (enrollments || [])
+  let primaryRoster;
+  try {
+    primaryRoster = await loadPrimaryClassRoster(srv, institutionId, cls as any,
+      (institutionRes.data as unknown as { settings_json?: unknown } | null)?.settings_json);
+  } catch (error) {
+    return respond({ error: error instanceof Error ? error.message : "primary_roster_unavailable" }, { status: 409 });
+  }
+  const currentIds = new Set((enrollments || []).map((row: any) => row.student_id));
+  const allEnrollments = [...(enrollments || []), ...(primaryRoster?.linkedEnrollments || [])
+    .filter(row => !currentIds.has(row.student_id))];
+  const students = allEnrollments
     .map((row: any) => {
       const s = row.students || {};
       const sid = String(s.id || row.student_id || "").trim();
@@ -627,7 +638,8 @@ export async function GET(
 
   return respond({
     ok: true,
-    can_edit: canWrite,
+    can_edit: canWrite && !primaryRoster?.linkedEnrollments.length,
+    ...(primaryRoster ? { school_cycle: "primary", mark_subjects: primaryRoster.subjects } : {}),
     class: {
       id: String((cls as any).id),
       label: String((cls as any).label || (cls as any).code || "Classe"),

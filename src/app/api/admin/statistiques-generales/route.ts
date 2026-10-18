@@ -223,10 +223,10 @@ export async function GET() {
   // opt-in school mapping. An Arabic-linked class does not enroll/count the
   // pupil a second time. Missing mappings stay unclassified, never French by default.
   const programmeClasses = new Map<string, Partial<Record<TeachingTrack, string>>>();
-  const verifiedSchoolClasses = new Map<string, { id: string; level: string | null }>();
+  const verifiedSchoolClasses = new Map<string, { id: string; level: string | null; label: string | null }>();
   if (school.enabled) {
     const { data: scopedClasses, error: classesError } = await srv.from("classes")
-      .select("id,level,institution_id,academic_year")
+      .select("id,label,level,institution_id,academic_year")
       .eq("institution_id", institutionId).eq("academic_year", academicYear).limit(1000);
     if (classesError || !scopedClasses || scopedClasses.length >= 1000) {
       return NextResponse.json({ error: "school_program_classes_unavailable" }, { status: 503 });
@@ -235,7 +235,7 @@ export async function GET() {
       id: row.id, level: row.level, cycle: resolveSchoolCycleForClass(row, school),
     }));
     for (const row of scopedClasses) {
-      verifiedSchoolClasses.set(row.id, { id: row.id, level: row.level });
+      verifiedSchoolClasses.set(row.id, { id: row.id, level: row.level, label: row.label });
     }
     const currentEnrollments = (enrollmentsResult.data || []).map((row: any) => ({
       class_id: clean(row.class_id), student_id: clean(row.student_id), end_date: null,
@@ -289,6 +289,8 @@ export async function GET() {
         school_cycle: resolveSchoolCycleForClass(cls, school),
         teaching_tracks: Object.keys(programmeClasses.get(id) || {}),
         program_class_ids: programmeClasses.get(id) || {},
+        program_class_labels: Object.fromEntries(Object.entries(programmeClasses.get(id) || {})
+          .map(([track, classId]) => [track, verifiedSchoolClasses.get(classId!)?.label || null])),
       } : {}),
       gender: clean(student?.gender) || null,
       birthdate: clean(student?.birthdate) || null,

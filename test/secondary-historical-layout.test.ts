@@ -67,3 +67,22 @@ test("le vrai composant de bulletin historique prend le relais au secondaire", a
   assert.match(text, /<StudentBulletinCard key=\{selectedSecondaryTrack/);
   assert.match(text, /historicalSecondaryViews\(specializedBulletins, selectedSecondaryTrack\)/);
 });
+
+
+test("historical metadata, administrative NC and group results reach the original card intact", () => {
+  const data = fixture(), program = data.documents[0].document.french!;
+  const source = { student_id: "stu1", general_avg: null, rank: null,
+    admin_forced_nc: true, admin_nc_reason: "Décision validée", annual_avg: null,
+    end_of_year_decision: { official_decision: "REDOUBLE", council_state: "validated" },
+    per_subject: [{ subject_id: "fr-only", avg20: 15.25, teacher_signature_png: "signature" }],
+    per_group: [{ group_id: "letters", group_avg: 15.25 }],
+  };
+  program.historicalSecondary!.sourceItem = source;
+  program.historicalSecondary!.groups = [{ id: "letters", label: "BILAN LETTRES", coefficient: 2,
+    average: 15.25, subjectIds: ["fr-only"] }];
+  const view = historicalSecondaryViews(data, "french")[0];
+  for (const [key, value] of Object.entries(source)) assert.deepEqual((view.item as Record<string, unknown>)[key], value);
+  assert.equal(view.subjectGroups[0].annual_coeff, 2);
+  assert.equal(view.subjectGroups[0].items[0].subject_id, "fr-only");
+  assert.equal(view.item.general_avg, null, "never restore a computed mean over administrative NC");
+});

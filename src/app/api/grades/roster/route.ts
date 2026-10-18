@@ -1,3 +1,4 @@
+import { loadLinkedClassEnrollments } from "@/lib/server/school-linked-class-roster";
 // src/app/api/grades/roster/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -71,7 +72,7 @@ export async function GET(req: NextRequest) {
     // Vérifier que la classe est bien dans l'établissement du profil
     const { data: cls, error: clsErr } = await srv
       .from("classes")
-      .select("id,institution_id,class_phone_e164,device_phone_e164")
+      .select("id,institution_id,level,academic_year,class_phone_e164,device_phone_e164")
       .eq("id", classId)
       .maybeSingle();
 
@@ -140,7 +141,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as RosterItem[] }, { status: 200 });
     }
 
-    const items: RosterItem[] = (enrolls ?? [])
+    const { data: institution, error: institutionError } = await srv.from("institutions")
+      .select("settings_json").eq("id", profile.institution_id).maybeSingle();
+    if (institutionError) return NextResponse.json({ error: "school_configuration_unavailable" }, { status: 503 });
+    let linked;
+    try { linked = await loadLinkedClassEnrollments(srv, profile.institution_id, cls, institution?.settings_json); }
+    catch { return NextResponse.json({ error: "STUDENT_PROGRAM_LINK_STALE" }, { status: 409 }); }
+    const ids = new Set((enrolls || []).map((row: any) => row.student_id));
+    const items: RosterItem[] = [...(enrolls || []), ...linked.filter(row => !ids.has(row.student_id))]
       .map((row: any) => {
         const st = row.students || {};
         const last = (st.last_name as string | null) ?? "";

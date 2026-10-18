@@ -1,3 +1,4 @@
+import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 // src/app/api/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -415,6 +416,11 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.error("[grades/scores/bulk] lock check unexpected", e);
       return bad("LOCK_CHECK_FAILED", 500);
+    }
+
+    if (!await specializedGradeStudentsAllowed(srv, profile.id, ge.class_id,
+      items.map(item => String(item?.student_id || "").trim()).filter(Boolean))) {
+      return bad("STUDENT_OUTSIDE_AUTHORIZED_CLASS", 403);
     }
 
     const scale = Number(ge.scale || 20);

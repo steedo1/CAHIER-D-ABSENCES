@@ -14,8 +14,7 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, type SchoolCycle
 import { readStudentProgramSettings } from "@/lib/school-student-programs";
 import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
 import { resolvePrimaryTeachingTrack } from "@/lib/grades/primary-evaluation-kind";
-import { hasCiPrimaryFrenchReference } from "@/lib/school-class-subjects";
-import { ciPrimaryFrenchEntryForName, ciPrimaryFrenchDenominator } from "@/lib/primary-french-reference-ci";
+import { primarySubjectScale, primarySubjectTeachingTrack } from "@/lib/grades/primary-subject-scale";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -169,6 +168,7 @@ export async function GET(_req: NextRequest) {
     const isClassDevice = roleSet.has("class_device");
 
     const srv = getSupabaseServiceClient();
+    const teacherInstitutionId = profile.institution_id;
     const institutionContext = await buildFormationLabelMap(
       srv,
       profile.institution_id,
@@ -196,11 +196,13 @@ export async function GET(_req: NextRequest) {
       if (!ids.length) return list;
 
       const nameById = new Map<string, string>();
+      const canonicalById = new Map<string, string>();
 
       for (const sid of ids) {
         const { data: isub, error: subErr } = await srv
           .from("institution_subjects")
           .select("id, subject_id, custom_name, subjects:subject_id(name)")
+          .eq("institution_id", teacherInstitutionId)
           .or(`id.eq.${sid},subject_id.eq.${sid}`)
           .limit(1)
           .maybeSingle();
@@ -222,15 +224,23 @@ export async function GET(_req: NextRequest) {
         const subjId = String((isub as any).subject_id);
         nameById.set(instId, nm);
         nameById.set(subjId, nm);
+        canonicalById.set(instId, subjId);
+        canonicalById.set(subjId, subjId);
       }
 
       return list.map((it) => {
         const subjectName = it.subject_id ? nameById.get(it.subject_id) ?? it.subject_name : it.subject_name;
-        const ciEntry = subjectName && it.school_cycle === "primary" && it.teaching_track === "french" &&
-          hasCiPrimaryFrenchReference(institutionContext.settings, it.academic_year, it.class_id)
-          ? ciPrimaryFrenchEntryForName(subjectName) : null;
-        return { ...it, subject_name: subjectName,
-          configured_scale: ciEntry ? ciPrimaryFrenchDenominator(it.level, ciEntry.code) : it.configured_scale };
+        const subjectId = it.subject_id ? canonicalById.get(it.subject_id) : null;
+        const primary = it.school_cycle === "primary";
+        const track = primary && subjectId
+          ? primarySubjectTeachingTrack(institutionContext.settings, it.academic_year, it.class_id, subjectId)
+          : it.teaching_track;
+        return { ...it, subject_name: subjectName, teaching_track: track,
+          configured_scale: primary ? (track && subjectId ? primarySubjectScale(institutionContext.settings, {
+            year: it.academic_year, classId: it.class_id, level: it.level, track,
+            subjectId, subjectName: subjectName || "",
+          }) : null) : it.configured_scale };
+
       });
     }
 

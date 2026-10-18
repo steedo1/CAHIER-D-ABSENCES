@@ -1,3 +1,4 @@
+import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 // src/app/api/teacher/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -29,6 +30,7 @@ type GradePeriodRow = {
 };
 
 type EvaluationRow = {
+  teacher_id: string | null;
   id: string;
   scale: number | null;
   class_id: string;
@@ -223,6 +225,7 @@ export async function POST(req: NextRequest) {
           "id",
           "scale",
           "class_id",
+          "teacher_id",
           "is_published",
           "published_at",
           "publication_status",
@@ -345,6 +348,11 @@ export async function POST(req: NextRequest) {
       });
 
       return bad(e?.message || "LOCK_CHECK_FAILED", 500);
+    }
+
+    if (!await specializedGradeStudentsAllowed(srv, auth.user.id, ge.class_id,
+      items.map(item => String(item?.student_id || "").trim()).filter(Boolean), ge.teacher_id)) {
+      return bad("STUDENT_OUTSIDE_AUTHORIZED_CLASS", 403);
     }
 
     const scale = Number(ge.scale || 20);

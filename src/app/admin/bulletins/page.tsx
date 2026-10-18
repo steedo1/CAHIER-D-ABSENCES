@@ -4079,7 +4079,7 @@ function BulletinsPageContent() {
                 <StudentBulletinCard key={selectedSecondaryTrack + ":" + row.studentId}
                   index={index} total={secondaryViews.length}
                   item={row.item} subjects={row.subjects}
-                  subjectComponents={row.subjectComponents} subjectGroups={[]}
+                  subjectComponents={row.subjectComponents} subjectGroups={row.subjectGroups}
                   classInfo={{
                     id: bulletinRaw?.class.id || selectedClassId,
                     label: row.program.className + " — " +

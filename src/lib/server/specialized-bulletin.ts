@@ -5,7 +5,9 @@ import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import { isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
 import { buildProgramBulletinDraft, type OfficialEvaluationScore } from "@/lib/franco-arabic-bulletin-calculation";
 import { normalizePedagogicalLevel, resolveEvaluationTeachingTrack, resolvePedagogicalEngine, resolveProgramCoefficients, type InstitutionCoefficient } from "@/lib/pedagogical-engine";
-import type { BulletinDocument, BulletinProgram } from "@/components/bulletins/FrancoArabicBulletin";
+import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
+import { primarySubjectScale } from "@/lib/grades/primary-subject-scale";
+import type { BulletinSchool, BulletinDocument, BulletinProgram } from "@/components/bulletins/FrancoArabicBulletin";
 import { SCHOOL_CYCLE_OPTIONS, type SchoolCycle, type TeachingTrack } from "@/lib/school-cycles";
 import { buildPedagogicalRanks } from "@/lib/pedagogical-ranking";
 import { isBilingualSchool, programsForStudent, readStudentProgramSettings } from "@/lib/school-student-programs";
@@ -20,11 +22,13 @@ import { adaptHistoricalFrenchSecondaryBulletins, type HistoricalSecondaryFrench
 export type SpecializedBulletinPayload = {
   engine: "specialized"; cycle: SchoolCycle; format: "separate" | "combined" | "both";
   coefficientSource: "institution" | "program"; programs: TeachingTrack[];
+  /** Shared once: an inline school logo can be several hundred kilobytes. */
+  school?: BulletinSchool;
   documents: Array<{ studentId: string; document: BulletinDocument; ready: boolean;
     programReadiness: Partial<Record<TeachingTrack, boolean>>; problems: string[] }>;
 };
-type SchoolClass = { id: string; institution_id?: string | null; level?: string | null; label?: string | null; academic_year?: string | null; education_type?: string | null; formation_code?: string | null };
-type Student = { id: string; institution_id: string; full_name: string | null; first_name: string | null; last_name: string | null; matricule: string | null; birthdate: string | null };
+type SchoolClass = { id: string; institution_id?: string | null; level?: string | null; label?: string | null; academic_year?: string | null; education_type?: string | null; formation_code?: string | null; head_teacher_id?: string | null };
+type Student = { id: string; institution_id: string; full_name: string | null; first_name: string | null; last_name: string | null; matricule: string | null; birthdate: string | null; birth_place?: string | null; gender?: string | null; photo_path?: string | null; photo_updated_at?: string | null };
 type PublishedScore = { id: string; student_id: string; evaluation_id: string; subject_id: string | null; score: number | null; scale: number; coeff: number; publication_version: number };
 type Evaluation = { subject_component_id: string | null; id: string; subject_id: string | null; eval_kind: string; title: string | null; is_published: boolean; publication_status: string | null; publication_version: number | null; grading_period_id: string | null };
 
@@ -48,6 +52,7 @@ export async function loadSpecializedBulletin(input: {
   service: SupabaseClient; institutionId: string; schoolClass: SchoolClass;
   settingsJson: unknown; institutionName: string | null; institutionCode: string | null;
   institutionHeadName?: string | null; institutionHeadTitle?: string | null;
+  schoolDetails?: Partial<BulletinSchool>;
   searchParams: URLSearchParams; role: string;
   /** SERVER-ONLY callback into the identical historical bulletin route. */
   loadHistoricalFrench: (period: { from: string; to: string; academicYear: string; verifiedLinkedStudentIds: string[] }) =>
@@ -86,7 +91,7 @@ export async function loadSpecializedBulletin(input: {
     if (!period) return json({ ok: false, error: "PERIOD_NOT_APPLICABLE_TO_CLASS" }, 400);
     const [enrollments, activeSubjects, coefficientRows, curriculum, evaluations, published, componentRows] = await Promise.all([
       pages<{ student_id: string; students: Student | Student[] | null }>((from, to) => service.from("class_enrollments")
-        .select("student_id,students(id,institution_id,full_name,first_name,last_name,matricule,birthdate)")
+        .select("student_id,students(id,institution_id,full_name,first_name,last_name,matricule,birthdate,birth_place,gender,photo_path,photo_updated_at)")
         .eq("class_id", schoolClass.id).is("end_date", null).order("student_id").range(from, to)),
       pages<{ subject_id: string; custom_name: string | null; subjects: { name: string } | { name: string }[] | null }>((from, to) => service.from("institution_subjects")
         .select("subject_id,custom_name,subjects(name)").eq("institution_id", institutionId).eq("is_active", true).order("id").range(from, to)),
@@ -145,7 +150,7 @@ export async function loadSpecializedBulletin(input: {
         }
       }
       const profiles = await pages<Student>((from, to) => service.from("students")
-        .select("id,institution_id,full_name,first_name,last_name,matricule,birthdate")
+        .select("id,institution_id,full_name,first_name,last_name,matricule,birthdate,birth_place,gender,photo_path,photo_updated_at")
         .eq("institution_id", institutionId).in("id", links).order("id").range(from, to));
       if (profiles.length !== links.length) {
         return json({ ok: false, error: "STUDENT_SCOPE_INVALID" }, 409);
@@ -180,7 +185,7 @@ export async function loadSpecializedBulletin(input: {
       }
       // Null means absent, never a numerical zero.
       if (row.score === null || !row.subject_id) continue;
-      const teachingTrack = cycle === "secondary" && classPolicy?.tracks.length === 1 &&
+      const teachingTrack = classPolicy?.tracks.length === 1 &&
           school.subjectTracksByCycle[cycle]?.[row.subject_id]?.includes(classPolicy.tracks[0])
           ? classPolicy.tracks[0] : trackBySubject.get(row.subject_id) ?? null;
       if (cycle === "secondary" && evaluation.subject_component_id && teachingTrack) {
@@ -204,6 +209,7 @@ export async function loadSpecializedBulletin(input: {
     const useHistoricalFrench = cycle === "secondary" && programs.includes("french");
     const signatories = readSchoolTeachingSignatories(input.settingsJson);
     let historicalFrenchPrograms = new Map<string, BulletinProgram>();
+    let historicalHeadTeacher: unknown = null;
     if (useHistoricalFrench) {
       const history = await input.loadHistoricalFrench({ from: String(period.start_date),
         to: String(period.end_date), academicYear: String(year), verifiedLinkedStudentIds: links });
@@ -212,6 +218,7 @@ export async function loadSpecializedBulletin(input: {
         historicalStatus: history.status,
         historicalError: (history.data as { error?: string } | null)?.error || null,
       }, history.status >= 400 && history.status < 500 ? history.status : 503);
+      historicalHeadTeacher = (history.data as { class?: { head_teacher?: unknown } }).class?.head_teacher || null;
       historicalFrenchPrograms = adaptHistoricalFrenchSecondaryBulletins(
         history.data as HistoricalSecondaryFrenchResponse,
         { level, className: schoolClass.label || level, year,
@@ -238,6 +245,20 @@ export async function loadSpecializedBulletin(input: {
       const entry = ciPrimaryFrenchEntryForName(subjectNames.get(row.subject_id) || "");
       return [row.subject_id, entry ? ciPrimaryFrenchDenominator(level, entry.code) : 10];
     }));
+    const primaryDenominators = cycle === "primary" && reports.primarySubjectScales !== undefined
+      ? Object.fromEntries(activeSubjects.map(row => [row.subject_id, primarySubjectScale(input.settingsJson, {
+          year, classId: schoolClass.id, level, track: "arabic", subjectId: row.subject_id,
+          subjectName: subjectNames.get(row.subject_id) || "",
+        })])) : undefined;
+    const { data: primaryAssignments } = cycle === "primary" && classPolicy?.tracks.length === 1 && !schoolClass.head_teacher_id
+      ? await service.from("class_teachers").select("teacher_id").eq("institution_id", institutionId)
+          .eq("class_id", schoolClass.id).is("end_date", null).limit(501) : { data: [] };
+    const teacherIds = [...new Set((primaryAssignments || []).map(row => row.teacher_id))];
+    const primaryTeacherId = schoolClass.head_teacher_id || (teacherIds.length === 1 ? teacherIds[0] : null);
+    const { data: primaryTeacher } = cycle === "primary" && primaryTeacherId
+      ? await service.from("profiles").select("display_name").eq("id", primaryTeacherId)
+          .eq("institution_id", institutionId).maybeSingle()
+      : { data: null };
     const scoresByStudent = new Map<string, OfficialEvaluationScore[]>();
     for (const score of officialScores) {
       const rows = scoresByStudent.get(score.studentId) || [];
@@ -250,18 +271,29 @@ export async function loadSpecializedBulletin(input: {
         { cycle, track: policy.track, level, storageLevel: componentStorageLevel(cycle, policy.track, level) })),
       resolvedPolicies: policy.policies, configurationProblems: [...policy.problems, ...publicationProblems],
       ...(ciPrimaryFrench && policy.track === "french" ? { primaryCiDenominators: ciDenominators } : {}),
+      ...(cycle === "primary" && policy.track === "arabic" && primaryDenominators
+        ? { primarySubjectDenominators: primaryDenominators } : {}),
     })) }));
     const ranksByProgram = new Map(programs.map(track => [track, buildPedagogicalRanks(results.map(row => {
       const draft = row.drafts.find(item => item.track === track);
       return { studentId: row.student.id, average: draft?.generalAverage ?? null, complete: draft?.status === "ready" };
     }))]));
 
+    const subjectTotals = new Map<string, { total: number; count: number }>();
+    if (cycle === "primary") for (const result of results) for (const draft of result.drafts) {
+      for (const subject of draft.subjects) if (subject.average !== null) {
+        const key = `${draft.track}:${subject.subjectId}`;
+        const tally = subjectTotals.get(key) || { total: 0, count: 0 };
+        tally.total += subject.average; tally.count += 1; subjectTotals.set(key, tally);
+      }
+    }
     const documents: SpecializedBulletinPayload["documents"] = results.map(({ student, drafts }) => {
       const document: BulletinDocument = {
         school: { name: input.institutionName || "", code: input.institutionCode, isFrancoArabic: isBilingualSchool(school),
           generalDirectorName: input.institutionHeadName, generalDirectorTitle: input.institutionHeadTitle },
         student: { id: student.id, firstName: student.first_name || "", lastName: student.last_name || student.full_name || "",
-          matricule: student.matricule, birthDate: student.birthdate },
+          matricule: student.matricule, birthDate: student.birthdate, birthPlace: student.birth_place,
+          gender: student.gender, photoUrl: buildProtectedStudentPhotoUrl(student) },
       };
       const historicalFrench = useHistoricalFrench ? historicalFrenchPrograms.get(student.id) : null;
       if (historicalFrench) document.french = historicalFrench;
@@ -276,16 +308,20 @@ export async function loadSpecializedBulletin(input: {
           .map(subject => ({ id: subject.subjectId,
             name: subjectNames.get(subject.subjectId) || subject.subjectId,
             coefficient: subject.coefficient, average: subject.average,
+            classAverage: (() => { const tally = subjectTotals.get(`${draft.track}:${subject.subjectId}`);
+              return tally?.count ? Math.round(tally.total / tally.count * 100) / 100 : null; })(),
             includeInAverage: subject.includeInAverage, denominator: subject.denominator, components: subject.components }));
         const bulletinSubjectRows = isCiPrimaryFrench
           ? ciPrimaryFrenchBulletinRows(level, rawSubjectRows) : rawSubjectRows;
         const program: BulletinProgram = { track: draft.track, cycle: SCHOOL_CYCLE_OPTIONS.find(option => option.id === cycle)?.label || cycle, level, className: schoolClass.label || level,
           ciPrimaryFrench: isCiPrimaryFrench,
+          primarySubjectScores: isCiPrimaryFrench || (cycle === "primary" && draft.track === "arabic" && primaryDenominators !== undefined),
+          teacherName: cycle === "primary" ? primaryTeacher?.display_name || null : null,
           year, period: period.label || period.code || "", denominator: draft.maximumScore || 0,
           subjects: bulletinSubjectRows,
           generalAverage: draft.generalAverage, rank, classSize: students.size,
           appreciation: draft.status === "ready" ? null : "Résultats incomplets — configuration ou notes à vérifier.",
-          directorName: signatories[draft.track]?.name || null,
+          directorName: signatories[draft.track]?.name || (!isBilingualSchool(school) ? input.institutionHeadName : null) || null,
         };
         document[draft.track] = program;
       }
@@ -299,10 +335,13 @@ export async function loadSpecializedBulletin(input: {
         ready: programs.every(track => readiness[track] === true),
         programReadiness: readiness, problems: [...new Set(errors)] };
     });
-    return json({ ok: true, class: { ...schoolClass, label: schoolClass.label || level },
+    return json({ ok: true, class: { ...schoolClass, label: schoolClass.label || level, head_teacher: historicalHeadTeacher },
       period: { from: period.start_date, to: period.end_date, label: period.label, academic_year: year },
       subjects: [], items: [], specialized: { engine: "specialized", cycle, format: selectedBulletinFormat(reports, cycle),
-        coefficientSource: reports.coefficientSource === "program" ? "program" : "institution", programs, documents },
+        coefficientSource: reports.coefficientSource === "program" ? "program" : "institution", programs, documents,
+        school: { ...input.schoolDetails, name: input.institutionName || "", code: input.institutionCode,
+          isFrancoArabic: isBilingualSchool(school), generalDirectorName: input.institutionHeadName,
+          generalDirectorTitle: input.institutionHeadTitle } },
     });
   } catch (error) {
     return json({ ok: false, error: error instanceof Error ? error.message : "SPECIALIZED_DATA_UNAVAILABLE" }, 503);

@@ -90,6 +90,7 @@ export function adaptHistoricalFrenchSecondaryBulletins(
       // printing it must not convert it into a fabricated zero.
       allowHistoricalNc: true,
       historicalSecondary: {
+        sourceItem: { ...item },
         conductAverage: item.conduct_avg ?? null,
         annualAverage: item.annual_avg ?? null,
         annualRank: item.annual_rank ?? null,
@@ -101,7 +102,7 @@ export function adaptHistoricalFrenchSecondaryBulletins(
           .filter(group => (group.items || []).some(g => subjectIds.has(g.subject_id)))
           .slice().sort((a, b) => a.order_index - b.order_index)
           .map(group => ({ id: group.id, label: group.label,
-            coefficient: group.annual_coeff ?? null,
+            coefficient: group.annual_coeff ?? null, subjectIds: (group.items || []).map(row => row.subject_id),
             average: scoreByGroup.get(group.id)?.group_avg ?? null })),
       },
     });

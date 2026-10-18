@@ -1726,10 +1726,11 @@ async function loadBulletin(
   let institutionSettingsJson: unknown = {};
   let institutionHeadName: string | null = null;
   let institutionHeadTitle: string | null = null;
+  let bulletinSchoolDetails = {};
   {
     const { data: instRow } = await srvClient
       .from("institutions")
-      .select("id, name, code_unique, acronym, bulletin_signatures_enabled, settings_json, head_name, head_title")
+      .select("id, name, code_unique, acronym, bulletin_signatures_enabled, settings_json, head_name, head_title, logo_url, phone, email, regional_direction, postal_address, country_name, country_motto, ministry_name")
       .eq("id", institutionId)
       .maybeSingle();
 
@@ -1742,6 +1743,12 @@ async function loadBulletin(
     institutionSettingsJson = (instRow as any)?.settings_json || {};
     institutionHeadName = (instRow as any)?.head_name ?? null;
     institutionHeadTitle = (instRow as any)?.head_title ?? null;
+    bulletinSchoolDetails = {
+      logoUrl: instRow?.logo_url ?? null, phone: instRow?.phone ?? null, email: instRow?.email ?? null,
+      regionalDirection: instRow?.regional_direction ?? null, address: instRow?.postal_address ?? null,
+      countryName: instRow?.country_name ?? null, countryMotto: instRow?.country_motto ?? null,
+      ministryName: instRow?.ministry_name ?? null,
+    };
 
     const col = (instRow as any)?.bulletin_signatures_enabled;
     if (typeof col === "boolean") bulletinSignaturesEnabled = col;
@@ -1756,7 +1763,7 @@ async function loadBulletin(
       service: srvClient, institutionId, schoolClass: classRow,
       settingsJson: institutionSettingsJson, institutionName: institutionMeta.name || null,
       institutionCode: institutionMeta.code_unique || null,
-      institutionHeadName, institutionHeadTitle, searchParams, role: ctx.role,
+      institutionHeadName, institutionHeadTitle, schoolDetails: bulletinSchoolDetails, searchParams, role: ctx.role,
       loadHistoricalFrench: async (period) => {
         // Re-enter THE SAME historical computation instead of implementing
         // a second secondary-French formula. Rendering is handled separately.
