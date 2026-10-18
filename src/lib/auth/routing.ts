@@ -6,6 +6,7 @@ export type AppRole =
   | "founder"
   | "drenaet_admin"
   | "admin"
+  | "teaching_director"
   | "file_correspondent"
   | "finance_manager"
   | "infirmier"
@@ -23,6 +24,7 @@ export const ROLE_PRIORITY: AppRole[] = [
   "founder",
   "drenaet_admin",
   "admin",
+  "teaching_director",
   "file_correspondent",
   "finance_manager",
   "infirmier",
@@ -54,6 +56,8 @@ export function routeForRole(role: AppRole): string {
     case "admin":
     case "file_correspondent":
       return "/admin/dashboard";
+    case "teaching_director":
+      return "/direction-enseignement";
     case "finance_manager":
       return "/admin/finance";
     case "infirmier":
