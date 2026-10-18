@@ -232,11 +232,21 @@ export async function GET(_req: NextRequest) {
         const ciEntry = subjectName && it.school_cycle === "primary" && it.teaching_track === "french" &&
           hasCiPrimaryFrenchReference(institutionContext.settings, it.academic_year, it.class_id)
           ? ciPrimaryFrenchEntryForName(subjectName) : null;
-        const arabicScale = it.school_cycle === "primary" && it.teaching_track === "arabic" && it.subject_id
-          ? getConfiguredPrimarySubjectScale(reports, it.level, globalIdById.get(it.subject_id) || it.subject_id)
-          : null;
-        return { ...it, subject_name: subjectName,
-          configured_scale: it.school_cycle === "primary" && it.teaching_track === "arabic"
+        // class_teachers.subject_id stores institution_subjects.id. Resolve to
+        // subjects.id BEFORE deriving the teaching program (bilingual classes
+        // can legitimately have both French and Arabic teachers).
+        const canonicalId = it.subject_id ? globalIdById.get(it.subject_id) || it.subject_id : null;
+        const subjectTrack = it.school_cycle === "primary"
+          ? resolvePrimaryTeachingTrack({
+              offeredTracks: school.teachingTracksByCycle.primary || [],
+              classTracks: programs.years[it.academic_year]?.classes[it.class_id]?.tracks || [],
+              subjectTracks: canonicalId ? school.subjectTracksByCycle.primary?.[canonicalId] : undefined,
+            })
+          : it.teaching_track;
+        const arabicScale = it.school_cycle === "primary" && subjectTrack === "arabic" && canonicalId
+          ? getConfiguredPrimarySubjectScale(reports, it.level, canonicalId) : null;
+        return { ...it, subject_name: subjectName, teaching_track: subjectTrack,
+          configured_scale: it.school_cycle === "primary" && subjectTrack === "arabic"
             ? arabicScale
             : ciEntry ? ciPrimaryFrenchDenominator(it.level, ciEntry.code) : it.configured_scale };
       });
