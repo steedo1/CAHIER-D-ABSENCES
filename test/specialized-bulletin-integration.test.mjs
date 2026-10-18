@@ -13,6 +13,39 @@ const url = () => new NextRequest(`https://example.invalid/api/admin/grades/bull
 
 
 
+
+test("the Correspondant Fichier reads French/Arabic bulletins without altering grades or school data", async () => {
+  const db = setup();
+  const id = "fixture-correspondant";
+  db.users.set(id, { user: db.user(id, "correspondant@example.invalid") });
+  db.tables.profiles.push({ id, institution_id: db.legacyId });
+  db.tables.user_roles.push({ profile_id: id, institution_id: db.legacyId, role: "file_correspondent" });
+  db.tables.institutions[0].settings_json.franco_arabic_reports_v1.formatsByCycle = { primary: "combined" };
+  const before = structuredClone(db.tables);
+  const response = await createFixtureRouteLoader(db, id)(routePath).GET(url());
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  const data = await response.json();
+  assert.equal(data.specialized.engine, "specialized");
+  assert.equal(data.specialized.cycle, "primary");
+  assert.equal(data.specialized.format, "combined");
+  assert.equal(data.specialized.documents.length, 2);
+  assert.equal(data.specialized.documents[0].document.french.generalAverage, 8);
+  assert.equal(data.specialized.documents[0].document.arabic.generalAverage, 12);
+  assert.deepEqual(db.tables, before);
+  assert.equal(db.calls.some(call => call.op !== "read"), false);
+});
+
+test("a Correspondant Fichier from another school cannot retrieve specialized bulletins", async () => {
+  const db = setup();
+  const id = "fixture-foreign-correspondant";
+  db.users.set(id, { user: db.user(id, "foreign-correspondant@example.invalid") });
+  db.tables.profiles.push({ id, institution_id: "foreign-school" });
+  db.tables.user_roles.push({ profile_id: id, institution_id: "foreign-school", role: "file_correspondent" });
+  const response = await createFixtureRouteLoader(db, id)(routePath).GET(url());
+  assert.equal(response.status, 403);
+  assert.equal(db.calls.some(call => call.op !== "read"), false);
+});
+
 test("the existing bulletin endpoint produces a configured ordinary primary bulletin from published marks", async () => {
   const db = setup({ bilingual: false });
   const before = structuredClone(db.tables);
