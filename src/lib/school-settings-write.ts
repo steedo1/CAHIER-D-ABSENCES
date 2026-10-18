@@ -24,7 +24,7 @@ export function mergeGeneralSchoolSettings(stored: unknown, incoming: unknown) {
   if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) return null;
   const current = asSettingsObject(stored);
   const update = asSettingsObject(incoming);
-  const reserved = ["school_cycles_v1", "franco_arabic_reports_v1", "school_directors_v1", "school_student_programs_v1", "school_class_subjects_v1", "school_program_periods_v1"];
+  const reserved = ["school_cycles_v1", "franco_arabic_reports_v1", "school_directors_v1", "school_student_programs_v1", "school_class_subjects_v1", "school_program_periods_v1", "school_teaching_signatories_v1"];
   for (const key of reserved) {
     if (Object.hasOwn(update, key) && canonical(update[key]) !== canonical(current[key])) return null;
   }
