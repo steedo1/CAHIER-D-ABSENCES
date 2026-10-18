@@ -11,7 +11,8 @@ type Period = { id: string; label: string | null; start_date: string; end_date: 
 type Student = { id: string; name: string; matricule: string | null; tracks: TeachingTrack[] };
 type Slot = { record: PreschoolRecord | null; ready: boolean };
 type FormData = {
-  ok: true; revision: string; year: string; schoolClass: ClassRow;
+  ok: true; year: string; schoolClass: ClassRow;
+  catalogRevisions: Partial<Record<TeachingTrack, number>>;
   classes: ClassRow[]; students: Student[]; periods: Period[];
   programs: TeachingTrack[]; format: "combined" | "separate" | "both";
   catalogs: Partial<Record<TeachingTrack, PreschoolCompetency[]>>;
@@ -42,7 +43,9 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
       student_program_forbidden: "Cet élève n’est pas affecté à cet enseignement dans cette classe.",
       preschool_store_capacity_reached: "La capacité du stockage actuel est atteinte : une extension du stockage par établissement est nécessaire.",
       record_changed_reload_required: "Cet élève a été modifié par une autre personne. Actualisez sa fiche pour éviter d’écraser ses observations.",
-      private_preschool_storage_unavailable: "Le stockage privé des livrets est temporairement indisponible.",
+      preschool_record_storage_unavailable: "La base des observations préscolaires est temporairement indisponible.",
+      preschool_catalog_storage_unavailable: "La base des compétences préscolaires est temporairement indisponible.",
+      catalog_changed_reload_required: "Le référentiel a été modifié par une autre personne. Rechargez avant d’enregistrer.",
       not_preschool_school: "Les livrets de compétences ne sont disponibles que pour les établissements ayant activé le préscolaire.",
     };
     throw Error(body.message || humanErrors[body.error] || body.error || "Chargement indisponible");
@@ -173,8 +176,11 @@ export default function PreschoolBookletPage() {
     if (!data || working || !effectiveTrack) return;
     setWorking(true); setError(""); setNotice("");
     try {
-      let payload: Record<string, unknown> = { mode, track: effectiveTrack, revision: data.revision };
-      if (mode === "catalog") payload = { ...payload, competencies: parseCatalogDraft(catalogDraft) };
+      let payload: Record<string, unknown> = { mode, track: effectiveTrack };
+      if (mode === "catalog") payload = {
+        ...payload, competencies: parseCatalogDraft(catalogDraft),
+        expectedCatalogRevision: data.catalogRevisions?.[effectiveTrack] || 0,
+      };
       else payload = { ...payload, year: data.year, class_id: classId,
         period_id: periodId, student_id: studentId, record,
         expectedEditedAt: slot?.record?.editedAt || null };
