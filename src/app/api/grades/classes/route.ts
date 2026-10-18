@@ -229,9 +229,6 @@ export async function GET(_req: NextRequest) {
 
       return list.map((it) => {
         const subjectName = it.subject_id ? nameById.get(it.subject_id) ?? it.subject_name : it.subject_name;
-        const ciEntry = subjectName && it.school_cycle === "primary" && it.teaching_track === "french" &&
-          hasCiPrimaryFrenchReference(institutionContext.settings, it.academic_year, it.class_id)
-          ? ciPrimaryFrenchEntryForName(subjectName) : null;
         // class_teachers.subject_id stores institution_subjects.id. Resolve to
         // subjects.id BEFORE deriving the teaching program (bilingual classes
         // can legitimately have both French and Arabic teachers).
@@ -243,6 +240,9 @@ export async function GET(_req: NextRequest) {
               subjectTracks: canonicalId ? school.subjectTracksByCycle.primary?.[canonicalId] : undefined,
             })
           : it.teaching_track;
+        const ciEntry = subjectName && it.school_cycle === "primary" && subjectTrack === "french" &&
+          hasCiPrimaryFrenchReference(institutionContext.settings, it.academic_year, it.class_id)
+          ? ciPrimaryFrenchEntryForName(subjectName) : null;
         const arabicScale = it.school_cycle === "primary" && subjectTrack === "arabic" && canonicalId
           ? getConfiguredPrimarySubjectScale(reports, it.level, canonicalId) : null;
         return { ...it, subject_name: subjectName, teaching_track: subjectTrack,
