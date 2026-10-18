@@ -5,6 +5,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireTeachingDirector } from "@/lib/auth/teaching-director";
 import { loadTeachingDirectorWorkspace } from "@/lib/server/school-director-workspace";
 import SchoolGradingPeriodsEditor from "@/components/admin/SchoolGradingPeriodsEditor";
+import SchoolClassSubjectsEditor from "@/components/admin/SchoolClassSubjectsEditor";
 import type { SchoolCycle } from "@/lib/school-cycles";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +60,7 @@ export default async function TeachingDirectionHome() {
         Consulter et imprimer les bulletins de mon enseignement
       </a>
     </nav>
+    <SchoolClassSubjectsEditor />
     {workspace.year && <SchoolGradingPeriodsEditor
       academicYear={workspace.year}
       allowedPrograms={cycles.map(cycle => ({ cycle, track: teachingTrack }))}
