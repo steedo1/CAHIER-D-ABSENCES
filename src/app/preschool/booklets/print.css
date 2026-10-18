@@ -1,0 +1,20 @@
+@media print {
+  @page { size: A4; margin: 12mm; }
+  body:has(#preschool-booklet-print) * { visibility: hidden !important; }
+  body:has(#preschool-booklet-print) #preschool-booklet-print,
+  body:has(#preschool-booklet-print) #preschool-booklet-print * { visibility: visible !important; }
+  body:has(#preschool-booklet-print) #preschool-booklet-print {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: 0 !important;
+    background: white !important;
+  }
+  #preschool-booklet-print thead { display: table-header-group; }
+  #preschool-booklet-print table { border-collapse: collapse !important; }
+  #preschool-booklet-print tr { break-inside: avoid; page-break-inside: avoid; }
+  #preschool-booklet-print section { break-inside: auto; }
+}
