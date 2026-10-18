@@ -396,9 +396,12 @@ export default function GeneralStatisticsPage() {
     });
   }, [scopedStudents, level, classId, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge]);
 
-  const academicClassIds = useMemo(() => sortedUnique(baseFiltered.map((student) =>
-    specialSchool && track !== "all" ? student.program_class_ids?.[track] || null : student.class_id,
-  )), [baseFiltered, specialSchool, track]);
+  // Preschool has a competency booklet, never numeric grades.
+  const academicClassIds = useMemo(() => sortedUnique(baseFiltered
+    .filter((student) => !specialSchool || student.school_cycle !== "preschool")
+    .map((student) =>
+      specialSchool && track !== "all" ? student.program_class_ids?.[track] || null : student.class_id,
+    )), [baseFiltered, specialSchool, track]);
   const academicKey = JSON.stringify([academicYear, academicPeriod, academicClassIds, academicRetry]);
   const availablePeriods = useMemo(() => academicPeriods.filter((period) =>
     academicClassIds.some((id) => period.class_ids.includes(id)),
@@ -421,8 +424,10 @@ export default function GeneralStatisticsPage() {
         if (!active) return;
         setAcademicResult({ key: academicKey, data });
         setAcademicSubjects((previous) => {
-          const known = new Map(previous.map((subject) => [subject.id, subject]));
-          for (const subject of data.subjects) known.set(subject.id, subject);
+          const key = (subject: { id: string; track?: TeachingTrack }) =>
+            `${subject.track || "classic"}|${subject.id}`;
+          const known = new Map(previous.map((subject) => [key(subject), subject]));
+          for (const subject of data.subjects) known.set(key(subject), subject);
           return Array.from(known.values()).sort((a, b) => a.label.localeCompare(b.label, "fr"));
         });
       })
@@ -875,7 +880,10 @@ export default function GeneralStatisticsPage() {
             </div>
           </section>
 
-          {canFilterAverages && (!specialSchool || track !== "all") && <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm" aria-busy={academicBusy}>
+          {specialSchool && cycle === "preschool" && <p className="mb-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+            Le préscolaire utilise un livret de compétences et d’observations : aucune moyenne chiffrée n’est calculée.
+          </p>}
+          {canFilterAverages && (!specialSchool || track !== "all") && (cycle !== "preschool") && <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm" aria-busy={academicBusy}>
             <h2 className="text-sm font-bold text-slate-800">Résultats scolaires</h2>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Select label="Période des moyennes" value={academicPeriod} disabled={Boolean(periodError) || !availablePeriods.length} onChange={(value) => {
