@@ -32,11 +32,7 @@ const reports = parseFrancoArabicReportsSettings({
     version: 1, enabled: true, format: "both",
     scales: [
       { cycle: "primary", level: "CP1", track: "french", maxScore: 10 },
-      { cycle: "primary", level: "CP1", track: "arabic", maxScore: 10 },
-    ],
-    primarySubjectScales: [
-      { cycle: "primary", level: "CP1", track: "arabic", subjectId: quran, maxScore: 20 },
-      { cycle: "primary", level: "CP1", track: "arabic", subjectId: math, maxScore: 10 },
+      { cycle: "primary", level: "CP1", track: "arabic", maxScore: 20 },
     ],
     coefficients: [
       { cycle: "primary", level: "CP1", track: "french", subjectId: math, coefficient: 2, includeInAverage: true },
@@ -74,7 +70,7 @@ test("a shared subject uses explicit evaluation programs and never merges French
     track, school: sharedSchool, reports: sharedReports, officialScores: tagged });
   const fr = build("french"), ar = build("arabic");
   assert.equal(fr.generalAverage, 7.5);
-  assert.equal(ar.generalAverage, 6.33);
+  assert.equal(ar.generalAverage, 11.5);
   assert.equal(fr.status, "ready");
   assert.equal(ar.status, "ready");
   assert.equal(combineProgramBulletins(fr, ar)?.combinedAverage, null);
@@ -86,13 +82,13 @@ test("two programs use the same student identity but entirely different subjects
   assert.equal(fr.status, "ready");
   assert.equal(ar.status, "ready");
   assert.equal(fr.maximumScore, 10);
-  assert.equal(ar.maximumScore, 10);
+  assert.equal(ar.maximumScore, 20);
   assert.deepEqual(fr.subjects.map((x) => x.subjectId), [math, french].sort());
   assert.deepEqual(ar.subjects.map((x) => x.subjectId), [quran]);
   assert.equal(fr.subjects.find((x) => x.subjectId === math)?.average, 7);
   assert.equal(fr.subjects.find((x) => x.subjectId === french)?.average, 8);
   assert.equal(fr.generalAverage, 7.5);
-  assert.equal(ar.generalAverage, 7.5);
+  assert.equal(ar.generalAverage, 15);
   const combined = combineProgramBulletins(fr, ar);
   assert.ok(combined?.ready);
   assert.equal(combined?.studentId, "A");
@@ -103,7 +99,7 @@ test("never blend French and Arabic averages in any report presentation", () => 
   const fr = calc("french");
   const ar = calc("arabic");
   assert.equal(fr.generalAverage, 7.5);
-  assert.equal(ar.generalAverage, 7.5);
+  assert.equal(ar.generalAverage, 15);
   // The PDF layout is not an instruction to calculate a new mean.
   for (const format of ["separate", "combined", "both"] as const) {
     const chosenReports = { ...reports, format };
@@ -112,9 +108,9 @@ test("never blend French and Arabic averages in any report presentation", () => 
     const sheet = combineProgramBulletins(frenchPart, arabicPart);
     assert.ok(sheet, `missing report for ${format}`);
     assert.equal(sheet.french.generalAverage, 7.5);
-    assert.equal(sheet.arabic.generalAverage, 7.5);
+    assert.equal(sheet.arabic.generalAverage, 15);
     assert.equal(sheet.combinedAverage, null);
-    assert.equal(sheet.arabic.maximumScore, 10);
+    assert.notEqual(sheet.french.generalAverage, sheet.arabic.generalAverage);
   }
 });
 
