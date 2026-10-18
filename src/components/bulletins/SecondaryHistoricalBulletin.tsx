@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { BulletinDocument, BulletinProgram } from "./FrancoArabicBulletin";
 
 /**
@@ -90,7 +91,7 @@ export default function SecondaryHistoricalBulletin({
         </tr>
       </thead>
       <tbody>
-        {rows.map(subject => <tbody key={subject.id}>
+        {rows.map(subject => <Fragment key={subject.id}>
           <tr>
             <td className="border border-black p-1 font-semibold" dir="auto">{subject.name}</td>
             <td className="border border-black p-1 text-center">{score(subject.average)} / {subject.denominator || program.denominator}</td>
@@ -107,7 +108,7 @@ export default function SecondaryHistoricalBulletin({
             <td className="border border-black p-1" />
             <td className="border border-black p-1">{label(subject.teacherName)}</td>
           </tr>)}
-        </tbody>)}
+        </Fragment>)}
       </tbody>
     </table>
     <div className="mt-1 grid grid-cols-3 gap-2 text-[10px]">
