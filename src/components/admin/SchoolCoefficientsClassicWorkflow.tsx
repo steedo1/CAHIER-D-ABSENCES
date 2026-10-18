@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { sameSchoolLevel } from "@/lib/school-levels";
+import {
+  buildGeneralSecondaryCoefficientPreview,
+} from "@/lib/default-general-secondary-coefficients-ci";
 import type { SchoolCycle, TeachingTrack } from "@/lib/school-cycles";
 import type { FrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
 
@@ -87,6 +90,15 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const [componentsFor, setComponentsFor] = useState<Subject | null>(null);
   const [components, setComponents] = useState<Component[]>([]);
   const [componentsBusy, setComponentsBusy] = useState(false);
+  const [showCiSecondaryPreview, setShowCiSecondaryPreview] = useState(false);
+  const [ciPrimary, setCiPrimary] = useState<{
+    matches: Array<{ code: string; label: string; denominator: number }>;
+    missing: string[];
+    newlyAssociated: string[];
+    proposedSubjectIds: string[];
+    classId: string;
+  } | null>(null);
+  const [ciBusy, setCiBusy] = useState(false);
 
   async function parseResponse<T extends ResponseBase>(response: Response, fallback: string): Promise<T> {
     const result = await response.json().catch(() => ({})) as T;
@@ -152,7 +164,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
     const controller = new AbortController();
     setLoadingClass(true); setError("");
     setSubjectIds([]); setSubjectClassId("");
-    setChanges({}); setScaleChange("");
+    setChanges({}); setScaleChange(""); setCiPrimary(null); setShowCiSecondaryPreview(false);
     (async () => {
       try {
         const response = await fetch(classEndpoint + "?class_id=" + encodeURIComponent(actualClassId), {
@@ -186,6 +198,52 @@ export default function SchoolCoefficientsClassicWorkflow() {
     const key = levelKey(cycle, track, level) + "|" + subjectId;
     setChanges(old => ({ ...old, [key]: value }));
     setMessage("");
+  }
+
+  const ciSecondaryPreview = frenchSecondary && level ? buildGeneralSecondaryCoefficientPreview(
+    configuredSubjects.map(subject => ({
+      level, subject_id: subject.id, subject_name: subject.name,
+      coeff: Number(coeffFor(subject.id)) || 0,
+    })),
+  ) : [];
+  const applicableCi = ciSecondaryPreview.filter(row => row.willApply && row.coeff !== null);
+  function applyCiSecondary() {
+    if (!cycle || !track || !level || !frenchSecondary) return;
+    const next = { ...changes };
+    for (const row of applicableCi) next[levelKey(cycle, track, level) + "|" + row.subject_id] = String(row.coeff);
+    setChanges(next);
+    setMessage("Référentiel CI proposé pour " + applicableCi.length +
+      " discipline(s). Vérifiez puis enregistrez. Les sous-matières existantes ne sont pas écrasées.");
+    setShowCiSecondaryPreview(true);
+  }
+
+  async function primaryCiReference(apply: boolean) {
+    if (!actualClassId || cycle !== "primary" || track !== "french" || ciBusy || !settings?.revision) return;
+    setCiBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch(classEndpoint, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ classId: actualClassId, revision: settings.revision,
+          action: apply ? "apply_ci_primary_french" : "preview_ci_primary_french" }),
+      });
+      const data = await parseResponse<ResponseBase & { preview?: typeof ciPrimary }>(
+        response, "Référentiel primaire indisponible");
+      setCiPrimary(data.preview || null);
+      if (apply) {
+        // Applying the CI reference can change class curricula and the reporting
+        // revision; refresh them before any next save.
+        const refreshed = await fetch(endpoint, { cache: "no-store" });
+        const updated = await parseResponse<SettingsPayload>(refreshed, "Paramètres actualisés indisponibles");
+        setSettings(updated);
+        setSubjectIds(data.preview?.proposedSubjectIds || []);
+        setSubjectClassId(actualClassId);
+        setScaleChange("");
+        setMessage("Référentiel CI appliqué à la classe : disciplines supplémentaires conservées.");
+      } else {
+        setMessage("Prévisualisation du référentiel primaire : aucune modification enregistrée.");
+      }
+    } catch (e) { setError(errorMessage(e)); }
+    finally { setCiBusy(false); }
   }
 
   async function save() {
@@ -353,6 +411,37 @@ export default function SchoolCoefficientsClassicWorkflow() {
         Au préscolaire, le livret utilise les compétences et observations existantes. Aucun coefficient de matière ni classement à saisir.
       </p> : !selectedClass ? <p role="alert" className="p-3 text-sm text-amber-900">Choisissez une classe configurée dans « Matières par classe ».</p> :
       <div className="space-y-3">
+        {frenchSecondary && configuredSubjects.length > 0 && !isLoadingSubjects && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <h3 className="font-bold text-slate-900">Référentiel CI — Secondaire général</h3>
+          <p className="text-xs text-slate-700">Initialisation rapide des coefficients officiels reconnus pour ce niveau ; les autres matières et les sous-matières existantes sont conservées.</p>
+          <p className="mt-1 text-xs">{applicableCi.length} matière(s) reconnue(s).</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className="rounded-lg border bg-white px-3 py-2 text-sm"
+              onClick={() => setShowCiSecondaryPreview(v => !v)}>Prévisualiser</button>
+            <button type="button" className="rounded-lg bg-emerald-700 px-3 py-2 text-sm text-white"
+              disabled={applicableCi.length === 0 || saving} onClick={applyCiSecondary}>Appliquer CI</button>
+          </div>
+          {showCiSecondaryPreview && <ul className="mt-3 grid gap-1 text-xs sm:grid-cols-2">
+            {ciSecondaryPreview.map(row => <li key={row.subject_id} className="rounded-lg bg-white p-2">
+              {row.subject_name} : {row.coeff ?? "Non reconnu"}
+            </li>)}
+          </ul>}
+        </div>}
+        {cycle === "primary" && track === "french" && <div className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+          <h3 className="font-bold">Référentiel CI — Primaire français</h3>
+          <p className="text-xs">Les matières existantes sont conservées. Barème de bulletin /10 ; barèmes particuliers par composition.</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" onClick={() => void primaryCiReference(false)}
+              disabled={ciBusy} className="rounded-lg border bg-white px-3 py-2 text-sm">Prévisualiser</button>
+            <button type="button" onClick={() => void primaryCiReference(true)}
+              disabled={ciBusy || !ciPrimary?.matches?.length || ciPrimary?.classId !== actualClassId}
+              className="rounded-lg bg-emerald-700 px-3 py-2 text-sm text-white disabled:opacity-50">Appliquer CI</button>
+          </div>
+          {ciPrimary?.classId === actualClassId && <p className="mt-2 text-xs">
+            {ciPrimary.matches.length} matière(s) reconnue(s), {ciPrimary.newlyAssociated.length} à associer.
+            {ciPrimary.missing.length > 0 && " Matières absentes : " + ciPrimary.missing.join(", ")}
+          </p>}
+        </div>}
         {cycle === "primary" || arabicSecondary ? <label className="inline-block text-sm font-semibold">
           Barème des notes — {selectedClass.label} (valeur confirmée par l'établissement)
           <input aria-label="Barème des notes" type="number" min={1} max={100} step={1} className="mt-1 block w-36 rounded-lg border p-2"
