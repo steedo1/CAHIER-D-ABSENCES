@@ -12,7 +12,7 @@ type Program = { cycle: SchoolCycle; track: TeachingTrack };
 type TeachingClass = { id: string; label: string; level: string | null; cycle: SchoolCycle | null; track: TeachingTrack | null };
 type Subject = { id: string; name: string };
 type LegacyCoefficient = { level: string; subject_id: string; coeff: number };
-type Component = { code: string; label: string; coeff_in_subject: number; order_index: number; is_active: boolean };
+type Component = { code: string; label: string; level?: string | null; coeff_in_subject: number; order_index: number; is_active: boolean };
 type ResponseBase = { ok?: boolean; error?: string; revision?: string };
 type SettingsPayload = ResponseBase & {
   configuration?: {
@@ -325,11 +325,15 @@ export default function SchoolCoefficientsClassicWorkflow() {
     }
     setComponentsFor(subject); setComponentsBusy(true); setError("");
     try {
+      // Load all level spellings for this subject, rather than filtering SQL
+      // on one spelling ("6e" vs "6eme"). The historical route canonicalizes
+      // rows after querying; a direct level filter would miss legacy aliases.
       const response = await fetch(componentsEndpoint +
-        "?subject_id=" + encodeURIComponent(subject.id) + "&level=" + encodeURIComponent(level),
-        { cache: "no-store" });
+        "?subject_id=" + encodeURIComponent(subject.id), { cache: "no-store" });
       const payload = await parseResponse<ComponentPayload>(response, "Sous-matières indisponibles");
-      setComponents((payload.items || []).map((row, i) => ({
+      setComponents((payload.items || []).filter(row =>
+        "level" in row && typeof row.level === "string" &&
+        sameSchoolLevel(row.level, level, "secondary")).map((row, i) => ({
         code: row.code || "c" + (i + 1),
         label: row.label || "",
         coeff_in_subject: Number(row.coeff_in_subject || 0),
@@ -480,7 +484,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
         {configuredSubjects.length > 0 && !isLoadingSubjects &&
           <div className="flex justify-end"><button type="button" disabled={saving}
             onClick={() => void save()} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            {saving ? "Enregistrement…" : "Enregistrer les coefficients et barèmes"}
+            {saving ? "Enregistrement…" : "Enregistrer les coefficients"}
           </button></div>}
       </div>}
     </>}
