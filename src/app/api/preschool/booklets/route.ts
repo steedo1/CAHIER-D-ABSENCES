@@ -3,6 +3,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole, getRequestRoles } from "@/lib/auth/server-context";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
+import { resolveEvaluationTeachingTrack } from "@/lib/pedagogical-engine";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, isTeachingTrack, type TeachingTrack } from "@/lib/school-cycles";
 import {
   expandPedagogicalEnrollments, programsForStudent, readStudentProgramSettings,
@@ -72,20 +73,33 @@ async function getScope(scoped: Exclude<Awaited<ReturnType<typeof context>>, { e
     .select("id,level,label,academic_year").eq("institution_id", scoped.instId)
     .eq("academic_year", year).order("id").range(from, to), 1000);
   const available = classes.filter(row => resolveSchoolCycleForClass(row, scoped.school) === "preschool");
-  let assigned = new Set<string>();
+  const teacherTracks = new Map<string, Set<"french" | "arabic">>();
   if (!scoped.admin && scoped.teacher) {
-    const matches = await collect<{ class_id: string }>((from, to) => scoped.service.from("class_teachers")
-      .select("class_id").eq("institution_id", scoped.instId).eq("teacher_id", scoped.userId)
-      .is("end_date", null).order("id").range(from, to), 1000);
-    assigned = new Set(matches.map(row => row.class_id));
+    const matches = await collect<{ class_id: string; subject_id: string | null }>(
+      (from, to) => scoped.service.from("class_teachers")
+        .select("class_id,subject_id").eq("institution_id", scoped.instId)
+        .eq("teacher_id", scoped.userId).is("end_date", null).order("id").range(from, to), 1000);
+    for (const row of matches) {
+      const granted = teacherTracks.get(row.class_id) || new Set<"french" | "arabic">();
+      const ownTrack = row.subject_id
+        ? resolveEvaluationTeachingTrack(scoped.settings, "preschool", row.subject_id)
+        : null;
+      if (ownTrack) granted.add(ownTrack);
+      // A single-track preschool can have a homeroom assignment with no
+      // subject. Never extend such an implicit assignment to a bilingual school.
+      if (!row.subject_id && scoped.school.teachingTracksByCycle.preschool?.length === 1) {
+        granted.add(scoped.school.teachingTracksByCycle.preschool[0]);
+      }
+      teacherTracks.set(row.class_id, granted);
+    }
   }
   const permittedClasses = scoped.admin || !scoped.teacher ? available :
-    available.filter(row => assigned.has(row.id));
+    available.filter(row => (teacherTracks.get(row.id)?.size || 0) > 0);
   if (classId && !permittedClasses.some(row => row.id === classId)) {
     throw Error("class_forbidden");
   }
   return { classes: permittedClasses, selected: available.find(row => row.id === classId) || null,
-    allClasses: classes };
+    allClasses: classes, teacherTracks };
 }
 async function getBookletScope(scoped: Exclude<Awaited<ReturnType<typeof context>>, { error: NextResponse }>,
   year: string, classId: string) {
@@ -110,7 +124,9 @@ async function getBookletScope(scoped: Exclude<Awaited<ReturnType<typeof context
     if (result.error) throw Error("students_unavailable");
     for (const row of result.data || []) {
       const allowed = scoped.school.teachingTracksByCycle.preschool || [];
-      const tracks = programsForStudent(policies?.classes[classId], row.id, allowed);
+      const tracks = programsForStudent(policies?.classes[classId], row.id, allowed)
+        .filter(track => scoped.admin || !scoped.teacher ||
+          selectedScope.teacherTracks.get(classId)?.has(track) === true);
       students.push({ id: row.id, name: String(row.full_name || "Élève"),
         matricule: row.matricule, tracks });
     }
