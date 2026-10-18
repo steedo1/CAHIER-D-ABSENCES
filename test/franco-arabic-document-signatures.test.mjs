@@ -111,7 +111,7 @@ test("bulletins franco-arabes : chaque enseignement garde SON directeur, simplem
   const load = createFixtureRouteLoader(createMulticycleFixture(), "actor-does-not-matter");
   const component = load("src/components/bulletins/FrancoArabicBulletin.tsx").default;
   const document = {
-    school: { name: "École franco-arabe" },
+    school: { name: "École franco-arabe", isFrancoArabic: true },
     student: { id: "student-id", lastName: "NOM", firstName: "Prénom" },
     french: { track: "french", cycle: "Primaire", level: "CM1", className: "CM1 A",
       year: "2026-2027", period: "T1", denominator: 20,
@@ -131,4 +131,10 @@ test("bulletins franco-arabes : chaque enseignement garde SON directeur, simplem
   assert.match(frenchOnly, /Le Directeur/);
   assert.match(frenchOnly, /Directeur français/);
   assert.doesNotMatch(frenchOnly, /Directeur arabe/);
+  const ordinary = renderToStaticMarkup(React.createElement(component, {
+    model: { ...document, school: { name: "École ordinaire", isFrancoArabic: false } },
+    variant: "ordinary",
+  }));
+  assert.match(ordinary, /Direction de l’établissement/);
+  assert.doesNotMatch(ordinary, />Le Directeur<\\/span>/);
 });
