@@ -94,6 +94,9 @@ test("DG franco-arabe : abonnement expiré interdit Finance même lorsque le Pre
     const result = await access.getFinanceAccessForCurrentUser("full");
     assert.equal(result.ok, false);
     assert.equal(result.reason, "subscription_expired");
+    const payroll = await access.getFinanceAccessForCurrentUser("payroll");
+    assert.equal(payroll.ok, true, "la paie existante n'est pas révoquée");
+    assert.equal(payroll.scope, "payroll");
   }
 });
 
