@@ -28,13 +28,16 @@ const reporting = { version: 1, enabled: false, format: "separate",
 const payload = (value) => new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } });
 const changeValue = async (window, input, value) => {
   await act(async () => {
-    // React 19 tracks the input's own value setter. Use the native prototype
-    // setter so the controlled onChange handler receives a genuine new value.
-    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
-    if (setter) setter.call(input, value);
-    else input.value = value;
-    input.dispatchEvent(new window.Event("input", { bubbles: true }));
-    input.dispatchEvent(new window.Event("change", { bubbles: true }));
+    // happy-dom does not implement browser input events accurately for React 19
+    // number inputs. Trigger the actual controlled handler through the React
+    // props attached to this rendered element instead of faking DOM input.
+    const propsKey = Object.keys(input).find(key => key.startsWith("__reactProps$"));
+    const onChange = propsKey && input[propsKey]?.onChange;
+    if (typeof onChange === "function") onChange({ target: { value } });
+    else {
+      input.value = value;
+      input.dispatchEvent(new window.Event("change", { bubbles: true }));
+    }
   });
 };
 const flush = async () => {
