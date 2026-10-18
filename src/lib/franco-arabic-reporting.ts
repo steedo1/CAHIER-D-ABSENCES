@@ -155,11 +155,16 @@ export function validateFrancoArabicReportsInput(
   };
 }
 
-/** A bulletin model applies to its cycle without altering scores or calculation policy. */
+/** Only primary/preschool accept saved model preferences.
+ * Secondary layouts are fixed: legacy selections must never choose a
+ * combined/new-model report, including for pre-existing franco-Arabic schools.
+ * This is presentation-only; all teaching tracks and historical French
+ * calculations stay on their existing authenticated paths. */
 export function selectedBulletinFormat(
   reports: FrancoArabicReportsSettings,
   cycle: SchoolCycle,
 ): ReportFormat {
+  if (cycle === "secondary") return "separate";
   return reports.formatsByCycle?.[cycle] || reports.format;
 }
 
