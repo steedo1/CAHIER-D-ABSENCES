@@ -4,6 +4,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireTeachingDirector } from "@/lib/auth/teaching-director";
 import { loadTeachingDirectorWorkspace } from "@/lib/server/school-director-workspace";
+import SchoolGradingPeriodsEditor from "@/components/admin/SchoolGradingPeriodsEditor";
 import type { SchoolCycle } from "@/lib/school-cycles";
 
 export const dynamic = "force-dynamic";
@@ -52,6 +53,10 @@ export default async function TeachingDirectionHome() {
       <div className="rounded-xl border bg-white p-4"><p className="text-sm text-slate-500">Cycles supervisés</p>
         <p className="text-3xl font-bold">{cycles.length}</p></div>
     </div>
+    {workspace.year && <SchoolGradingPeriodsEditor
+      academicYear={workspace.year}
+      allowedPrograms={cycles.map(cycle => ({ cycle, track: teachingTrack }))}
+    />}
     {access.principal.hasTeacherRole && <nav className="flex flex-wrap items-center gap-3 rounded-xl border bg-white p-4">
       <span className="w-full text-sm font-semibold">Mes fonctions d'enseignant</span>
       <a href="/attendance" className="rounded-lg border px-4 py-2 text-sm font-medium">
