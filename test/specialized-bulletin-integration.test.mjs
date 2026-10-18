@@ -261,6 +261,55 @@ test("real secondary curriculum, scales and coefficients match level aliases wit
   assert.equal(missing.specialized.documents[0].programReadiness.arabic, false);
 });
 
+test("secondary French franco-arabe exactly reproduces the historical engine for an ordinary school and CSCA", async () => {
+  for (const name of ["EPC Dimbokro", "CSCA"]) {
+    const specializedDb = setup({ name });
+    const baselineDb = setup({ specialized: false, name });
+    const configs = specializedDb.tables.institutions[0].settings_json;
+    configs.school_cycles_v1.enabledCycles = ["secondary"];
+    configs.school_cycles_v1.teachingTracksByCycle = { secondary: ["french", "arabic"] };
+    configs.school_cycles_v1.subjectTracksByCycle = {
+      secondary: configs.school_cycles_v1.subjectTracksByCycle.primary,
+    };
+    specializedDb.tables.classes[0].level = "6e";
+    specializedDb.tables.institution_subject_coeffs.forEach(row => { row.level = "6eme"; });
+    specializedDb.tables.institution_level_subjects.forEach(row => { row.level_code = "6eme"; });
+    configs.franco_arabic_reports_v1.scales.forEach(row => {
+      row.cycle = "secondary"; row.level = "6e"; row.maxScore = 20;
+    });
+    const removeArabic = table => table.filter(row =>
+      !("subject_id" in row) || row.subject_id === french);
+    baselineDb.tables.subjects = baselineDb.tables.subjects.filter(row => row.id === french);
+    for (const table of ["institution_subjects", "institution_subject_coeffs",
+      "institution_level_subjects", "grade_evaluations", "grade_published_scores"]) {
+      baselineDb.tables[table] = removeArabic(baselineDb.tables[table]);
+    }
+    const specialized = await createFixtureRouteLoader(specializedDb, specializedDb.legacyAdminId)(routePath).GET(url());
+    const baseline = await createFixtureRouteLoader(baselineDb, baselineDb.legacyAdminId)(routePath).GET(url());
+    assert.equal(specialized.status, 200, name + JSON.stringify(await specialized.clone().json()));
+    assert.equal(baseline.status, 200, name + JSON.stringify(await baseline.clone().json()));
+    const { specialized: report } = await specialized.json();
+    const historical = await baseline.json();
+    const legacyByStudent = new Map(historical.items.map(item => [item.student_id, item]));
+    for (const row of report.documents) {
+      const exact = legacyByStudent.get(row.studentId);
+      assert.ok(exact, name + " historical student must be present");
+      assert.equal(row.document.french.generalAverage, exact.general_avg, name + " mean");
+      assert.equal(row.document.french.rank, exact.rank, name + " rank");
+      assert.equal(row.document.french.historicalSecondary.conductAverage, exact.conduct_avg, name + " conduct");
+      assert.equal(row.document.french.historicalSecondary.annualAverage, exact.annual_avg, name + " annual");
+      assert.deepEqual(row.document.french.subjects.map(subject => ({
+        id: subject.id, average: subject.average,
+      })), (exact.per_subject || []).map(subject => ({
+        id: subject.subject_id, average: subject.avg20,
+      })), name + " subject results must be identical");
+      assert.ok(row.document.arabic, "Arabic remains its own independent engine");
+    }
+    assert.equal(specializedDb.calls.some(call => call.op !== "read"), false);
+    assert.equal(baselineDb.calls.some(call => call.op !== "read"), false);
+  }
+});
+
 test("program rankings preserve independent ties and exclude incomplete results", async () => {
   const db = setup({ count: 5 });
   db.tables.grade_published_scores.forEach(row => {
