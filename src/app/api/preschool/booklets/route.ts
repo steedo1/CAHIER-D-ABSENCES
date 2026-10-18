@@ -3,7 +3,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole, getRequestRoles } from "@/lib/auth/server-context";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
-import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, isTeachingTrack } from "@/lib/school-cycles";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, isTeachingTrack, type TeachingTrack } from "@/lib/school-cycles";
 import {
   expandPedagogicalEnrollments, programsForStudent, readStudentProgramSettings,
 } from "@/lib/school-student-programs";
@@ -198,6 +198,7 @@ export async function PUT(request: NextRequest) {
       !(scoped.school.teachingTracksByCycle.preschool || []).includes(data.track)) {
     return response({ ok: false, error: "invalid_preschool_track" }, 400);
   }
+  const selectedTrack = data.track as TeachingTrack;
   let next: Record<string, unknown>;
   if (data.mode === "catalog") {
     if (!scoped.admin) return response({ ok: false, error: "forbidden" }, 403);
@@ -205,19 +206,19 @@ export async function PUT(request: NextRequest) {
       return response({ ok: false, error: "invalid_competency_catalog" }, 400);
     }
     const ids = new Set(data.competencies.map((row: { id: string }) => row.id));
-    const obsolete = (store.catalogs[data.track] || []).filter(row => !ids.has(row.id));
+    const obsolete = (store.catalogs[selectedTrack] || []).filter(row => !ids.has(row.id));
     if (obsolete.length) {
       // Old answers must not silently disappear when an administrator edits the list.
       return response({ ok: false, error: "competency_removal_requires_archival" }, 409);
     }
-    next = setPreschoolCatalog(scoped.settings, data.track, data.competencies);
+    next = setPreschoolCatalog(scoped.settings, selectedTrack, data.competencies);
   } else if (data.mode === "record") {
     if (!scoped.admin && !scoped.teacher) return response({ ok: false, error: "forbidden" }, 403);
     if (![data.class_id, data.period_id, data.student_id].every((v: unknown) =>
       typeof v === "string" && UUID.test(v)) || !/^\d{4}-\d{4}$/.test(data.year)) {
       return response({ ok: false, error: "invalid_context" }, 400);
     }
-    const catalog = store.catalogs[data.track] || [];
+    const catalog = store.catalogs[selectedTrack] || [];
     if (!catalog.length || !validPreschoolRecord(data.record, catalog)) {
       return response({ ok: false, error: "invalid_preschool_observations" }, 400);
     }
@@ -226,7 +227,7 @@ export async function PUT(request: NextRequest) {
       if (!full.periods.some(row => row.id === data.period_id)) {
         return response({ ok: false, error: "invalid_period" }, 400);
       }
-      if (!full.students.some(row => row.id === data.student_id && row.tracks.includes(data.track))) {
+      if (!full.students.some(row => row.id === data.student_id && row.tracks.includes(selectedTrack))) {
         return response({ ok: false, error: "student_program_forbidden" }, 403);
       }
     } catch (error) {
@@ -235,7 +236,7 @@ export async function PUT(request: NextRequest) {
     }
     next = setPreschoolRecord(scoped.settings, {
       year: data.year, classId: data.class_id, periodId: data.period_id,
-      track: data.track, studentId: data.student_id, record: data.record,
+      track: selectedTrack, studentId: data.student_id, record: data.record,
       actor: scoped.userId,
     });
   } else return response({ ok: false, error: "invalid_mode" }, 400);
