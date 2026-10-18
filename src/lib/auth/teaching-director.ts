@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getVerifiedServerUser } from "@/lib/supabase-server";
 import { parseSchoolCyclesSettings, type TeachingTrack, type SchoolCycle } from "@/lib/school-cycles";
-import { canAccessScopedTeachingResource } from "@/lib/school-director-scope";
+import { canAccessScopedTeachingResource, resolveTeachingDirectorGrant } from "@/lib/school-director-scope";
 
 export type TeachingDirectorPrincipal = {
   userId: string;
@@ -13,26 +13,6 @@ export type TeachingDirectorPrincipal = {
 export type TeachingDirectorResolution =
   | { ok: true; principal: TeachingDirectorPrincipal }
   | { ok: false; status: 401 | 403 | 503; error: string };
-
-/**
- * Pure, fail-closed principal resolution. No role mixing and no scope based on
- * a URL parameter. The active appointment is the only program authority.
- */
-export function resolveTeachingDirectorGrant(input: {
-  institutionId: string;
-  roles: Array<{ role: string; institution_id: string | null }>;
-  appointments: Array<{ institution_id: string; teaching_track: string; is_active: boolean }>;
-}): TeachingTrack | null {
-  const { institutionId, roles, appointments } = input;
-  if (!institutionId || roles.length !== 1 ||
-      roles[0].role !== "teaching_director" ||
-      roles[0].institution_id !== institutionId) return null;
-  const active = appointments.filter(row => row.is_active && row.institution_id === institutionId);
-  if (appointments.some(row => row.is_active && row.institution_id !== institutionId)) return null;
-  if (active.length !== 1) return null;
-  return active[0].teaching_track === "french" || active[0].teaching_track === "arabic"
-    ? active[0].teaching_track : null;
-}
 
 /** Server-only identity. A client-selected language, cycle, name or class never grants access. */
 export async function requireTeachingDirector(
