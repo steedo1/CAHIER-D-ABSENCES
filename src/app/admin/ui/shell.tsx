@@ -8,7 +8,8 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { SchoolContextLink as Link } from "@/components/admin/SchoolNavigationProvider";
+import { SchoolContextLink as Link, useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import { isBilingualGeneralDirectorFinanceEligible } from "@/lib/bilingual-general-director-finance";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   Menu,
@@ -157,6 +158,7 @@ export default function AdminShell({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [fallbackRole, setRole] = useState<AppRole | null>(null);
   const role = initialRole ?? fallbackRole;
+  const schoolNavigation = useSchoolNavigation();
   const pathname = usePathname();
   const searchKey = useSearchParams().toString();
   const [routeLoading, setRouteLoading] = useState(false);
@@ -313,6 +315,8 @@ export default function AdminShell({
   const isAdmin = role === "admin" || essentialAdminMode;
   const isFinancePath = pathname?.startsWith("/admin/finance") ?? false;
   const isFounderFinance = role === "founder" && isFinancePath;
+  const isBilingualGeneralDirector = !essentialAdminMode && role === "admin" &&
+    !!schoolNavigation && isBilingualGeneralDirectorFinanceEligible(role, schoolNavigation.settings);
   const canUseMonCahierAi =
     !essentialAdminMode &&
     (role === "admin" || role === "super_admin" || role === "educator");
@@ -365,6 +369,7 @@ export default function AdminShell({
     if (isAdmin && isFinancePath) {
       return [
         { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
+        ...(isBilingualGeneralDirector ? [{ href: "/admin/finance", label: "Finance", Icon: FileSpreadsheet }] : []),
         { href: "/admin/finance/payroll", label: "Paie", Icon: UserRoundCheck },
         { href: "/admin/absences", label: "Absences", Icon: Ban },
         { href: "/admin/notes", label: "Notes", Icon: NotebookPen },
@@ -375,6 +380,7 @@ export default function AdminShell({
       { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
       { href: "/admin/absences", label: "Absences", Icon: Ban },
       { href: "/admin/notes", label: "Notes", Icon: NotebookPen },
+      ...(isBilingualGeneralDirector ? [{ href: "/admin/finance", label: "Finance", Icon: FileSpreadsheet }] : []),
       ...(isAdmin ? [{ href: "/admin/parent-connect", label: "Parent Connect", Icon: UserRoundCheck }] : []),
       { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
     ];
@@ -386,6 +392,7 @@ export default function AdminShell({
     isFounderFinance,
     isInfirmier,
     essentialAdminMode,
+    isBilingualGeneralDirector,
   ]);
 
   function isActive(href: string) {
@@ -493,7 +500,7 @@ export default function AdminShell({
                       : isFinanceManager
                         ? "Gestion financière · Établissement"
                         : isAdmin && isFinancePath
-                          ? "Paie des enseignants"
+                          ? isBilingualGeneralDirector ? "Gestion financière · Direction générale" : "Paie des enseignants"
                           : essentialAdminMode
                             ? "Mode hors ligne · Admin établissement"
                             : "Absences & notes · Admin établissement"}
