@@ -26,10 +26,18 @@ const classes = [
 const json = data => new Response(JSON.stringify(data), { status: 200 });
 async function flush() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); }
 async function changeValue(node, value) {
+  assert.ok(node);
   await act(async () => {
+    // React 19 may not expose its internal props on all select elements.
+    // Prefer the controlled handler when available, otherwise dispatch
+    // a browser event as done by the existing multicycle UI suite.
     const key = Object.keys(node).find(k => k.startsWith("__reactProps$"));
-    assert.ok(key);
-    node[key].onChange({ target: { value } });
+    const onChange = key && node[key]?.onChange;
+    if (typeof onChange === "function") onChange({ target: { value } });
+    else {
+      node.value = value;
+      node.dispatchEvent(new window.Event("change", { bubbles: true }));
+    }
   });
 }
 function valueFor(container, name) {
