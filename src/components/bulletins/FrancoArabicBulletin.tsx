@@ -16,6 +16,9 @@ export type BulletinSchool = {
   motto?: string | null;
   city?: string | null;
   logoUrl?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
 };
 export type BulletinStudent = {
   id: string;
@@ -101,6 +104,12 @@ function Head({ model, variant }: { model: BulletinDocument; variant: BulletinVa
           <div className={styles.schoolName}>{model.school.name}</div>
           {model.school.subtitle && <div className={styles.schoolSubtitle}>{model.school.subtitle}</div>}
           {model.school.motto && <div className={styles.schoolMotto}>{model.school.motto}</div>}
+          {model.school.address && <div className={styles.schoolSubtitle}>{model.school.address}</div>}
+          {(model.school.phone || model.school.email) && <div className={styles.schoolSubtitle}>
+            {model.school.phone ? `Tél. ${model.school.phone}` : ""}
+            {model.school.phone && model.school.email ? " · " : ""}
+            {model.school.email || ""}
+          </div>}
         </div>
         <div className={styles.schoolCode}>
           <span>Établissement</span>
@@ -217,7 +226,10 @@ function Footer({ model, programs, ordinary }: {
       {programs.map(p => <Signature
         key={p.track}
         name={p.directorName}
-        title={ordinary ? "Direction de l’établissement" : (p.track === "french" ? "Direction française" : "Direction arabe")}
+        title={p.directorName
+          ? (p.track === "french" ? "Directeur de l'enseignement français" : "Directeur de l'enseignement arabe")
+          : ordinary ? "Direction de l’établissement"
+          : (p.track === "french" ? "Directeur de l'enseignement français" : "Directeur de l'enseignement arabe")}
       />)}
       <div className={styles.stampBox}>
         <span>Cachet de l’établissement</span><div className={styles.stampSpace}/>

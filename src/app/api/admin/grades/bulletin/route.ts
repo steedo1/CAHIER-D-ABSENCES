@@ -1717,10 +1717,11 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
   let bulletinSignaturesEnabled = false;
   let institutionMeta: InstitutionMeta = { id: institutionId };
   let institutionSettingsJson: unknown = {};
+  let specializedSchoolContacts: { logoUrl?: string | null; phone?: string | null; email?: string | null; address?: string | null; regionalDirection?: string | null } = {};
   {
     const { data: instRow } = await srvClient
       .from("institutions")
-      .select("id, name, code_unique, acronym, bulletin_signatures_enabled, settings_json")
+      .select("id, name, code_unique, acronym, logo_url, phone, email, postal_address, regional_direction, bulletin_signatures_enabled, settings_json")
       .eq("id", institutionId)
       .maybeSingle();
 
@@ -1731,6 +1732,13 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
       acronym: (instRow as any)?.acronym ?? null,
     };
     institutionSettingsJson = (instRow as any)?.settings_json || {};
+    specializedSchoolContacts = {
+      logoUrl: (instRow as any)?.logo_url || null,
+      phone: (instRow as any)?.phone || null,
+      email: (instRow as any)?.email || null,
+      address: (instRow as any)?.postal_address || null,
+      regionalDirection: (instRow as any)?.regional_direction || null,
+    };
 
     const col = (instRow as any)?.bulletin_signatures_enabled;
     if (typeof col === "boolean") bulletinSignaturesEnabled = col;
@@ -1743,7 +1751,8 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
   const specialized = await loadSpecializedBulletin({
     service: srvClient, institutionId, schoolClass: classRow,
     settingsJson: institutionSettingsJson, institutionName: institutionMeta.name || null,
-    institutionCode: institutionMeta.code_unique || null, searchParams, role: ctx.role,
+    institutionCode: institutionMeta.code_unique || null,
+    institutionContacts: specializedSchoolContacts, searchParams, role: ctx.role,
   });
   if (specialized) return specialized;
 

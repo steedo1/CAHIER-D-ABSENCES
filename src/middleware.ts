@@ -13,6 +13,7 @@ const PROTECTED_PREFIXES = [
   "/attendance",
   "/class",
   "/admin",
+  "/direction-enseignement",
   "/super",
   "/founder",
   "/parent",

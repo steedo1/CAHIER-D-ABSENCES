@@ -1,4 +1,5 @@
 import { getRequestRoles } from "@/lib/auth/server-context";
+import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import AdminShell from "./ui/shell"; // ⚠ casse correcte
 import FileCorrespondentShell from "./ui/file-correspondent-shell";
@@ -38,6 +39,8 @@ async function getPrimaryRole(): Promise<AppRole | null> {
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const primaryRole = await getPrimaryRole();
+  // Dedicated teaching directors never enter the historical administrative shell.
+  if (primaryRole === "teaching_director") redirect("/direction-enseignement");
   const navigationSettings = primaryRole === "admin" ? await getSchoolNavigationSettings() : null;
   const shell = <AdminShell initialRole={primaryRole}>{children}</AdminShell>;
 

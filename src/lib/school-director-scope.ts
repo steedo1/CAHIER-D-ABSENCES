@@ -73,3 +73,28 @@ export function mustDeferBilingualAdminProvisioning(
   return requestedRole === "admin" && settings.enabled &&
     settings.enabledCycles.some(cycle => settings.teachingTracksByCycle[cycle]?.includes("arabic"));
 }
+
+/**
+ * Pure, fail-closed principal resolution. No role mixing and no scope based on
+ * a URL parameter. The active appointment is the only program authority.
+ */
+export function resolveTeachingDirectorGrant(input: {
+  institutionId: string;
+  roles: Array<{ role: string; institution_id: string | null }>;
+  appointments: Array<{ institution_id: string; teaching_track: string; is_active: boolean }>;
+}): TeachingTrack | null {
+  const { institutionId, roles, appointments } = input;
+  // The school's directors already hold teacher accounts. Preserve that
+  // pre-existing teaching grant without allowing admin, finance or founder.
+  const roleSet = new Set(roles.map(row => row.role));
+  if (!institutionId || roleSet.size !== roles.length ||
+      !roleSet.has("teaching_director") ||
+      [...roleSet].some(role => role !== "teaching_director" && role !== "teacher") ||
+      roles.some(row => row.institution_id !== institutionId)) return null;
+  const active = appointments.filter(row => row.is_active && row.institution_id === institutionId);
+  if (appointments.some(row => row.is_active && row.institution_id !== institutionId)) return null;
+  if (active.length !== 1) return null;
+  return active[0].teaching_track === "french" || active[0].teaching_track === "arabic"
+    ? active[0].teaching_track : null;
+}
+
