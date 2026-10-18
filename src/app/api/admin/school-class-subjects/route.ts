@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
+import { requireTeachingDirector } from "@/lib/auth/teaching-director";
 import { inferSchoolCycleFromLevel, parseSchoolCyclesSettings, type SchoolCycle, type TeachingTrack } from "@/lib/school-cycles";
 import { isBilingualSchool, readStudentProgramSettings } from "@/lib/school-student-programs";
 import { SCHOOL_CLASS_SUBJECTS_KEY, readClassSubjects } from "@/lib/school-class-subjects";
@@ -18,21 +19,42 @@ type ClassItem = { id: string; label: string; level: string | null; cycle: Schoo
 async function scope() {
   const browser = await getSupabaseServerClient();
   const service = getSupabaseServiceClient();
-  const access = await requireInstitutionRole(browser, service, ["admin"]);
-  if ("error" in access) return { error: json({ error: access.error }, access.error === "unauthorized" ? 401 : 403) } as const;
+  const admin = await requireInstitutionRole(browser, service, ["admin"]);
+  let institutionId: string;
+  let restrictedTrack: TeachingTrack | null = null;
+  let restrictedCycles: SchoolCycle[] | null = null;
+  if ("error" in admin) {
+    const director = await requireTeachingDirector(browser, service);
+    if (!director.ok) return { error: json({ error: director.error },
+      director.status) } as const;
+    institutionId = director.principal.institutionId;
+    restrictedTrack = director.principal.teachingTrack;
+    restrictedCycles = director.principal.cycles;
+  } else {
+    institutionId = admin.instId;
+  }
   const { data: institution, error } = await service.from("institutions")
-    .select("settings_json").eq("id", access.instId).maybeSingle();
+    .select("settings_json").eq("id", institutionId).maybeSingle();
   if (error || !institution) return { error: json({ error: "school_unavailable" }, 503) } as const;
   const settings = parseSchoolCyclesSettings(institution.settings_json);
   if (!isBilingualSchool(settings)) return { error: json({ error: "not_bilingual_school" }, 404) } as const;
   const { data: active, error: yearError } = await service.from("academic_years")
-    .select("code").eq("institution_id", access.instId).eq("is_current", true)
+    .select("code").eq("institution_id", institutionId).eq("is_current", true)
     .order("start_date", { ascending: false }).limit(1).maybeSingle();
   if (yearError || !active?.code || !/^[0-9]{4}[-/_][0-9]{4}$/.test(active.code)) {
     return { error: json({ error: "active_year_required" }, 409) } as const;
   }
-  return { service, institutionId: access.instId,
+  return { service, institutionId, restrictedTrack, restrictedCycles,
     rawSettings: institution.settings_json, settings, year: String(active.code) } as const;
+}
+
+function isDirectorClassAllowed(
+  context: { restrictedTrack: TeachingTrack | null; restrictedCycles: SchoolCycle[] | null },
+  row: ClassItem,
+): boolean {
+  return !context.restrictedTrack ||
+    (row.track === context.restrictedTrack && !!row.cycle &&
+      context.restrictedCycles?.includes(row.cycle) === true);
 }
 
 async function loadClasses(context: Exclude<Awaited<ReturnType<typeof scope>>, { error: NextResponse }>) {
@@ -64,6 +86,7 @@ export async function GET(request: NextRequest) {
   if (classId && !UUID.test(classId)) return json({ error: "invalid_class" }, 400);
   const selected = classId ? loaded.classes.find(row => row.id === classId) : null;
   if (classId && !selected) return json({ error: "class_not_found" }, 404);
+  if (selected && !isDirectorClassAllowed(context, selected)) return json({ error: "foreign_teaching_track" }, 403);
   const stored = readClassSubjects(context.rawSettings);
   let subjects: Array<{ id: string; name: string }> = [];
   if (selected?.cycle && selected.track) {
@@ -85,7 +108,7 @@ export async function GET(request: NextRequest) {
   }
   return json({ ok: true, academicYear: context.year,
     revision: schoolSettingsRevision(context.rawSettings),
-    classes: loaded.classes, selectedClassId: selected?.id || null, subjects,
+    classes: loaded.classes.filter(row => isDirectorClassAllowed(context, row)), selectedClassId: selected?.id || null, subjects,
     selectedSubjectIds: selected ? stored?.years[context.year]?.classes[selected.id] || [] : [],
   });
 }
@@ -110,6 +133,7 @@ export async function PUT(request: NextRequest) {
   if ("error" in loaded) return json({ error: loaded.error }, 503);
   const selected = loaded.classes.find(row => row.id === classId);
   if (!selected) return json({ error: "class_not_found" }, 404);
+  if (!isDirectorClassAllowed(context, selected)) return json({ error: "foreign_teaching_track" }, 403);
   if (!selected.cycle || !selected.track) return json({ error: "class_teaching_requires_configuration" }, 409);
   const subjectIds = ids as string[];
   for (const id of subjectIds) {
