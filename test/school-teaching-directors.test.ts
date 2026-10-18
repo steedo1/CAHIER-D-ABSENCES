@@ -16,7 +16,10 @@ test("directors' French and Arabic roles are separate appointments across the en
 });
 
 test("mixed admin/teacher rights cannot be misrepresented as a scoped direction", () => {
-  for (const other of ["admin", "teacher", "finance_manager", "founder", "educator"]) {
+  assert.equal(resolveTeachingDirectorGrant({
+    institutionId, roles: [role, { ...role, role: "teacher" }], appointments: [a],
+  }), "arabic");
+  for (const other of ["admin", "finance_manager", "founder", "educator"]) {
     assert.equal(resolveTeachingDirectorGrant({
       institutionId,
       roles: [role, { ...role, role: other }],
