@@ -48,7 +48,7 @@ export async function loadSpecializedBulletin(input: {
   settingsJson: unknown; institutionName: string | null; institutionCode: string | null;
   searchParams: URLSearchParams; role: string;
   /** SERVER-ONLY callback into the identical historical bulletin route. */
-  loadHistoricalFrench: (period: { from: string; to: string; academicYear: string }) =>
+  loadHistoricalFrench: (period: { from: string; to: string; academicYear: string; verifiedLinkedStudentIds: string[] }) =>
     Promise<{ status: number; data: unknown }>;
 }): Promise<NextResponse | null> {
   const selected = resolvePedagogicalEngine(input.settingsJson, input.schoolClass);
@@ -191,7 +191,7 @@ export async function loadSpecializedBulletin(input: {
     let historicalFrenchPrograms = new Map<string, BulletinProgram>();
     if (useHistoricalFrench) {
       const history = await input.loadHistoricalFrench({ from: String(period.start_date),
-        to: String(period.end_date), academicYear: String(year) });
+        to: String(period.end_date), academicYear: String(year), verifiedLinkedStudentIds: links });
       if (history.status !== 200) return json({
         ok: false, error: "SECONDARY_FRENCH_HISTORICAL_ENGINE_UNAVAILABLE",
         historicalStatus: history.status,
