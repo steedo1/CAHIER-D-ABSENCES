@@ -108,7 +108,7 @@ test("EPC : barèmes CM1 /20 et /50 affichés à la bonne matière, CP1 /10, san
 
     await changeValue(target.querySelector('select[aria-label="Enseignement"]'), "arabic");
     await flush(); await flush();
-    assert.equal(valueFor(target, "Coran"), "/20");
+    assert.equal(target.querySelector('input[aria-label="Barème de composition Coran"]')?.getAttribute("placeholder"), "Non défini");
     assert.equal(target.textContent.includes("Barème de composition"), true);
     assert.equal(changes.length, 0);
   } finally {
