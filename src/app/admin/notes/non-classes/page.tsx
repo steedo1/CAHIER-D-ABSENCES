@@ -1,8 +1,7 @@
 // src/app/admin/notes/non-classes/page.tsx
 "use client";
 import SpecializedCorrespondentReports from "@/components/admin/SpecializedCorrespondentReports";
-import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
-import { isBilingualSchool } from "@/lib/school-student-programs";
+import { useBilingualCorrespondentMode } from "@/hooks/useBilingualCorrespondentMode";
 
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -340,8 +339,12 @@ function parseApiArray<T>(json: any): T[] {
 }
 
 export default function NonClassesPage() {
-  const navigation = useSchoolNavigation();
-  if (navigation && isBilingualSchool(navigation.settings)) {
+  const { isBilingual, loading, error } = useBilingualCorrespondentMode();
+  if (loading) return <p className="rounded-xl border p-5" role="status">Vérification du type d’établissement…</p>;
+  if (error) return <p className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-800" role="alert">
+    Le type de l’établissement n’a pas pu être vérifié : {error}
+  </p>;
+  if (isBilingual) {
     return <SpecializedCorrespondentReports mode="unclassified" />;
   }
   return <LegacyNonClassesPage />;
