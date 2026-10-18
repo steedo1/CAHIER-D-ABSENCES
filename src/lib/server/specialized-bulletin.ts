@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
+import { isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
 import { buildProgramBulletinDraft, type OfficialEvaluationScore } from "@/lib/franco-arabic-bulletin-calculation";
 import { normalizePedagogicalLevel, resolveEvaluationTeachingTrack, resolvePedagogicalEngine, resolveProgramCoefficients, type InstitutionCoefficient } from "@/lib/pedagogical-engine";
 import type { BulletinDocument, BulletinProgram } from "@/components/bulletins/FrancoArabicBulletin";
@@ -22,7 +23,7 @@ export type SpecializedBulletinPayload = {
 type SchoolClass = { id: string; institution_id?: string | null; level?: string | null; label?: string | null; academic_year?: string | null; education_type?: string | null; formation_code?: string | null };
 type Student = { id: string; institution_id: string; full_name: string | null; first_name: string | null; last_name: string | null; matricule: string | null; birthdate: string | null };
 type PublishedScore = { id: string; student_id: string; evaluation_id: string; subject_id: string | null; score: number | null; scale: number; coeff: number; publication_version: number };
-type Evaluation = { id: string; subject_id: string | null; is_published: boolean; publication_status: string | null; publication_version: number | null; grading_period_id: string | null };
+type Evaluation = { id: string; subject_id: string | null; eval_kind: string; title: string | null; is_published: boolean; publication_status: string | null; publication_version: number | null; grading_period_id: string | null };
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
 
@@ -93,7 +94,7 @@ export async function loadSpecializedBulletin(input: {
           return query.order("id").range(from, to);
         }),
       pages<Evaluation>((from, to) => service.from("grade_evaluations")
-        .select("id,subject_id,is_published,publication_status,publication_version,grading_period_id")
+        .select("id,subject_id,eval_kind,title,is_published,publication_status,publication_version,grading_period_id")
         .eq("class_id", schoolClass.id).gte("eval_date", period.start_date).lte("eval_date", period.end_date).order("id").range(from, to)),
       pages<PublishedScore>((from, to) => service.from("grade_published_scores")
         .select("id,student_id,evaluation_id,subject_id,score,scale,coeff,publication_version")
@@ -159,6 +160,11 @@ export async function loadSpecializedBulletin(input: {
       const evaluation = evaluationById.get(row.evaluation_id);
       if (!evaluation || !evaluation.is_published || (evaluation.publication_status && evaluation.publication_status !== "published")) continue;
       if (evaluation.grading_period_id && evaluation.grading_period_id !== period.id) continue;
+      // Primaire: seules les COMPOSITIONS explicitement identifiées et liées
+      // à CETTE période entrent au bulletin; les devoirs restent consultables.
+      // Les anciennes interrogations sans marqueur ne deviennent jamais des compositions.
+      if (cycle === "primary" &&
+          (evaluation.grading_period_id !== period.id || !isPrimaryComposition(evaluation))) continue;
       if (evaluation.subject_id !== row.subject_id || row.publication_version !== evaluation.publication_version) {
         publicationProblems.push("official_publication_version_mismatch"); continue;
       }
