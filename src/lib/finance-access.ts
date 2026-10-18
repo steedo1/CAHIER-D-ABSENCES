@@ -1,5 +1,7 @@
 // src/lib/finance-access.ts
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
+import { isBilingualGeneralDirectorFinanceEligible } from "@/lib/bilingual-general-director-finance";
 
 export type FinanceAccessScope = "full" | "payroll" | "any";
 
@@ -154,14 +156,10 @@ export async function getFinanceAccessForCurrentUser(
     );
   });
 
-  const hasFinanceRole =
-    requiredScope === "payroll"
-      ? hasPayrollFinanceRole
-      : requiredScope === "any"
-        ? hasFullFinanceRole || hasPayrollFinanceRole
-        : hasFullFinanceRole;
-
-  if (!hasFinanceRole) {
+  // Ordinary school administrators remain payroll-only. Do not reject an
+  // authenticated school admin yet: a bilingual general director is eligible
+  // for school-wide finance after we verify this institution's configuration.
+  if (!hasPayrollFinanceRole) {
     return {
       ok: false,
       reason: "role_not_allowed",
@@ -177,11 +175,9 @@ export async function getFinanceAccessForCurrentUser(
     );
   });
 
-  const resolvedScope = hasFullFinanceRole ? "full" : "payroll";
-
   const { data: institution, error: institutionErr } = await supabase
     .from("institutions")
-    .select("subscription_expires_at")
+    .select("subscription_expires_at,settings_json")
     .eq("id", institutionId)
     .maybeSingle();
 
@@ -191,9 +187,32 @@ export async function getFinanceAccessForCurrentUser(
 
   const expiresAt = institution?.subscription_expires_at ?? null;
 
-  // Le rôle admin établissement ne reçoit pas la gestion financière complète.
-  // Il garde seulement la paie des enseignants, sans être redirigé vers tout le module Finance.
-  if (requiredScope === "payroll" && !hasFullFinanceRole) {
+  const hasBilingualGeneralDirectorGrant = financeRoles.some((row: any) =>
+    String(row.role || "") === "admin" &&
+    roleMatchesInstitution("admin", row.institution_id, institutionId)
+  ) && !!institution && isBilingualGeneralDirectorFinanceEligible(
+    "admin", parseSchoolCyclesSettings(institution.settings_json),
+  );
+  const canAccessFullFinance = hasFullFinanceRole || hasBilingualGeneralDirectorGrant;
+  const hasRequestedAccess =
+    requiredScope === "payroll" ? hasPayrollFinanceRole :
+      requiredScope === "any" ? hasPayrollFinanceRole || canAccessFullFinance :
+        canAccessFullFinance;
+
+  if (!hasRequestedAccess) {
+    return {
+      ok: false,
+      reason: "role_not_allowed",
+      institutionId,
+    };
+  }
+
+  const resolvedScope = canAccessFullFinance ? "full" : "payroll";
+
+  // Admins des établissements ordinaires : paie seulement.
+  // Le DG franco-arabe conserve l'accès complet, soumis aux contrôles
+  // Finance Premium et validité d'abonnement ci-dessous.
+  if (requiredScope === "payroll" && !canAccessFullFinance) {
     return {
       ok: true,
       scope: "payroll",
