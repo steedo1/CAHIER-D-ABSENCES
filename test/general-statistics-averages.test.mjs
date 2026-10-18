@@ -133,23 +133,30 @@ test("period lookups are grouped by education context and retain class applicabi
   assert.deepEqual(loaded.find((p) => p.id === "semester").class_ids, ["primary"]);
 });
 
-function routeFixture({ role = "file_correspondent", institution = "school", failPeriods = false, authenticated = true, bilingual = false } = {}) {
+function routeFixture({ role = "file_correspondent", institution = "school", failPeriods = false, authenticated = true, bilingual = false, linked = false } = {}) {
   let periodReads = 0;
   const classId = bilingual ? "11111111-1111-4111-8111-111111111111" : "class-a";
   const studentId = bilingual ? "22222222-2222-4222-8222-222222222222" : "student";
+  const linkedId = "33333333-3333-4333-8333-333333333333";
   const settings = bilingual ? {
     school_cycles_v1: { version: 1, enabled: true, enabledCycles: ["primary"],
-      classCycleById: { [classId]: "primary" },
+      classCycleById: linked ? { [classId]: "primary", [linkedId]: "primary" } : { [classId]: "primary" },
       teachingTracksByCycle: { primary: ["french", "arabic"] },
       subjectTracksByCycle: {}, defaultView: "all", preferredLanguage: "fr" },
     school_student_programs_v1: { version: 1, years: {
-      "2026-2027": { classes: { [classId]: { tracks: ["french", "arabic"], students: {} } } },
+      "2026-2027": { classes: {
+        [classId]: { tracks: linked ? ["french"] : ["french", "arabic"], students: {} },
+        ...(linked ? { [linkedId]: { tracks: ["arabic"], students: {}, linkedStudentIds: [studentId] } } : {}),
+      } },
     } },
   } : {};
   const tables = {
     profiles: [{ id: "actor", institution_id: "school" }], user_roles: [{ profile_id: "actor", role, institution_id: institution }],
     institutions: [{ id: "school", settings_json: settings }],
-    classes: [{ id: classId, level: bilingual ? "CP1" : "6e", institution_id: "school", academic_year: "2026-2027" }],
+    classes: [
+      { id: classId, level: bilingual ? "CP1" : "6e", institution_id: "school", academic_year: "2026-2027" },
+      ...(linked ? [{ id: linkedId, level: "CP1", institution_id: "school", academic_year: "2026-2027" }] : []),
+    ],
     academic_years: [{ institution_id: "school", code: "2026-2027", is_current: true }], student_year_profiles: [],
     class_enrollments: [{ institution_id: "school", student_id: studentId, class_id: classId, end_date: null,
       students: { id: studentId, full_name: "ÉLÈVE TEST" },
@@ -170,13 +177,13 @@ function routeFixture({ role = "file_correspondent", institution = "school", fai
     "@/lib/supabase-server": { getSupabaseServerClient: async () => session },
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => service },
     "@/lib/server/general-statistics-periods": { loadStatisticsGradePeriods: async (_srv, inst, year, classes) => {
-      assert.equal(inst, "school"); assert.equal(year, "2026-2027"); assert.deepEqual(classes.map((c) => c.id), [classId]);
+      assert.equal(inst, "school"); assert.equal(year, "2026-2027"); assert.deepEqual(classes.map((c) => c.id).sort(), (linked ? [classId, linkedId] : [classId]).sort());
       periodReads++; if (failPeriods) throw new Error("unavailable"); return periods;
     } },
     "@/lib/school-cycles": schoolCycles,
     "@/lib/school-student-programs": studentPrograms,
   });
-  return { get: route.GET, periodReads: () => periodReads };
+  return { get: route.GET, periodReads: () => periodReads, classId, linkedId };
 }
 test("the real statistics route authorizes academic metadata for its own file correspondent", async () => {
   const fixture = routeFixture(), response = await fixture.get(), body = await response.json();
@@ -282,4 +289,15 @@ test("the statistics UI exposes cycle and teaching selectors and carries them in
   assert.match(view, /specialSchool && track === "all"/);
   assert.match(view, /student\.school_cycle !== "preschool"/);
   assert.match(view, /\$\{subject\.track \|\| "classic"\}\|\$\{subject\.id\}/);
+});
+
+test("linked Arabic class contributes its own periods without double enrolling or counting the student", async () => {
+  const { get, classId, linkedId } = routeFixture({ bilingual: true, linked: true });
+  const response = await get(), body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.items.length, 1);
+  assert.equal(body.items[0].class_id, classId);
+  assert.equal(body.items[0].program_class_ids.french, classId);
+  assert.equal(body.items[0].program_class_ids.arabic, linkedId);
+  assert.deepEqual(body.items[0].teaching_tracks.sort(), ["arabic", "french"]);
 });
