@@ -101,7 +101,7 @@ export default function PreschoolBookletPage() {
   useEffect(() => { void load("", "", ""); }, [load]);
   useEffect(() => {
     // Do not issue database requests on every keystroke in the academic-year field.
-    if (!/^\\d{4}-\\d{4}$/.test(year) || classId) return;
+    if (!/^\d{4}-\d{4}$/.test(year) || classId) return;
     const handle = window.setTimeout(() => { void load(year, "", ""); }, 400);
     return () => window.clearTimeout(handle);
   }, [year, classId, load]);
