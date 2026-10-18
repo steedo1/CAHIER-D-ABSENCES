@@ -1,6 +1,8 @@
 // src/app/api/teacher/grades/evaluations/[id]/publish/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requiresDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,7 +43,7 @@ export async function PATCH(
     // Vérifier accès/présence de l'évaluation (RLS)
     const { data: row, error: qErr } = await supabase
       .from("grade_evaluations")
-      .select("id, is_published")
+      .select("id, is_published, class_id")
       .eq("id", cleanId)
       .single();
 
@@ -52,6 +54,16 @@ export async function PATCH(
         qErr.message || "EVALUATION_NOT_FOUND_OR_FORBIDDEN",
         (qErr as any).code === "PGRST116" ? 404 : 403
       );
+    }
+
+    // Specialized schools MUST use the canonical official snapshot + push
+    // publication workflow. This historical toggle bypasses that workflow.
+    const service = getSupabaseServiceClient();
+    const { data: schoolClass, error: classError } = await service.from("classes")
+      .select("institution_id").eq("id", row.class_id).maybeSingle();
+    if (classError || !schoolClass?.institution_id) return bad("SCHOOL_SCOPE_UNAVAILABLE", 503);
+    if (await requiresDirectGradePublication(service, schoolClass.institution_id)) {
+      return bad("USE_OFFICIAL_DIRECT_PUBLICATION_WORKFLOW", 409);
     }
 
     // Update (idempotent)
