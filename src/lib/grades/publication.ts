@@ -1,6 +1,7 @@
 // src/lib/grades/publication.ts
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { queueGradeNotificationsForEvaluation } from "@/lib/push/grades";
+import { effectiveGradePublicationSwitches, requiresDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
 
 export type GradePublicationStatus =
   | "draft"
@@ -129,6 +130,13 @@ export async function getGradePublicationSettings(
 
   if (!institutionId) return fallback;
 
+  // Determine this from the trusted school row, not from a writable
+  // administrator setting. Preserve the original configuration for classic schools.
+  const directTeacherPublication = await requiresDirectGradePublication(srv, institutionId);
+  const directSettings: GradePublicationSettings = {
+    ...fallback, ...effectiveGradePublicationSwitches(true, fallback),
+  };
+
   const { data, error } = await srv
     .from("institution_grade_publication_settings")
     .select(
@@ -138,13 +146,16 @@ export async function getGradePublicationSettings(
     .maybeSingle();
 
   if (error || !data) {
-    return fallback;
+    return directTeacherPublication ? directSettings : fallback;
   }
 
-  return {
-    institution_id: institutionId,
+  const switches = effectiveGradePublicationSwitches(directTeacherPublication, {
     require_admin_validation: data.require_admin_validation === true,
     auto_push_on_publish: data.auto_push_on_publish !== false,
+  });
+  return {
+    institution_id: institutionId,
+    ...switches,
     sms_digest_mode: cleanSmsDigestMode(data.sms_digest_mode),
   };
 }
