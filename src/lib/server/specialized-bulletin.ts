@@ -22,6 +22,8 @@ import { adaptHistoricalFrenchSecondaryBulletins, type HistoricalSecondaryFrench
 export type SpecializedBulletinPayload = {
   engine: "specialized"; cycle: SchoolCycle; format: "separate" | "combined" | "both";
   coefficientSource: "institution" | "program"; programs: TeachingTrack[];
+  /** Shared once: an inline school logo can be several hundred kilobytes. */
+  school?: BulletinSchool;
   documents: Array<{ studentId: string; document: BulletinDocument; ready: boolean;
     programReadiness: Partial<Record<TeachingTrack, boolean>>; problems: string[] }>;
 };
@@ -287,7 +289,7 @@ export async function loadSpecializedBulletin(input: {
     }
     const documents: SpecializedBulletinPayload["documents"] = results.map(({ student, drafts }) => {
       const document: BulletinDocument = {
-        school: { ...input.schoolDetails, name: input.institutionName || "", code: input.institutionCode, isFrancoArabic: isBilingualSchool(school),
+        school: { name: input.institutionName || "", code: input.institutionCode, isFrancoArabic: isBilingualSchool(school),
           generalDirectorName: input.institutionHeadName, generalDirectorTitle: input.institutionHeadTitle },
         student: { id: student.id, firstName: student.first_name || "", lastName: student.last_name || student.full_name || "",
           matricule: student.matricule, birthDate: student.birthdate, birthPlace: student.birth_place,
@@ -336,7 +338,10 @@ export async function loadSpecializedBulletin(input: {
     return json({ ok: true, class: { ...schoolClass, label: schoolClass.label || level, head_teacher: historicalHeadTeacher },
       period: { from: period.start_date, to: period.end_date, label: period.label, academic_year: year },
       subjects: [], items: [], specialized: { engine: "specialized", cycle, format: selectedBulletinFormat(reports, cycle),
-        coefficientSource: reports.coefficientSource === "program" ? "program" : "institution", programs, documents },
+        coefficientSource: reports.coefficientSource === "program" ? "program" : "institution", programs, documents,
+        school: { ...input.schoolDetails, name: input.institutionName || "", code: input.institutionCode,
+          isFrancoArabic: isBilingualSchool(school), generalDirectorName: input.institutionHeadName,
+          generalDirectorTitle: input.institutionHeadTitle } },
     });
   } catch (error) {
     return json({ ok: false, error: error instanceof Error ? error.message : "SPECIALIZED_DATA_UNAVAILABLE" }, 503);

@@ -51,7 +51,7 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
     </div>}
     <div className="specialized-print-denied" role="status">Impression indisponible : les bulletins sélectionnés sont incomplets ou non validés. Vérifiez la configuration et les notes publiées dans Mon Cahier.</div>
     <div className={`fa-report-print-root specialized-print-root ${!printable || printPreparing || error ? "specialized-print-blocked" : ""} space-y-6 overflow-x-auto print:overflow-visible`}>
-      {data.documents.map(row => <FrancoArabicBulletin key={row.studentId} model={{ ...row.document,
+      {data.documents.map(row => <FrancoArabicBulletin key={row.studentId} model={{ ...row.document, school: { ...row.document.school, ...data.school },
         draft: !isSpecializedBulletinPrintable(row.document, row.programReadiness, selected) }} variant={selected} printRoot={false} />)}
     </div>
   </section>;

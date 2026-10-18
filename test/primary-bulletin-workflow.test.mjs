@@ -119,10 +119,11 @@ test("Arabic subject barèmes feed the real bulletin, ignore blanks, preserve ze
   assert.equal(report.document.arabic.teacherName, "Maître arabe");
   assert.equal(report.document.student.birthPlace, "Dimbokro");
   assert.match(report.document.student.photoUrl, /^\/api\/media\/student-photo\/student-0/);
-  assert.equal(report.document.school.logoUrl, db.tables.institutions[0].logo_url);
-  assert.equal(report.document.school.phone, "0700000000");
-  const Component = load("src/components/bulletins/FrancoArabicBulletin.tsx").default;
-  const html = renderToStaticMarkup(React.createElement(Component, { model: report.document, variant: "arabic" }));
+  assert.equal(body.specialized.school.logoUrl, db.tables.institutions[0].logo_url);
+  assert.equal(body.specialized.school.phone, "0700000000");
+  assert.equal(report.document.school.logoUrl, undefined, "the large logo is not repeated per pupil");
+  const Component = load("src/components/bulletins/SpecializedBulletinPanel.tsx").default;
+  const html = renderToStaticMarkup(React.createElement(Component, { data: body.specialized, onBack() {}, onPrint: async () => {} }));
   assert.match(html, /Logo de l’établissement/); assert.match(html, /DRENA Dimbokro/);
   assert.match(html, /0700000000/); assert.match(html, /Maître arabe/); assert.match(html, /0,00\/20/);
   assert.match(html, /25,00\/70/); assert.doesNotMatch(html, /Coef\./);
