@@ -4605,7 +4605,7 @@ export async function GET(req: NextRequest) {
   // This official DESPS schema is for the historical programme. Until the
   // Franco-Arabic authority validates per-teaching columns and annual rules,
   // never export a misleading mixed French/Arabic official workbook.
-  if (exportKind !== "legacy" && isBilingualSchool(parseSchoolCyclesSettings(institution?.settings_json))) {
+  if (isBilingualSchool(parseSchoolCyclesSettings(institution.settings_json))) {
     return NextResponse.json({
       ok: false,
       error: "DESPS_FRANCO_ARABIC_MODEL_NOT_VALIDATED",
