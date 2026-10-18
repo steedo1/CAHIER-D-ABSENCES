@@ -12,6 +12,7 @@ import {
 import { resolveClassDeviceClassIds } from "@/lib/class-device-identity";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, type SchoolCycle, type TeachingTrack } from "@/lib/school-cycles";
 import { readStudentProgramSettings } from "@/lib/school-student-programs";
+import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +32,7 @@ type TeachClass = {
   formation_level_code: string | null;
   school_cycle: SchoolCycle | null;
   teaching_track: TeachingTrack | null;
+  configured_scale: number | null;
 };
 
 
@@ -79,6 +81,7 @@ function classContext(
   year: string,
   school: ReturnType<typeof parseSchoolCyclesSettings>,
   programs: ReturnType<typeof readStudentProgramSettings>,
+  reports: ReturnType<typeof parseFrancoArabicReportsSettings>,
 ): Pick<
   TeachClass,
   | "education_type"
@@ -88,6 +91,7 @@ function classContext(
   | "formation_level_code"
   | "school_cycle"
   | "teaching_track"
+  | "configured_scale"
 > {
   const educationType: EducationType = isEducationType(cls?.education_type)
     ? cls.education_type
@@ -102,6 +106,7 @@ function classContext(
     education_label: educationLabel(educationType),
     school_cycle: cycle,
     teaching_track: track,
+    configured_scale: cycle && track ? getConfiguredScoringScale(reports, cycle, String(cls?.level || ""), track) : null,
     formation_code: formationCode,
     formation_label: formationCode
       ? formationLabels.get(formationCode) || formationCode
@@ -160,6 +165,7 @@ export async function GET(_req: NextRequest) {
     const formationLabels = institutionContext.map;
     const school = parseSchoolCyclesSettings(institutionContext.settings);
     const programs = readStudentProgramSettings(institutionContext.settings);
+    const reports = parseFrancoArabicReportsSettings(institutionContext.settings);
 
     const items: TeachClass[] = [];
     const seen = new Set<string>();
@@ -236,7 +242,7 @@ export async function GET(_req: NextRequest) {
             level: String(cls.level ?? "—"),
             subject_id: row.subject_id || null,
             subject_name: null,
-            ...classContext(cls, formationLabels, String(row.class_id), String(cls.academic_year || ""), school, programs),
+            ...classContext(cls, formationLabels, String(row.class_id), String(cls.academic_year || ""), school, programs, reports),
           });
         });
       }
@@ -292,7 +298,7 @@ export async function GET(_req: NextRequest) {
               level: String(cls.level ?? "—"),
               subject_id: row.subject_id || null,
               subject_name: null,
-              ...classContext(cls, formationLabels, String(row.class_id), String(cls.academic_year || ""), school, programs),
+              ...classContext(cls, formationLabels, String(row.class_id), String(cls.academic_year || ""), school, programs, reports),
             });
           });
         }
