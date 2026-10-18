@@ -271,3 +271,15 @@ test("separate programme periods never get grouped merely by their general_secon
   assert.deepEqual(entries.find((p) => p.id === "french-period").class_ids, [french]);
   assert.deepEqual(entries.find((p) => p.id === "arabic-period").class_ids, [arabic]);
 });
+
+test("the statistics UI exposes cycle and teaching selectors and carries them into PDF", () => {
+  const view = readFileSync(new URL("../src/app/admin/finance/statistiques-generales/page.tsx", import.meta.url), "utf8");
+  assert.match(view, /label="Cycle" value=\{cycle\}/);
+  assert.match(view, /label="Enseignement" value=\{track\}/);
+  assert.match(view, /program_class_ids\?\.\[track\]/);
+  assert.match(view, /TRACK_LABELS\[track\]/);
+  assert.match(view, /Cycle : \{cycle === "all"/);
+  assert.match(view, /specialSchool && track === "all"/);
+  assert.match(view, /student\.school_cycle !== "preschool"/);
+  assert.match(view, /\$\{subject\.track \|\| "classic"\}\|\$\{subject\.id\}/);
+});
