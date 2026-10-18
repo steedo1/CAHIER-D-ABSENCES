@@ -53,6 +53,12 @@ export default async function TeachingDirectionHome() {
       <div className="rounded-xl border bg-white p-4"><p className="text-sm text-slate-500">Cycles supervisés</p>
         <p className="text-3xl font-bold">{cycles.length}</p></div>
     </div>
+    <nav className="rounded-xl border bg-white p-4">
+      <a href="/direction-enseignement/bulletins"
+        className="inline-flex rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white">
+        Consulter et imprimer les bulletins de mon enseignement
+      </a>
+    </nav>
     {workspace.year && <SchoolGradingPeriodsEditor
       academicYear={workspace.year}
       allowedPrograms={cycles.map(cycle => ({ cycle, track: teachingTrack }))}
