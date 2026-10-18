@@ -50,8 +50,12 @@ export async function loadSpecializedBulletin(input: {
   if (selected.engine === "invalid") return json({ ok: false, error: "SPECIALIZED_CONFIGURATION_INVALID",
     message: "La configuration des bulletins spécialisés contient des valeurs contradictoires ou invalides. Vérifiez les niveaux, barèmes et coefficients avant l’édition." }, 409);
   if (input.schoolClass.institution_id !== input.institutionId) return json({ ok: false, error: "CLASS_FORBIDDEN" }, 403);
-  // Restricted directors are not provisioned until every grade route is scoped.
-  if (input.role !== "admin") return json({ ok: false, error: "FORBIDDEN" }, 403);
+  // Le Correspondant Fichier consulte/imprime les bulletins de son établissement.
+  // Il ne reçoit aucun accès aux mutations de notes ou aux paramètres de publication.
+  // Les autres profils demeurent exclus de ce moteur spécialisé.
+  if (input.role !== "admin" && input.role !== "file_correspondent") {
+    return json({ ok: false, error: "FORBIDDEN" }, 403);
+  }
   const { cycle, school, reports } = selected;
   if (cycle === "preschool") return json({ ok: false, error: "PRESCHOOL_QUALITATIVE_STORAGE_REQUIRED",
     message: "Le livret de compétences nécessite un catalogue et des observations validés. Aucun calcul de moyenne n’est appliqué au préscolaire." }, 409);

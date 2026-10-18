@@ -14,6 +14,9 @@ import { Printer, RefreshCw, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import SpecializedBulletinPanel from "@/components/bulletins/SpecializedBulletinPanel";
+import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
+import { useAdminRole } from "@/app/admin/ui/admin-role-context";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import OfflineSyncBar from "@/components/OfflineSyncBar";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
@@ -320,6 +323,7 @@ type BulletinResponse = {
   subject_groups: BulletinGroup[];
   subject_components?: BulletinSubjectComponent[];
   items: BulletinItemBase[];
+  specialized?: SpecializedBulletinPayload;
   official_snapshot_locked?: boolean;
   official_total_students?: number | null;
   official_stats_snapshot?: ClassStats | null;
@@ -2680,6 +2684,8 @@ function StudentBulletinCard({
 
 function BulletinsPageContent() {
   const { isOnline } = useOnlineStatus();
+  const adminRole = useAdminRole();
+  const canConfigureBulletins = adminRole === "admin" || adminRole === "super_admin";
   const searchParams = useSearchParams();
   const duplicateIssueId = String(searchParams.get("duplicata") || "").trim();
   const liveDuplicateMode = searchParams.get("duplicata_live") === "1";
@@ -3264,6 +3270,10 @@ function BulletinsPageContent() {
 
     return arr;
   }, [enriched, liveDuplicateMode, liveDuplicateStudentId]);
+
+  const specializedBulletins = bulletinRaw?.specialized?.engine === "specialized"
+    ? bulletinRaw.specialized
+    : null;
 
   const stats = enriched?.stats ?? { highest: null, lowest: null, classAvg: null };
   const classInfo = enriched?.response.class;
@@ -3998,6 +4008,21 @@ function BulletinsPageContent() {
       `}</style>
 
       {previewOpen &&
+      specializedBulletins &&
+      typeof document !== "undefined" ? (
+        createPortal(
+          <div className="bulletin-print-portal preview-overlay fixed inset-0 z-[60] overflow-y-auto bg-slate-200 p-2 md:p-6">
+            <SpecializedBulletinPanel
+              key={`${selectedClassId}:${selectedPeriodId}:${dateFrom}:${dateTo}`}
+              data={specializedBulletins}
+              onBack={() => setPreviewOpen(false)}
+              onPrint={async () => { window.print(); }}
+              error={errorMsg}
+            />
+          </div>,
+          document.body,
+        )
+      ) : previewOpen &&
       items.length > 0 &&
       enriched &&
       classInfo &&
@@ -4075,7 +4100,7 @@ function BulletinsPageContent() {
               <p className="text-sm text-slate-500">
                 Charger une classe + période, puis ouvrir l’aperçu A4.
               </p>
-              {institution?.settings_json?.school_cycles_v1?.enabled === true && (
+              {canConfigureBulletins && institution?.settings_json?.school_cycles_v1?.enabled === true && (
                 <Link href="/admin/parametres?tab=bulletin-models"
                   className="mt-2 inline-flex rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-100">
                   Modèles et paramètres des bulletins
@@ -4087,7 +4112,7 @@ function BulletinsPageContent() {
             </div>
 
             <div className="flex flex-col items-stretch gap-2 sm:items-end">
-              <div className="flex items-center justify-end gap-2">
+              {canConfigureBulletins && <div className="flex items-center justify-end gap-2">
                 <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">
                   <span className="font-semibold">
                     Signatures enseignants numérisées :{" "}
@@ -4117,7 +4142,7 @@ function BulletinsPageContent() {
                     ? "Désactiver"
                     : "Activer"}
                 </Button>
-              </div>
+              </div>}
 
               <div className="flex justify-end gap-2">
                 <Button
@@ -4133,11 +4158,11 @@ function BulletinsPageContent() {
                 <Button
                   type="button"
                   onClick={() => {
-                    if (isOnline && bulletinRaw?.items.some((item) => item.qr_token && !item.qr_code)) {
+                    if (isOnline && !specializedBulletins && bulletinRaw?.items.some((item) => item.qr_token && !item.qr_code)) {
                       void handleLoadBulletin();
                     } else setPreviewOpen(true);
                   }}
-                  disabled={!items.length || bulletinLoading}
+                  disabled={(!items.length && !specializedBulletins) || bulletinLoading}
                 >
                   <Printer className="h-4 w-4" />
                   Aperçu / Imprimer
@@ -4258,7 +4283,7 @@ function BulletinsPageContent() {
             </div>
           )}
 
-          {!items.length && !bulletinLoading && (
+          {!items.length && !specializedBulletins && !bulletinLoading && (
             <div className="rounded-xl border border-slate-200 bg-white px-3 py-4 text-sm text-slate-600 print:hidden">
               Aucun bulletin à afficher. Choisissez une classe, une période puis
               cliquez sur <span className="font-semibold">Recharger</span>.

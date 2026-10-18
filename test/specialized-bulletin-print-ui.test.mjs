@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -51,4 +52,15 @@ test("print button and Ctrl+P refresh through the existing action only for compl
       if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
     }
   }
+});
+
+test("existing Correspondant bulletin screen routes specialized data to its real A4 panel", () => {
+  const page = readFileSync(new URL("../src/app/admin/bulletins/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /bulletinRaw\?\.specialized\?\.engine === "specialized"/);
+  assert.match(page, /previewOpen &&\s*specializedBulletins &&\s*typeof document !== "undefined"/);
+  assert.match(page, /<SpecializedBulletinPanel[\s\S]*?data=\{specializedBulletins\}/);
+  assert.match(page, /onPrint=\{async \(\) => \{ window\.print\(\); \}\}/);
+  assert.match(page, /disabled=\{\(!items\.length && !specializedBulletins\) \|\| bulletinLoading\}/);
+  assert.match(page, /!items\.length && !specializedBulletins && !bulletinLoading/);
+  assert.match(page, /canConfigureBulletins && <div className="flex items-center justify-end gap-2">/);
 });
