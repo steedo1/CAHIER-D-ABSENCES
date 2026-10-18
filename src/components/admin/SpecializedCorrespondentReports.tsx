@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { TeachingTrack } from "@/lib/school-cycles";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
+import "./SpecializedCorrespondentReports.print.css";
 
 type Mode = "council" | "term" | "annual" | "balance" | "unclassified";
 type SchoolClass = { id: string; label: string; level?: string | null; academic_year: string };
