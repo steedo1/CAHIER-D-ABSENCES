@@ -116,6 +116,9 @@ type TeachClass = {
   formation_code?: string | null;
   formation_label?: string | null;
   formation_level_code?: string | null;
+  /** Supplied by the server only for schools opting into multi-cycle education. */
+  school_cycle?: "preschool" | "primary" | "secondary" | null;
+  teaching_track?: "french" | "arabic" | null;
 };
 
 type RosterItem = { id: string; full_name: string; matricule: string | null };
@@ -498,8 +501,12 @@ export default function TeacherNotesPage() {
         label: `${tc.class_label}${
           tc.subject_name ? ` — ${tc.subject_name}` : ""
         }`,
-        group:
-          tc.education_type === "general_secondary" || !tc.education_type
+        group: tc.school_cycle
+          ? `${tc.school_cycle === "primary" ? "Primaire" : tc.school_cycle === "preschool" ? "Préscolaire" : "Secondaire"} — ${
+              tc.teaching_track === "arabic" ? "Enseignement arabe" :
+              tc.teaching_track === "french" ? "Enseignement français" : "Enseignement à préciser"
+            }`
+          : tc.education_type === "general_secondary" || !tc.education_type
             ? "Secondaire général"
             : `${tc.education_label || "Autre enseignement"}${
                 tc.formation_label ? ` — ${tc.formation_label}` : ""
@@ -522,6 +529,16 @@ export default function TeacherNotesPage() {
     () => classOptions.find((o) => o.key === selKey)?.value || null,
     [classOptions, selKey]
   );
+  const isSchoolProgram = Boolean(selected?.school_cycle);
+  const isPrimaryProgram = selected?.school_cycle === "primary";
+  const isPreschoolProgram = selected?.school_cycle === "preschool";
+  const teachingLabel = selected?.teaching_track === "arabic"
+    ? "Enseignement arabe" : selected?.teaching_track === "french"
+      ? "Enseignement français" : "Enseignement non précisé";
+  const cycleLabel = selected?.school_cycle === "primary"
+    ? "Primaire" : selected?.school_cycle === "preschool"
+      ? "Préscolaire" : "Secondaire";
+
 
   const [gradePeriods, setGradePeriods] = useState<GradePeriod[]>([]);
   const [loadingPeriods, setLoadingPeriods] = useState(false);
@@ -1220,7 +1237,9 @@ export default function TeacherNotesPage() {
         eval_date: newDate,
         eval_kind: newType,
         scale: newScale,
-        coeff: newCoeff,
+        // The subject coefficient is configured by the school. In primary
+        // classes, evaluations have equal weight, not a teacher-picked coefficient.
+        coeff: isPrimaryProgram ? 1 : newCoeff,
       };
       const r = await fetch("/api/teacher/grades/evaluations", {
         method: "POST",
@@ -2348,11 +2367,12 @@ export default function TeacherNotesPage() {
                 : ""}
             </p>
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
-              Cahier de notes — Espace enseignant
+              {isSchoolProgram ? `Cahier de notes — ${cycleLabel}` : "Cahier de notes — Espace enseignant"}
             </h1>
             <p className="text-xs md:text-sm text-indigo-100/85">
-              Créez vos évaluations et saisissez les notes en quelques gestes,
-              sur ordinateur comme sur mobile.
+              {isSchoolProgram
+                ? `${teachingLabel} • ${selected?.class_label || "Classe"} — Évaluations et notes de votre enseignement.`
+                : "Créez vos évaluations et saisissez les notes en quelques gestes, sur ordinateur comme sur mobile."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -2409,7 +2429,9 @@ export default function TeacherNotesPage() {
               ))}
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
-              Seules vos classes affectées apparaissent, regroupées par enseignement et formation.
+              {isSchoolProgram
+                ? "Vos classes et disciplines sont regroupées par cycle et par enseignement."
+                : "Seules vos classes affectées apparaissent, regroupées par enseignement et formation."}
             </div>
           </div>
 
@@ -2469,9 +2491,9 @@ export default function TeacherNotesPage() {
                   aria-label="Type d’évaluation"
                   disabled={selectedPeriodClosed}
                 >
-                  <option value="devoir">Devoir</option>
-                  <option value="interro_ecrite">Interrogation écrite</option>
-                  <option value="interro_orale">Interrogation orale</option>
+                  <option value="devoir">{isPrimaryProgram ? "Évaluation écrite" : "Devoir"}</option>
+                  <option value="interro_ecrite">{isPrimaryProgram ? "Exercice écrit" : "Interrogation écrite"}</option>
+                  <option value="interro_orale">{isPrimaryProgram ? "Évaluation orale" : "Interrogation orale"}</option>
                 </Select>
               </div>
 
@@ -2516,25 +2538,32 @@ export default function TeacherNotesPage() {
                   ))}
                 </Select>
               </div>
-              <div className="col-span-2 md:col-span-2">
-                <Select
-                  value={String(newCoeff)}
-                  onChange={(e) => setNewCoeff(Number(e.target.value))}
-                  aria-label="Coefficient"
-                  disabled={selectedPeriodClosed}
-                >
-                  {[0.25, 0.5, 1, 2, 3].map((c) => (
-                    <option key={c} value={c}>
-                      Coeff {c}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              {!isPrimaryProgram && (
+                <div className="col-span-2 md:col-span-2">
+                  <Select
+                    value={String(newCoeff)}
+                    onChange={(e) => setNewCoeff(Number(e.target.value))}
+                    aria-label="Coefficient"
+                    disabled={selectedPeriodClosed}
+                  >
+                    {[0.25, 0.5, 1, 2, 3].map((c) => (
+                      <option key={c} value={c}>
+                        Coeff {c}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
             </div>
+            {isPrimaryProgram && (
+              <p className="mt-2 text-xs text-slate-600">
+                Le coefficient de la discipline est fixé par l’établissement. Les évaluations comptent à poids égal.
+              </p>
+            )}
             <div className="mt-2">
               <Button
                 onClick={addEvaluation}
-                disabled={!selected || creating || selectedPeriodClosed}
+                disabled={!selected || creating || selectedPeriodClosed || isPreschoolProgram}
               >
                 <Plus className="h-4 w-4" />
                 {creating ? "Ajout…" : "Ajouter une note"}
@@ -2601,21 +2630,25 @@ export default function TeacherNotesPage() {
                 )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <GhostButton
-                tone="slate"
-                onClick={() => setShowPublishPanel(true)}
-                disabled={!evaluations.length || selectedPeriodClosed || !isOnline}
-              >
-                Gérer la publication
-              </GhostButton>
-              <GhostButton
-                tone="emerald"
-                onClick={exportToCsv}
-                disabled={!roster.length || !evaluations.length}
-              >
-                <FileSpreadsheet className="h-4 w-4" />
-                Exporter (Excel/CSV)
-              </GhostButton>
+              {!isSchoolProgram && (
+                <>
+                  <GhostButton
+                    tone="slate"
+                    onClick={() => setShowPublishPanel(true)}
+                    disabled={!evaluations.length || selectedPeriodClosed || !isOnline}
+                  >
+                    Gérer la publication
+                  </GhostButton>
+                  <GhostButton
+                    tone="emerald"
+                    onClick={exportToCsv}
+                    disabled={!roster.length || !evaluations.length}
+                  >
+                    <FileSpreadsheet className="h-4 w-4" />
+                    Exporter (Excel/CSV)
+                  </GhostButton>
+                </>
+              )}
               <Button
                 onClick={saveAllChanges}
                 disabled={
@@ -2630,6 +2663,44 @@ export default function TeacherNotesPage() {
             </div>
           </div>
 
+          {isSchoolProgram && !isPreschoolProgram && (
+            <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-3">
+              <h2 className="text-sm font-semibold text-emerald-950">Publication des évaluations</h2>
+              <p className="mt-1 text-xs text-emerald-900">
+                Enregistrez les notes, puis publiez directement chaque évaluation. Aucune validation de l’administration n’est nécessaire.
+              </p>
+              {!directGradePublication && (
+                <p role="alert" className="mt-2 text-xs font-semibold text-amber-800">
+                  La publication directe n’est pas confirmée par le serveur. Vérifiez la configuration de cet établissement.
+                </p>
+              )}
+              {directGradePublication && evaluations.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {evaluations.map((ev) => (
+                    <button
+                      type="button"
+                      key={ev.id}
+                      onClick={() => togglePublish(ev)}
+                      disabled={isEvaluationPublished(ev) || !!publishBusy[ev.id] || !isOnline ||
+                        selectedPeriodClosed || !!Object.keys(changed[ev.id] || {}).length}
+                      className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 disabled:cursor-not-allowed disabled:opacity-50"
+                      title={Object.keys(changed[ev.id] || {}).length
+                        ? "Enregistrez d’abord les notes modifiées."
+                        : undefined}
+                    >
+                      {labelByEvalId[ev.id] || "Évaluation"} : {isEvaluationPublished(ev)
+                        ? "Publiée" : publishBusy[ev.id] ? "Publication…" : "Publier"}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {isPreschoolProgram && (
+            <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              Au préscolaire, les apprentissages sont évalués par compétences. La création d’évaluations chiffrées est désactivée pour ce cycle afin de ne pas produire de bulletins inadaptés.
+            </p>
+          )}
           <VoiceGradeEntry
             roster={roster}
             evaluations={evaluations.map((ev) => ({
@@ -3338,7 +3409,7 @@ export default function TeacherNotesPage() {
       )}
 
       {/* Panneau gestion publication + suppression */}
-      {showPublishPanel && (
+      {!isSchoolProgram && showPublishPanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl border border-slate-200 p-4 md:p-6">
             <div className="mb-3 flex items-center justify-between gap-2">
