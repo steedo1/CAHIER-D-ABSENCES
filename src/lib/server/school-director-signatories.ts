@@ -30,8 +30,10 @@ export async function schoolTeachingSignatories(
   const names = new Map((profiles.data || []).map(row => [row.id, row.display_name]));
   const result: Partial<Record<TeachingTrack, ProgramDocumentSignatory>> = {};
   for (const row of appointments.data) {
-    const track = row.teaching_track;
-    if (track !== "french" && track !== "arabic") continue;
+    const track: TeachingTrack | null =
+      row.teaching_track === "french" || row.teaching_track === "arabic"
+        ? row.teaching_track as TeachingTrack : null;
+    if (!track) continue;
     const name = names.get(row.profile_id)?.trim();
     if (!name) continue;
     result[track] = {
