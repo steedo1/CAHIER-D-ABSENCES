@@ -97,7 +97,7 @@ test("settings retain only PUBLIC catalogs; private observations do not enter ge
   const saved = setPreschoolCatalog(original, "french", catalog);
   const result = parsePreschoolStore(saved);
   assert.deepEqual(result.catalogs.french, catalog);
-  assert.deepEqual(saved.school_cycles_v1, original.school_cycles_v1);
+  assert.deepEqual((saved as Record<string, unknown>).school_cycles_v1, original.school_cycles_v1);
   assert.equal(JSON.stringify(saved).includes("Répond sans aide."), false);
   assert.equal("entries" in result, false);
   assert.equal(mergeGeneralSchoolSettings(saved, { [PRESCHOOL_BOOKLETS_KEY]: emptyPreschoolStore() }), null);
