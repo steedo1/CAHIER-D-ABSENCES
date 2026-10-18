@@ -6,6 +6,7 @@ import {
   validPreschoolCatalog, validPreschoolRecord, PRESCHOOL_BOOKLETS_KEY,
 } from "../src/lib/preschool-booklet-store";
 import { mergeGeneralSchoolSettings } from "../src/lib/school-settings-write";
+import type { PreschoolRecord } from "../src/lib/preschool-booklet-store";
 
 const year = "2026-2027";
 const id1 = "11111111-1111-4111-8111-111111111111";
@@ -15,7 +16,7 @@ const catalog = [
   { id: "lang_1", domain: "Langage", label: "Comprendre une consigne simple" },
   { id: "oral_1", domain: "Communication", label: "Participer aux échanges" },
 ];
-const good = {
+const good: Pick<PreschoolRecord, "observations" | "teacherComment"> = {
   teacherComment: "Progrès encourageants.",
   observations: {
     lang_1: { attainment: "acquired", observation: "Répond sans aide." },
@@ -77,8 +78,8 @@ test("catalog and existing school settings survive a new assessment entry", () =
     year, classId: id1, periodId: id2, track: "french", studentId: id3,
     record: good, actor: "teacher",
   });
-  assert.deepEqual(result.school_cycles_v1, original.school_cycles_v1);
-  assert.deepEqual(result.franco_arabic_reports_v1, original.franco_arabic_reports_v1);
-  assert.deepEqual(result.school_teaching_signatories_v1, original.school_teaching_signatories_v1);
+  assert.deepEqual((result as Record<string, unknown>).school_cycles_v1, original.school_cycles_v1);
+  assert.deepEqual((result as Record<string, unknown>).franco_arabic_reports_v1, original.franco_arabic_reports_v1);
+  assert.deepEqual((result as Record<string, unknown>).school_teaching_signatories_v1, original.school_teaching_signatories_v1);
   assert.equal(mergeGeneralSchoolSettings(result, { [PRESCHOOL_BOOKLETS_KEY]: emptyPreschoolStore() }), null);
 });
