@@ -29,7 +29,7 @@ export async function readPrivatePreschoolRecord(service: SupabaseClient,
     if (status === 404 || /not found|object not found/i.test(message)) return null;
     throw Error("private_preschool_storage_unavailable");
   }
-  if (!data || data.size > 15_000) throw Error("invalid_private_preschool_record");
+  if (!data || data.size > 35_000) throw Error("invalid_private_preschool_record");
   const parsed = JSON.parse(await data.text()) as { version?: number; record?: PreschoolRecord };
   if (parsed.version !== 1 || !parsed.record ||
       typeof parsed.record !== "object" ||
@@ -50,7 +50,7 @@ export async function writePrivatePreschoolRecord(service: SupabaseClient,
     editedAt: new Date().toISOString(), editedBy: actor,
   };
   const payload = Buffer.from(JSON.stringify({ version: 1, record: next }), "utf8");
-  if (payload.byteLength > 15_000) throw Error("preschool_record_too_large");
+  if (payload.byteLength > 35_000) throw Error("preschool_record_too_large");
   const { error } = await service.storage.from(BUCKET).upload(pathFor(input), payload, {
     contentType: "application/json", cacheControl: "0", upsert: true,
   });
