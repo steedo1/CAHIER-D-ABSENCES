@@ -22,6 +22,16 @@ export type LevelScoringScale = {
   maxScore: number;
 };
 
+/** Teacher evaluation / composition denominator for one Arabic primary subject.
+ * Unlike the /10 bulletin average, this is defined by the school per subject. */
+export type PrimarySubjectScoringScale = {
+  cycle: "primary";
+  level: string;
+  track: "arabic";
+  subjectId: string;
+  maxScore: number;
+};
+
 export type SubjectReportCoefficient = {
   cycle: SchoolCycle;
   level: string;
@@ -38,6 +48,8 @@ export type FrancoArabicReportsSettings = {
   scales: LevelScoringScale[];
   /** Each coefficient belongs to a cycle + level + teaching program + subject. */
   coefficients: SubjectReportCoefficient[];
+  /** Optional for historical settings; never inferred from French CI barèmes. */
+  primarySubjectScales?: PrimarySubjectScoringScale[];
   /** Absent in previously saved templates: keep the historical engine. */
   engine?: "legacy" | "specialized";
   /** Exactly one authority for a specialized context; never merge weights. */
@@ -116,6 +128,25 @@ export function validateFrancoArabicReportsInput(
       maxScore: entry.maxScore as number,
     });
   }
+  const primarySubjectScales: PrimarySubjectScoringScale[] = [];
+  const rawPrimarySubjectScales = data.primarySubjectScales ?? [];
+  if (!Array.isArray(rawPrimarySubjectScales) || rawPrimarySubjectScales.length > 500) return null;
+  const subjectScalesSeen = new Set<string>();
+  for (const raw of rawPrimarySubjectScales) {
+    const item = asObject(raw);
+    if (!item || item.cycle !== "primary" || item.track !== "arabic" ||
+      typeof item.subjectId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.subjectId) ||
+      !Number.isInteger(item.maxScore) || (item.maxScore as number) < 1 || (item.maxScore as number) > 100) return null;
+    const level = normalizedLevel(item.level, "primary");
+    if (!level || !scales.some(scale => scale.cycle === "primary" && scale.track === "arabic" &&
+      schoolLevelKey(scale.level, "primary") === schoolLevelKey(level, "primary"))) return null;
+    const key = [schoolLevelKey(level, "primary"), item.subjectId].join("|");
+    if (subjectScalesSeen.has(key)) return null;
+    subjectScalesSeen.add(key);
+    primarySubjectScales.push({ cycle: "primary", level, track: "arabic",
+      subjectId: item.subjectId, maxScore: item.maxScore as number });
+  }
   const rawCoefficients = data.coefficients ?? [];
   if (!Array.isArray(rawCoefficients) || rawCoefficients.length > 500) return null;
   const coefficients: SubjectReportCoefficient[] = [];
@@ -152,6 +183,7 @@ export function validateFrancoArabicReportsInput(
     ...(data.engine !== undefined ? { engine: data.engine } : {}),
     ...(data.coefficientSource !== undefined ? { coefficientSource: data.coefficientSource } : {}),
     ...(data.formatsByCycle !== undefined ? { formatsByCycle } : {}),
+    ...(data.primarySubjectScales !== undefined ? { primarySubjectScales } : {}),
   };
 }
 
@@ -189,6 +221,18 @@ export function getConfiguredScoringScale(
   return settings.scales.find((entry) =>
     entry.cycle === cycle && entry.track === track &&
     schoolLevelKey(entry.level, cycle) === schoolLevelKey(normalized, cycle))?.maxScore ?? null;
+}
+
+/** No guessed Arabic denominators and no fallback to the bulletin mean scale.
+ * A missing subject barème deliberately blocks that subject's evaluations. */
+export function getConfiguredPrimarySubjectScale(
+  settings: FrancoArabicReportsSettings,
+  level: string,
+  subjectId: string,
+): number | null {
+  if (!settings.enabled || !subjectId) return null;
+  return settings.primarySubjectScales?.find(row => row.cycle === "primary" && row.track === "arabic" &&
+    row.subjectId === subjectId && schoolLevelKey(row.level, "primary") === schoolLevelKey(level, "primary"))?.maxScore ?? null;
 }
 
 /** No default coefficient is inferred from language, cycle or subject name. */
