@@ -4591,11 +4591,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "INVALID_EXPORT_KIND" }, { status: 400 });
   }
 
-  const { data: institution } = await supabase
+  const { data: institution, error: institutionError } = await supabase
     .from("institutions")
     .select("name,status,settings_json")
     .eq("id", institutionId)
     .maybeSingle();
+  if (institutionError || !institution) {
+    return NextResponse.json({
+      ok: false, error: "INSTITUTION_SETTINGS_UNAVAILABLE",
+    }, { status: 503 });
+  }
 
   // This official DESPS schema is for the historical programme. Until the
   // Franco-Arabic authority validates per-teaching columns and annual rules,
