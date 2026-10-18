@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requiresDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -201,6 +202,8 @@ export async function GET() {
 
     if (!ctx.ok) return bad(ctx.error, ctx.status);
 
+    if (await requiresDirectGradePublication(ctx.srv, ctx.institutionId)) return bad("DIRECT_PUBLICATION_NO_ADMIN_SETTINGS", 404);
+
     const row = await ensureSettingsRow(ctx.srv, ctx.institutionId);
 
     return NextResponse.json({
@@ -221,6 +224,8 @@ export async function POST(req: NextRequest) {
     const ctx = await getAdminContext();
 
     if (!ctx.ok) return bad(ctx.error, ctx.status);
+
+    if (await requiresDirectGradePublication(ctx.srv, ctx.institutionId)) return bad("DIRECT_PUBLICATION_NO_ADMIN_SETTINGS", 404);
 
     const body = (await req.json().catch(() => ({}))) as {
       require_admin_validation?: boolean;
