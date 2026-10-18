@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import type { PreschoolAttainment, PreschoolCompetency } from "@/lib/preschool-assessments";
 import type { PreschoolRecord, PreschoolMark } from "@/lib/preschool-booklet-store";
 import type { TeachingTrack } from "@/lib/school-cycles";
@@ -101,6 +100,9 @@ export default function PreschoolBookletPage() {
 
   useEffect(() => { void load("", "", ""); }, [load]);
   useEffect(() => {
+    if (year && !classId) void load(year, "", "");
+  }, [year, classId, load]);
+  useEffect(() => {
     if (year && classId) void load(year, classId, periodId);
   }, [year, classId, periodId, load]);
 
@@ -172,9 +174,8 @@ export default function PreschoolBookletPage() {
       <h1 className="mt-1 text-2xl font-bold text-slate-900">Livret d’observation des compétences</h1>
       <p className="mt-2 text-sm text-slate-600">Aucune note chiffrée, aucun coefficient, aucune moyenne et aucun rang.
         Les compétences sont déterminées par le catalogue validé par l’établissement.</p>
-      <Link className="mt-2 inline-block text-sm font-semibold text-emerald-700 underline" href="/admin/bulletins">
-        Retour aux bulletins (administration)
-      </Link>
+      <button type="button" onClick={() => window.history.back()}
+        className="mt-2 text-sm font-semibold text-emerald-700 underline">Retour à l’espace précédent</button>
     </header>
     {error && <p role="alert" className="rounded-xl bg-rose-50 p-4 text-sm text-rose-800 print:hidden">{error}</p>}
     {notice && <p role="status" className="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-900 print:hidden">{notice}</p>}
