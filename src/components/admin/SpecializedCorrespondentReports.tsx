@@ -147,11 +147,17 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
   const unique = useMemo(() => {
     const values = new Map<string, Entry>();
     for (const report of reports) for (const entry of report.payload.documents) {
-      if (!values.has(entry.studentId)) values.set(entry.studentId, entry);
+      // An enrolment may appear in a later period, or only acquire the
+      // selected teaching track in that period. Never silently drop it.
+      const previous = values.get(entry.studentId);
+      if (!previous || (!previous.document[selectedTrack] && entry.document[selectedTrack])) {
+        values.set(entry.studentId, entry);
+      }
     }
     return [...values.values()].filter(row => row.document[selectedTrack]);
   }, [reports, selectedTrack]);
-  const current = first?.documents.filter(row => row.document[selectedTrack]) || [];
+  const current = mode === "annual" ? unique :
+    first?.documents.filter(row => row.document[selectedTrack]) || [];
   const complete = current.filter(row => !!programFor(row, selectedTrack));
   const pending = current.filter(row => !programFor(row, selectedTrack));
   const subjects = useMemo(() => {
@@ -169,9 +175,17 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
     return one - two || studentName(a).localeCompare(studentName(b), "fr");
   });
   const display = mode === "unclassified" ? pending : mode === "council" ? ranked : current;
-  const classMean = numberMeanOn20(complete.map(row => programFor(row, selectedTrack)!));
+  // A partial class average would appear official. Show it only when
+  // every expected programme result is complete.
+  const classMean = complete.length === current.length
+    ? numberMeanOn20(complete.map(row => programFor(row, selectedTrack)!)) : null;
+  const annualFullyCovered = unique.every(entry => reports.every(report => {
+    const row = report.payload.documents.find(item => item.studentId === entry.studentId);
+    return !!programFor(row, selectedTrack);
+  }));
   const printable = mode === "unclassified" ? reports.length > 0 :
-    isAllComplete(reports, selectedTrack) && unique.length > 0;
+    isAllComplete(reports, selectedTrack) && unique.length > 0 &&
+    (mode !== "annual" || annualFullyCovered);
 
   return <section className="space-y-5">
     <header className="print:hidden">
@@ -240,7 +254,9 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
           <div>Effectif : <strong>{current.length}</strong></div>
           <div>Résultats complets : <strong>{complete.length}</strong></div>
           <div>Résultats incomplets : <strong>{pending.length}</strong></div>
-          <div>Moyenne de classe /20 : <strong>{classMean?.toFixed(2) || "—"}</strong></div>
+          <div>Moyenne de classe /20 : <strong>{classMean?.toFixed(2) || "—"}</strong>
+            {pending.length > 0 && <span className="block text-xs text-amber-800">Résultats incomplets : moyenne non calculable</span>}
+          </div>
         </div>}
         {mode === "council" && <p className="text-sm text-amber-800">
           Consultation pédagogique uniquement. Les décisions du conseil ne sont pas enregistrées
@@ -289,7 +305,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
                   <td className="p-2 text-center">{mode === "annual"
                     ? (reports.every(report => {
                         const row = report.payload.documents.find(item => item.studentId === entry.studentId);
-                        return !row?.document[selectedTrack] || !!programFor(row, selectedTrack);
+                        return !!programFor(row, selectedTrack);
                       }) ? "Complet" : "Incomplet")
                     : program ? "Complet" : "Incomplet"}</td>
                 </tr>;
