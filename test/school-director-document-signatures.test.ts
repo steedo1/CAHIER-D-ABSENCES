@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { schoolTeachingSignatories } from "../src/lib/server/school-director-signatories";
+// @ts-expect-error - JavaScript-only fixture loader intentionally has no TypeScript declarations.
 import { createMulticycleFixture } from "./helpers/multicycle-fixture.mjs";
 
 test("franco-arabic official documents use names of nominated directors, independently by track", async () => {
