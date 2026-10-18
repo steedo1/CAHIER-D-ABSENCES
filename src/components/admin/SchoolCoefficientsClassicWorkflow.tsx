@@ -549,7 +549,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
               </tbody>
             </table>
           </div>}
-        {configuredSubjects.length > 0 && !isLoadingSubjects &&
+        {configuredSubjects.length > 0 && !isLoadingSubjects && (cycle !== "primary" || track === "arabic") &&
           <div className="flex justify-end"><button type="button" disabled={saving}
             onClick={() => void save()} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
             {saving ? "Enregistrement…" : cycle === "primary" ? track === "arabic"
