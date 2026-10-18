@@ -9,8 +9,8 @@ test("franco-arabic official documents use names of nominated directors, indepen
   const arabicId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa11";
   const frenchId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa22";
   db.tables.profiles.push(
-    { id: arabicId, institution_id: db.legacyId, display_name: "Traoré Daouda" },
-    { id: frenchId, institution_id: db.legacyId, display_name: "Nimaga Adam Ousmane" },
+    { id: arabicId, institution_id: db.legacyId, display_name: "Responsable de démonstration arabe" },
+    { id: frenchId, institution_id: db.legacyId, display_name: "Responsable de démonstration français" },
   );
   db.tables.school_teaching_directors = [
     { institution_id: db.legacyId, profile_id: arabicId, teaching_track: "arabic", is_active: true },
@@ -18,8 +18,8 @@ test("franco-arabic official documents use names of nominated directors, indepen
     { institution_id: "other-school", profile_id: "ignored", teaching_track: "french", is_active: true },
   ];
   const names = await schoolTeachingSignatories(db.service, db.legacyId);
-  assert.equal(names.arabic?.name, "Traoré Daouda");
-  assert.equal(names.french?.name, "Nimaga Adam Ousmane");
+  assert.equal(names.arabic?.name, "Responsable de démonstration arabe");
+  assert.equal(names.french?.name, "Responsable de démonstration français");
   assert.match(names.arabic?.title || "", /arabe/);
   assert.match(names.french?.title || "", /français/);
 });
