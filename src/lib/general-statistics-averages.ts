@@ -7,6 +7,18 @@ export type StatisticsGradePeriod = {
   class_ids: string[];
 };
 export type StatisticsAverage = { value: number | null; partial: boolean };
+export type StatisticsTeachingTrack = "french" | "arabic";
+type SpecializedProgram = {
+  generalAverage: number | null;
+  denominator: number;
+  subjects: { id: string; name: string; average: number | null }[];
+};
+type SpecializedBulletinDocument = {
+  studentId: string;
+  document: Partial<Record<StatisticsTeachingTrack, SpecializedProgram>>;
+  ready: boolean;
+  programReadiness: Partial<Record<StatisticsTeachingTrack, boolean>>;
+};
 type SubjectCell = { subject_id: string; avg20?: number | null; is_nc?: boolean; is_assigned?: boolean; has_grade?: boolean };
 type BulletinItem = {
   student_id: string;
@@ -26,12 +38,17 @@ export type StatisticsBulletin = {
   period: { from: string; to: string };
   subjects?: { subject_id: string; subject_name?: string }[];
   items: BulletinItem[];
+  /** Specialized bulletins expose separate French/Arabic programmes, not legacy items. */
+  specialized?: {
+    engine: "specialized";
+    documents: SpecializedBulletinDocument[];
+  };
 };
 export type StatisticsBulletinCache = Map<string, { data: StatisticsBulletin; loadedAt: number }>;
 export type StatisticsAcademicData = {
   periods: StatisticsGradePeriod[];
   bulletins: Map<string, StatisticsBulletin>;
-  subjects: { id: string; label: string }[];
+  subjects: { id: string; label: string; track?: StatisticsTeachingTrack }[];
 };
 const CACHE_MS = 60_000;
 const bulletinKey = (classId: string, periodId: string) => `${classId}|${periodId}`;
@@ -73,14 +90,52 @@ function subjectAverage(item: BulletinItem | undefined, subjectId: string) {
 
 export function statisticsStudentAverage(
   data: StatisticsAcademicData | null, classId: string | null, studentId: string,
-  selection: string, subjectId: string,
+  selection: string, subjectId: string, track?: StatisticsTeachingTrack,
 ): StatisticsAverage {
   const empty = { value: null, partial: false };
   if (!data || !classId || !selection) return empty;
   const periods = data.periods.filter((p) => p.class_ids.includes(classId) && (selection === "annual" || p.id === selection))
     .sort((a, b) => a.end_date.localeCompare(b.end_date) || a.start_date.localeCompare(b.start_date));
   if (!periods.length) return empty;
-  const itemFor = (period: StatisticsGradePeriod) => data.bulletins.get(bulletinKey(classId, period.id))?.items.find((item) => item.student_id === studentId);
+  const bulletinFor = (period: StatisticsGradePeriod) => data.bulletins.get(bulletinKey(classId, period.id));
+  const itemFor = (period: StatisticsGradePeriod) => bulletinFor(period)?.items.find((item) => item.student_id === studentId);
+  // Never use legacy general_avg for specialized schools. French and Arabic
+  // have distinct denominators and are not mathematically interchangeable.
+  if (periods.some((period) => bulletinFor(period)?.specialized?.engine === "specialized")) {
+    if (!track) return empty; // Whole-school headcount is valid; a combined mean is not.
+    const specializedAverage = (period: StatisticsGradePeriod) => {
+      const response = bulletinFor(period);
+      if (!response || response.specialized?.engine !== "specialized") return null;
+      const row = response.specialized.documents.find((item) => item.studentId === studentId);
+      if (!row || row.programReadiness?.[track] !== true) return null;
+      const program = row.document[track];
+      if (!program) return null;
+      // The specialized grade scale is configurable (e.g. /10 or /20).
+      // Statistics always compare normalized scores on /20, without mixing tracks.
+      const raw = subjectId === "all"
+        ? program.generalAverage
+        : program.subjects.find((subject) => subject.id === subjectId)?.average;
+      const scale = Number(program.denominator);
+      const score = raw === null || raw === undefined ? NaN : Number(raw);
+      if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(score) ||
+          score < 0 || score > scale) return null;
+      return Number((score * 20 / scale).toFixed(4));
+    };
+    if (selection !== "annual") {
+      return { value: specializedAverage(periods[0]), partial: false };
+    }
+    // These are provisional weighted period means; no specialized official
+    // council-approved annual result exists in this response.
+    let sum = 0, weights = 0;
+    for (const period of periods) {
+      const value = specializedAverage(period);
+      if (value === null) continue;
+      const weight = Number.isFinite(period.coeff) && period.coeff > 0 ? period.coeff : 1;
+      sum += value * weight;
+      weights += weight;
+    }
+    return weights ? { value: Number((sum / weights).toFixed(4)), partial: true } : empty;
+  }
   if (selection !== "annual") {
     const item = itemFor(periods[0]);
     if (subjectId !== "all") return { value: subjectAverage(item, subjectId), partial: false };
@@ -186,11 +241,25 @@ export async function loadStatisticsAcademicData(input: {
   try {
     await Promise.all(Array.from({ length: Math.min(2, jobs.length) }, worker));
     signal.throwIfAborted();
-    const subjects = new Map<string, string>();
-    for (const data of bulletins.values()) for (const subject of data.subjects || []) {
-      if (subject.subject_id) subjects.set(subject.subject_id, subject.subject_name || "Discipline");
+    const subjects = new Map<string, { id: string; label: string; track?: StatisticsTeachingTrack }>();
+    for (const data of bulletins.values()) {
+      if (data.specialized?.engine === "specialized") {
+        for (const row of data.specialized.documents) {
+          for (const track of ["french", "arabic"] as const) {
+            for (const subject of row.document[track]?.subjects || []) {
+              if (subject.id) subjects.set(`${track}|${subject.id}`, {
+                id: subject.id, label: subject.name || "Discipline", track,
+              });
+            }
+          }
+        }
+      } else for (const subject of data.subjects || []) {
+        if (subject.subject_id) subjects.set(subject.subject_id, {
+          id: subject.subject_id, label: subject.subject_name || "Discipline",
+        });
+      }
     }
-    return { periods: input.periods, bulletins, subjects: Array.from(subjects, ([id, label]) => ({ id, label }))
+    return { periods: input.periods, bulletins, subjects: Array.from(subjects.values())
       .sort((a, b) => a.label.localeCompare(b.label, "fr")) };
   } catch (cause) {
     controller.abort();
