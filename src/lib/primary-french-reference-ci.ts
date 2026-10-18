@@ -81,3 +81,27 @@ export function planCiPrimaryFrenchReference(
     newlyAssociated: matches.filter(row => !selectedIds.includes(row.subjectId)).map(row => row.subjectId),
     proposedSubjectIds: nextIds };
 }
+
+/**
+ * Print the 11 reference rows in their official order, even when a school has
+ * not yet associated a particular active subject. Those rows are DISPLAY-ONLY:
+ * they have no database ID, no grade, and are not included in the total.
+ * Other real school disciplines are preserved after the reference rows.
+ */
+export function ciPrimaryFrenchBulletinRows<T extends {
+  id: string; name: string; average: number | null; coefficient: number | null;
+  includeInAverage?: boolean; denominator?: number;
+}>(level: string, subjects: readonly T[]): Array<T & { denominator?: number }> {
+  const used = new Set<string>();
+  const ordered = CI_PRIMARY_FRENCH_REFERENCE.map(entry => {
+    const candidates = subjects.filter(row => ciPrimaryFrenchEntryForName(row.name)?.code === entry.code);
+    const denominator = ciPrimaryFrenchDenominator(level, entry.code);
+    if (candidates.length === 1 && !used.has(candidates[0].id)) {
+      used.add(candidates[0].id);
+      return { ...candidates[0], name: entry.label, denominator };
+    }
+    return { id: `ci-primary-display-only:${entry.code}`, name: entry.label,
+      average: null, coefficient: null, includeInAverage: false, denominator } as T & { denominator: number };
+  });
+  return [...ordered, ...subjects.filter(row => !used.has(row.id))];
+}
