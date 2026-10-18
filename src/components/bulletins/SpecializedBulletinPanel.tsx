@@ -12,10 +12,13 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
   data: SpecializedBulletinPayload; onBack: () => void; onPrint: () => Promise<void>;
   printPreparing?: boolean; error?: string | null;
 }) {
+  // Defense in depth for existing saved secondary choices and stale API data:
+  // secondary never offers the combined model; preserve each teaching track.
+  const format = data.cycle === "secondary" ? "separate" : data.format;
   const choices: BulletinVariant[] = data.programs.length === 1
     ? [data.programs[0] === "french" ? "ordinary" : "arabic"]
-    : data.format === "combined" ? ["combined"]
-    : data.format === "separate" ? ["french", "arabic"] : ["combined", "french", "arabic"];
+    : format === "combined" ? ["combined"]
+    : format === "separate" ? ["french", "arabic"] : ["combined", "french", "arabic"];
   const [variant, setVariant] = useState<BulletinVariant>(choices[0]);
   const selected = choices.includes(variant) ? variant : choices[0];
   const printable = data.documents.length > 0 && data.documents.every(row =>
