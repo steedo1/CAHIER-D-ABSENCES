@@ -76,6 +76,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const [programKey, setProgramKey] = useState("");
   const [classId, setClassId] = useState("");
   const [subjectIds, setSubjectIds] = useState<string[]>([]);
+  const [subjectClassId, setSubjectClassId] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingClass, setLoadingClass] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -137,20 +138,20 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const frenchSecondary = cycle === "secondary" && track === "french";
   const arabicSecondary = cycle === "secondary" && track === "arabic";
   const showCoefficients = cycle === "secondary";
-  const configuredSubjects = (settings?.subjects || []).filter(row =>
+  const configuredSubjects = (subjectClassId === actualClassId ? settings?.subjects || [] : []).filter(row =>
     !!(cycle && track && settings?.configuration?.subjectTracksByCycle[cycle]?.[row.id]?.includes(track)) &&
     subjectIds.includes(row.id));
   const reporting = settings?.reporting;
   const currentScale = reporting?.scales.find(row => row.cycle === cycle && row.track === track &&
     sameSchoolLevel(row.level, level, row.cycle));
   const scaleDisplay = scaleChange || numberInput(currentScale?.maxScore);
-  const isLoadingSubjects = loading || loadingClass;
+  const isLoadingSubjects = loading || loadingClass || (Boolean(actualClassId) && subjectClassId !== actualClassId);
 
   useEffect(() => {
-    if (!actualClassId) { setSubjectIds([]); return; }
+    if (!actualClassId) { setSubjectIds([]); setSubjectClassId(""); return; }
     const controller = new AbortController();
     setLoadingClass(true); setError("");
-    setSubjectIds([]);
+    setSubjectIds([]); setSubjectClassId("");
     setChanges({}); setScaleChange("");
     (async () => {
       try {
@@ -159,7 +160,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
         });
         const data = await parseResponse<ClassPayload>(response, "Matières de classe indisponibles");
         if (data.selectedClassId !== actualClassId) throw new Error("Classe sélectionnée incohérente");
-        if (!controller.signal.aborted) setSubjectIds(data.selectedSubjectIds || []);
+        if (!controller.signal.aborted) { setSubjectIds(data.selectedSubjectIds || []); setSubjectClassId(actualClassId); }
       } catch (e) {
         if (!controller.signal.aborted) setError(errorMessage(e));
       } finally {
@@ -193,7 +194,10 @@ export default function SchoolCoefficientsClassicWorkflow() {
     try {
       const old = settings.reporting;
       // Preserve unrelated cycles, programs, reporting formats and coefficients.
-      let next: FrancoArabicReportsSettings = { ...old, enabled: true, engine: "specialized" };
+      let next: FrancoArabicReportsSettings = { ...old, enabled: true, engine: "specialized",
+        // Secondary French always uses its historical calculator. Arabic reads
+        // ONLY teaching-scoped policies, never shared French coefficient rows.
+        coefficientSource: "program" };
       if (cycle === "primary" || arabicSecondary) {
         const maximum = Number(scaleDisplay);
         if (!Number.isInteger(maximum) || maximum < 1 || maximum > 100)
@@ -227,7 +231,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
           const untouched = old.coefficients.filter(row => !(row.cycle === cycle && row.track === track &&
             sameSchoolLevel(row.level, level, cycle) &&
             configuredSubjects.some(subject => subject.id === row.subjectId)));
-          next = { ...next, coefficientSource: "program",
+          next = { ...next,
             coefficients: [...untouched, ...numbers.filter(row => row.value > 0).map(({ subject, value }) => ({
               cycle, track, level, subjectId: subject.id, coefficient: value, includeInAverage: true,
             }))] };
@@ -257,6 +261,10 @@ export default function SchoolCoefficientsClassicWorkflow() {
 
   async function editComponents(subject: Subject) {
     if (!frenchSecondary || !level) return;
+    if (settings?.configuration?.subjectTracksByCycle.secondary?.[subject.id]?.includes("arabic")) {
+      setError("Les sous-matières d'une discipline commune ne peuvent pas être modifiées ici : elles appartiennent aux deux enseignements dans la base historique.");
+      return;
+    }
     setComponentsFor(subject); setComponentsBusy(true); setError("");
     try {
       const response = await fetch(componentsEndpoint +
@@ -371,8 +379,9 @@ export default function SchoolCoefficientsClassicWorkflow() {
                       placeholder="À renseigner" className="w-24 rounded-lg border px-2 py-1 text-right"/>
                   </td>}
                   <td className="px-3 py-2 text-right">
-                    {frenchSecondary ? <button type="button" className="rounded-lg border px-2 py-1 text-xs"
-                      onClick={() => void editComponents(subject)}>Ajouter / modifier les sous-matières</button>
+                    {frenchSecondary && !settings?.configuration?.subjectTracksByCycle.secondary?.[subject.id]?.includes("arabic")
+                      ? <button type="button" className="rounded-lg border px-2 py-1 text-xs"
+                        onClick={() => void editComponents(subject)}>Ajouter / modifier les sous-matières</button>
                       : <span className="text-xs text-slate-500">—</span>}
                   </td>
                 </tr>)}
