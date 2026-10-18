@@ -6,6 +6,8 @@ import { inferSchoolCycleFromLevel, parseSchoolCyclesSettings, type SchoolCycle,
 import { isBilingualSchool, readStudentProgramSettings } from "@/lib/school-student-programs";
 import { SCHOOL_CLASS_SUBJECTS_KEY, readClassSubjects } from "@/lib/school-class-subjects";
 import { asSettingsObject, schoolSettingsRevision, writeSchoolSettings } from "@/lib/school-settings-write";
+import { planCiPrimaryFrenchReference } from "@/lib/primary-french-reference-ci";
+import { FRANCO_ARABIC_REPORTS_SETTINGS_KEY, readFrancoArabicReportsForEditing } from "@/lib/franco-arabic-reporting";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -55,6 +57,25 @@ async function loadClasses(context: Exclude<Awaited<ReturnType<typeof scope>>, {
   return { error: "too_many_classes" } as const;
 }
 
+
+async function loadSubjects(context: Exclude<Awaited<ReturnType<typeof scope>>, { error: NextResponse }>, selected: ClassItem) {
+  const { data: active, error } = await context.service.from("institution_subjects")
+    .select("subject_id,custom_name").eq("institution_id", context.institutionId)
+    .eq("is_active", true).limit(501);
+  if (error || !active || active.length >= 501) return { error: "subjects_load_failed" } as const;
+  const ids = active.filter(row => context.settings.subjectTracksByCycle[selected.cycle!]?.[row.subject_id]?.includes(selected.track!))
+    .map(row => row.subject_id);
+  if (!ids.length) return { subjects: [] as Array<{ id: string; name: string }> };
+  const { data: global, error: namesError } = await context.service.from("subjects").select("id,name")
+    .in("id", ids).limit(501);
+  if (namesError || !global) return { error: "subject_names_load_failed" } as const;
+  const names = new Map(global.map(row => [row.id, row.name]));
+  const subjects = active.filter(row => ids.includes(row.subject_id)).map(row => ({
+    id: row.subject_id, name: String(row.custom_name || names.get(row.subject_id) || row.subject_id),
+  })).sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  return { subjects };
+}
+
 export async function GET(request: NextRequest) {
   const context = await scope();
   if ("error" in context) return context.error;
@@ -67,26 +88,16 @@ export async function GET(request: NextRequest) {
   const stored = readClassSubjects(context.rawSettings);
   let subjects: Array<{ id: string; name: string }> = [];
   if (selected?.cycle && selected.track) {
-    const { data: active, error } = await context.service.from("institution_subjects")
-      .select("subject_id,custom_name").eq("institution_id", context.institutionId)
-      .eq("is_active", true).limit(501);
-    if (error || !active || active.length >= 501) return json({ error: "subjects_load_failed" }, 503);
-    const ids = active.filter(row => context.settings.subjectTracksByCycle[selected.cycle!]?.[row.subject_id]?.includes(selected.track!))
-      .map(row => row.subject_id);
-    if (ids.length) {
-      const { data: global, error: namesError } = await context.service.from("subjects").select("id,name")
-        .in("id", ids).limit(501);
-      if (namesError || !global) return json({ error: "subject_names_load_failed" }, 503);
-      const names = new Map(global.map(row => [row.id, row.name]));
-      subjects = active.filter(row => ids.includes(row.subject_id)).map(row => ({
-        id: row.subject_id, name: String(row.custom_name || names.get(row.subject_id) || row.subject_id),
-      })).sort((a, b) => a.name.localeCompare(b.name, "fr"));
-    }
+    const catalog = await loadSubjects(context, selected);
+    if ("error" in catalog) return json({ error: catalog.error }, 503);
+    subjects = catalog.subjects;
   }
   return json({ ok: true, academicYear: context.year,
     revision: schoolSettingsRevision(context.rawSettings),
     classes: loaded.classes, selectedClassId: selected?.id || null, subjects,
     selectedSubjectIds: selected ? stored?.years[context.year]?.classes[selected.id] || [] : [],
+    ciPrimaryFrenchApplied: selected
+      ? stored?.years[context.year]?.ciPrimaryFrenchClasses?.includes(selected.id) === true : false,
   });
 }
 
@@ -136,8 +147,75 @@ export async function PUT(request: NextRequest) {
   }
   const next = { ...asSettingsObject(context.rawSettings),
     [SCHOOL_CLASS_SUBJECTS_KEY]: { version: 1, years: { ...stored.years,
-      [context.year]: { classes: yearClasses } } } };
+      [context.year]: { ...stored.years[context.year], classes: yearClasses } } } };
   const write = await writeSchoolSettings(context.service, context.institutionId, context.rawSettings, next);
   if ("error" in write) return json({ error: write.error }, write.status);
   return json({ ok: true, revision: write.revision });
+}
+
+/** Same class-curriculum resource as the existing manual editor.
+ * Preview is read-only; apply only adds recognized, ACTIVE school subjects.
+ * No teacher assignment, subject catalog or numeric coefficient is modified.
+ */
+export async function POST(request: NextRequest) {
+  const context = await scope();
+  if ("error" in context) return context.error;
+  const origin = request.headers.get("origin");
+  if (origin && origin !== request.nextUrl.origin) return json({ error: "invalid_origin" }, 403);
+  if (!request.headers.get("content-type")?.includes("application/json")) return json({ error: "expected_json" }, 415);
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      (body.action !== "preview_ci_primary_french" && body.action !== "apply_ci_primary_french")) {
+    return json({ error: "invalid_reference_action" }, 400);
+  }
+  const classId = String(body.classId || "");
+  if (!UUID.test(classId)) return json({ error: "invalid_class" }, 400);
+  if (body.revision !== schoolSettingsRevision(context.rawSettings)) {
+    return json({ error: "settings_changed_reload_required" }, 409);
+  }
+  const classes = await loadClasses(context);
+  if ("error" in classes) return json({ error: classes.error }, 503);
+  const selected = classes.classes.find(row => row.id === classId);
+  if (!selected) return json({ error: "class_not_found" }, 404);
+  if (selected.cycle !== "primary" || selected.track !== "french" || !selected.level) {
+    return json({ error: "ci_reference_requires_primary_french_class" }, 400);
+  }
+  const catalog = await loadSubjects(context, selected);
+  if ("error" in catalog) return json({ error: catalog.error }, 503);
+  const stored = readClassSubjects(context.rawSettings) || { version: 1 as const, years: {} };
+  const alreadySelected = stored.years[context.year]?.classes[classId] || [];
+  let plan: ReturnType<typeof planCiPrimaryFrenchReference>;
+  try {
+    plan = planCiPrimaryFrenchReference(selected.level, catalog.subjects, alreadySelected);
+  } catch {
+    return json({ error: "ci_primary_invalid_level" }, 400);
+  }
+  const preview = { ...plan, classId, level: selected.level,
+    alreadyApplied: stored.years[context.year]?.ciPrimaryFrenchClasses?.includes(classId) === true };
+  if (body.action === "preview_ci_primary_french") return json({ ok: true, preview });
+  if (!plan.matches.length) return json({ error: "ci_reference_no_known_school_subject", preview }, 409);
+
+  const currentYear = stored.years[context.year];
+  if (Object.keys(stored.years).length >= 8 && !currentYear) return json({ error: "too_many_academic_years" }, 409);
+  const yearClasses = { ...(currentYear?.classes || {}) };
+  if (!Object.hasOwn(yearClasses, classId) && Object.keys(yearClasses).length >= 500) return json({ error: "too_many_classes" }, 409);
+  yearClasses[classId] = plan.proposedSubjectIds;
+  const applied = [...new Set([...(currentYear?.ciPrimaryFrenchClasses || []), classId])];
+
+  // A /10 report mean is the common configured primary scale; individual CM
+  // examination denominators (/20, /50) are resolved by subject at grade entry.
+  const reports = readFrancoArabicReportsForEditing(context.rawSettings);
+  const otherScales = reports.scales.filter(row => !(row.cycle === "primary" &&
+    row.track === "french" && row.level.replace(/[\\s.-]/g, "").toLowerCase() === selected.level!.replace(/[\\s.-]/g, "").toLowerCase()));
+  const scales = [...otherScales, { cycle: "primary" as const, level: selected.level,
+    track: "french" as const, maxScore: 10 }];
+  if (scales.length > 120) return json({ error: "too_many_scales" }, 409);
+  const next = { ...asSettingsObject(context.rawSettings),
+    [SCHOOL_CLASS_SUBJECTS_KEY]: { version: 1, years: { ...stored.years,
+      [context.year]: { ...currentYear, classes: yearClasses, ciPrimaryFrenchClasses: applied } } },
+    [FRANCO_ARABIC_REPORTS_SETTINGS_KEY]: { ...reports, scales } };
+  const write = await writeSchoolSettings(context.service, context.institutionId, context.rawSettings, next);
+  if ("error" in write) return json({ error: write.error }, write.status);
+  return json({ ok: true, preview: { ...preview, alreadyApplied: true },
+    associated: plan.newlyAssociated.length, revision: write.revision });
 }

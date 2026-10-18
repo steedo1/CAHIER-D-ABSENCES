@@ -11,7 +11,8 @@ import { programsForStudent, readStudentProgramSettings } from "@/lib/school-stu
 import { sameSchoolLevel } from "@/lib/school-levels";
 import { selectedBulletinFormat } from "@/lib/franco-arabic-reporting";
 import { inferSchoolCycleFromLevel } from "@/lib/school-cycles";
-import { classSubjectIds } from "@/lib/school-class-subjects";
+import { classSubjectIds, hasCiPrimaryFrenchReference } from "@/lib/school-class-subjects";
+import { ciPrimaryFrenchEntryForName, ciPrimaryFrenchDenominator, ciPrimaryFrenchBulletinRows } from "@/lib/primary-french-reference-ci";
 import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
 
 export type SpecializedBulletinPayload = {
@@ -186,6 +187,16 @@ export async function loadSpecializedBulletin(input: {
       levelSubjectIds: curriculum.filter(row => normalizePedagogicalLevel(row.level_code, cycle) === normalizePedagogicalLevel(level, cycle)).map(row => row.subject_id),
       institutionCoefficients: coefficientRows,
     }) }));
+    const subjectNames = new Map(activeSubjects.map(row => {
+      const subject = Array.isArray(row.subjects) ? row.subjects[0] : row.subjects;
+      return [row.subject_id, row.custom_name || subject?.name || row.subject_id];
+    }));
+    const ciPrimaryFrench = cycle === "primary" &&
+      hasCiPrimaryFrenchReference(input.settingsJson, year, schoolClass.id);
+    const ciDenominators = Object.fromEntries(activeSubjects.map(row => {
+      const entry = ciPrimaryFrenchEntryForName(subjectNames.get(row.subject_id) || "");
+      return [row.subject_id, entry ? ciPrimaryFrenchDenominator(level, entry.code) : 10];
+    }));
     const scoresByStudent = new Map<string, OfficialEvaluationScore[]>();
     for (const score of officialScores) {
       const rows = scoresByStudent.get(score.studentId) || [];
@@ -194,15 +205,13 @@ export async function loadSpecializedBulletin(input: {
     const results = [...students.values()].map(student => ({ student, drafts: resolved.map(policy => buildProgramBulletinDraft({
       studentId: student.id, cycle, level, track: policy.track, school, reports, officialScores: scoresByStudent.get(student.id) || [],
       resolvedPolicies: policy.policies, configurationProblems: [...policy.problems, ...publicationProblems],
+      ...(ciPrimaryFrench && policy.track === "french" ? { primaryCiDenominators: ciDenominators } : {}),
     })) }));
     const ranksByProgram = new Map(programs.map(track => [track, buildPedagogicalRanks(results.map(row => {
       const draft = row.drafts.find(item => item.track === track);
       return { studentId: row.student.id, average: draft?.generalAverage ?? null, complete: draft?.status === "ready" };
     }))]));
-    const subjectNames = new Map(activeSubjects.map(row => {
-      const subject = Array.isArray(row.subjects) ? row.subjects[0] : row.subjects;
-      return [row.subject_id, row.custom_name || subject?.name || row.subject_id];
-    }));
+
     const signatories = readSchoolTeachingSignatories(input.settingsJson);
     const documents: SpecializedBulletinPayload["documents"] = results.map(({ student, drafts }) => {
       const document: BulletinDocument = {
@@ -212,10 +221,17 @@ export async function loadSpecializedBulletin(input: {
       };
       for (const draft of drafts) {
         const rank = ranksByProgram.get(draft.track)?.get(student.id) ?? null;
+        const isCiPrimaryFrench = ciPrimaryFrench && draft.track === "french";
+        const rawSubjectRows = draft.subjects.map(subject => ({ id: subject.subjectId,
+          name: subjectNames.get(subject.subjectId) || subject.subjectId,
+          coefficient: subject.coefficient, average: subject.average,
+          includeInAverage: subject.includeInAverage, denominator: subject.denominator }));
+        const bulletinSubjectRows = isCiPrimaryFrench
+          ? ciPrimaryFrenchBulletinRows(level, rawSubjectRows) : rawSubjectRows;
         const program: BulletinProgram = { track: draft.track, cycle: SCHOOL_CYCLE_OPTIONS.find(option => option.id === cycle)?.label || cycle, level, className: schoolClass.label || level,
+          ciPrimaryFrench: isCiPrimaryFrench,
           year, period: period.label || period.code || "", denominator: draft.maximumScore || 0,
-          subjects: draft.subjects.map(subject => ({ id: subject.subjectId, name: subjectNames.get(subject.subjectId) || subject.subjectId,
-            coefficient: subject.coefficient, average: subject.average, includeInAverage: subject.includeInAverage })),
+          subjects: bulletinSubjectRows,
           generalAverage: draft.generalAverage, rank, classSize: students.size,
           appreciation: draft.status === "ready" ? null : "Résultats incomplets — configuration ou notes à vérifier.",
           directorName: signatories[draft.track]?.name || null,

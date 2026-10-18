@@ -31,6 +31,7 @@ export type BulletinSubject = {
   arabicName?: string | null;
   coefficient: number | null;
   average: number | null;
+  denominator?: number;
   classAverage?: number | null;
   observation?: string | null;
   /** e.g. an excluded conduct discipline remains visible */
@@ -44,6 +45,7 @@ export type BulletinProgram = {
   year: string;
   period: string;
   denominator: number;
+  ciPrimaryFrench?: boolean;
   subjects: BulletinSubject[];
   generalAverage: number | null;
   rank?: number | null;
@@ -154,7 +156,7 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
     <thead><tr>
       <th scope="col" className={styles.subjectColumn}>Discipline</th>
       {secondary && <th scope="col">Coef.</th>}
-      <th scope="col">Moy. /{program.denominator}</th>
+      <th scope="col">{program.ciPrimaryFrench ? "Notes" : `Moy. /${program.denominator}`}</th>
       {!compact && <th scope="col">Classe</th>}
       {!compact && <th scope="col">Observation</th>}
     </tr></thead>
@@ -165,7 +167,9 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
           {row.arabicName && <small lang="ar" dir="rtl">{row.arabicName}</small>}
         </td>
         {secondary && <td>{number(row.coefficient, row.coefficient !== null && row.coefficient % 1 !== 0 ? 1 : 0)}</td>}
-        <td className={styles.markCell}>{number(row.average)}</td>
+        <td className={styles.markCell}>{program.ciPrimaryFrench
+          ? (row.average === null ? "" : `${number(row.average)}/${row.denominator || program.denominator}`)
+          : number(row.average)}</td>
         {!compact && <td>{number(row.classAverage)}</td>}
         {!compact && <td className={styles.observation}>{row.observation || "—"}</td>}
       </tr>)}
@@ -175,9 +179,18 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
 
 function Summary({ program, compact, ordinary }: { program: BulletinProgram; compact: boolean; ordinary: boolean }) {
   const score = number(program.generalAverage);
+  const graded = program.ciPrimaryFrench
+    ? program.subjects.filter(row => row.average !== null && row.denominator != null)
+    : [];
+  const totalPoints = graded.reduce((sum, row) => sum + row.average!, 0);
+  const totalBarèmes = graded.reduce((sum, row) => sum + row.denominator!, 0);
   const rank = program.rank != null && program.classSize != null
     ? `${program.rank} / ${program.classSize}` : "—";
   return <div className={`${styles.summary} ${compact ? styles.compactSummary : ""}`}>
+    {program.ciPrimaryFrench && <div className={styles.summaryMetric}>
+      <span>Total des compositions</span>
+      <strong>{totalBarèmes > 0 ? `${number(totalPoints)}/${totalBarèmes}` : "—"}</strong>
+    </div>}
     <div className={styles.summaryMetric}>
       <span>{ordinary ? "Moyenne générale" : `Moyenne ${program.track === "arabic" ? "arabe" : "française"}`}</span>
       <strong>{score}<small> / {program.denominator}</small></strong>

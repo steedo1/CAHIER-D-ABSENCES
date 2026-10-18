@@ -6,7 +6,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type ClassSubjects = Record<string, string[]>;
 export type SchoolClassSubjectsSettings = {
   version: 1;
-  years: Record<string, { classes: ClassSubjects }>;
+  years: Record<string, { classes: ClassSubjects; ciPrimaryFrenchClasses?: string[] }>;
 };
 
 const object = (value: unknown): Record<string, unknown> | null =>
@@ -35,7 +35,11 @@ export function readClassSubjects(value: unknown): SchoolClassSubjectsSettings |
           !subjects.every(id => typeof id === "string" && UUID.test(id))) continue;
       classes[classId] = [...new Set(subjects)];
     }
-    years[year] = { classes };
+    const applied = object(yearValue)?.ciPrimaryFrenchClasses;
+    const ciPrimaryFrenchClasses = Array.isArray(applied)
+      ? [...new Set(applied.filter((id): id is string => typeof id === "string" && UUID.test(id)))].slice(0, 500)
+      : [];
+    years[year] = { classes, ...(ciPrimaryFrenchClasses.length ? { ciPrimaryFrenchClasses } : {}) };
   }
   return { version: 1, years };
 }
@@ -56,4 +60,9 @@ export function subjectAllowedInClass(
   configured: Record<SchoolCycle, Record<string, TeachingTrack[]>>,
 ): boolean {
   return configured[cycle]?.[subjectId]?.includes(track) === true;
+}
+
+/** Explicit opt-in stored WITH the existing class curriculum (not a second catalogue). */
+export function hasCiPrimaryFrenchReference(settings: unknown, year: string, classId: string): boolean {
+  return readClassSubjects(settings)?.years[year]?.ciPrimaryFrenchClasses?.includes(classId) === true;
 }

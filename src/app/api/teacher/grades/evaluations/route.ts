@@ -13,6 +13,8 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/sch
 import { resolveEvaluationTeachingTrack } from "@/lib/pedagogical-engine";
 import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
 import { encodePrimaryEvaluation, isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
+import { hasCiPrimaryFrenchReference } from "@/lib/school-class-subjects";
+import { ciPrimaryFrenchEntryForName, ciPrimaryFrenchDenominator } from "@/lib/primary-french-reference-ci";
 import {
   autoDetectApplicableGradePeriod,
   getApplicableGradePeriodById,
@@ -595,10 +597,10 @@ const EVALUATION_SELECT = [
  */
 async function primarySchoolContext(
   srv: ReturnType<typeof getSupabaseServiceClient>, institutionId: string, classId: string,
-): Promise<{ isPrimary: boolean; settings: unknown; level: string; scale: number | null }> {
+): Promise<{ isPrimary: boolean; settings: unknown; level: string; year: string }> {
   const [institution, schoolClass] = await Promise.all([
     srv.from("institutions").select("settings_json").eq("id", institutionId).maybeSingle(),
-    srv.from("classes").select("id,level").eq("id", classId).eq("institution_id", institutionId).maybeSingle(),
+    srv.from("classes").select("id,level,academic_year").eq("id", classId).eq("institution_id", institutionId).maybeSingle(),
   ]);
   if (institution.error || schoolClass.error || !institution.data || !schoolClass.data) {
     throw Error("primary_school_context_unavailable");
@@ -606,7 +608,7 @@ async function primarySchoolContext(
   const settings = institution.data.settings_json;
   const school = parseSchoolCyclesSettings(settings);
   const isPrimary = school.enabled && resolveSchoolCycleForClass(schoolClass.data, school) === "primary";
-  return { isPrimary, settings, level: String(schoolClass.data.level || ""), scale: null };
+  return { isPrimary, settings, level: String(schoolClass.data.level || ""), year: String(schoolClass.data.academic_year || "") };
 }
 
 export async function GET(req: NextRequest) {
@@ -826,6 +828,21 @@ export async function POST(req: NextRequest) {
         parseFrancoArabicReportsSettings(schoolCtx.settings), "primary", schoolCtx.level, track);
       if (primaryScale == null) {
         return NextResponse.json({ ok: false, error: "primary_scale_not_configured" }, { status: 409 });
+      }
+      // The already-applied CI curriculum has per-subject examination denominators
+      // at CM1/CM2. Only ACTIVE catalog names and verified class+year opt-in qualify.
+      if (track === "french" && globalId &&
+          hasCiPrimaryFrenchReference(schoolCtx.settings, schoolCtx.year, class_id)) {
+        const { data: ciSubject, error: ciError } = await srv.from("institution_subjects")
+          .select("custom_name,subjects:subject_id(name)")
+          .eq("institution_id", institutionId).eq("subject_id", globalId)
+          .eq("is_active", true).maybeSingle();
+        if (ciError || !ciSubject) {
+          return NextResponse.json({ ok: false, error: "primary_ci_subject_unavailable" }, { status: 409 });
+        }
+        const relation = Array.isArray(ciSubject.subjects) ? ciSubject.subjects[0] : ciSubject.subjects;
+        const known = ciPrimaryFrenchEntryForName(ciSubject.custom_name || relation?.name || "");
+        if (known) primaryScale = ciPrimaryFrenchDenominator(schoolCtx.level, known.code);
       }
       if (!Number.isFinite(scale) || scale !== primaryScale || coeff !== 1) {
         return NextResponse.json({ ok: false, error: "primary_scale_or_weight_mismatch" }, { status: 400 });
