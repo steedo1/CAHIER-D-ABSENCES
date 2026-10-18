@@ -249,11 +249,16 @@ export async function getFinanceAccessForCurrentUser(
   }
 
   const premiumEnabled = financeSettings?.finance_premium_enabled === true;
+  // A subscribed bilingual school's general director manages the WHOLE
+  // institution. The legacy Finance Premium flag is not an extra paywall for
+  // that school-wide administrator. Other existing Finance users keep the
+  // exact same Premium entitlement rules.
+  const effectiveFinanceEnabled = premiumEnabled || hasBilingualGeneralDirectorGrant;
 
   const subscriptionValid =
     !!expiresAt && new Date(`${expiresAt}T23:59:59`).getTime() >= Date.now();
 
-  if (!premiumEnabled) {
+  if (!effectiveFinanceEnabled) {
     return {
       ok: false,
       reason: "finance_not_enabled",
@@ -280,7 +285,7 @@ export async function getFinanceAccessForCurrentUser(
     scope: resolvedScope,
     reason: "ok",
     institutionId,
-    premiumEnabled,
+    premiumEnabled: effectiveFinanceEnabled,
     subscriptionValid,
     expiresAt,
   };
