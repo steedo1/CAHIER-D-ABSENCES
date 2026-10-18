@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
+import { requireTeachingDirector } from "@/lib/auth/teaching-director";
 import {
   isSchoolCycle, isTeachingTrack, parseSchoolCyclesSettings,
   type SchoolCycle, type TeachingTrack,
@@ -37,14 +38,36 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 async function scope() {
   const browser = await getSupabaseServerClient();
   const service = getSupabaseServiceClient();
-  const access = await requireInstitutionRole(browser, service, ["admin"]);
-  if ("error" in access) return { error: json({ ok: false, error: access.error }, access.error === "unauthorized" ? 401 : 403) } as const;
+  const admin = await requireInstitutionRole(browser, service, ["admin"]);
+  let institutionId: string;
+  let restrictedTrack: TeachingTrack | null = null;
+  let restrictedCycles: SchoolCycle[] | null = null;
+  if ("error" in admin) {
+    // A teaching director is NOT an admin. Grant this endpoint only after
+    // a separate, verified appointment and scope check; all other classic
+    // admin API permissions remain unchanged.
+    const director = await requireTeachingDirector(browser, service);
+    if (!director.ok) return { error: json({ ok: false, error: director.error }, director.status) } as const;
+    institutionId = director.principal.institutionId;
+    restrictedTrack = director.principal.teachingTrack;
+    restrictedCycles = director.principal.cycles;
+  } else {
+    institutionId = admin.instId;
+  }
   const { data, error } = await service.from("institutions").select("settings_json")
-    .eq("id", access.instId).maybeSingle();
+    .eq("id", institutionId).maybeSingle();
   if (error || !data) return { error: json({ ok: false, error: "institution_load_failed" }, 503) } as const;
   const school = parseSchoolCyclesSettings(data.settings_json);
   if (!school.enabled) return { error: json({ ok: false, error: "school_programs_not_enabled" }, 404) } as const;
-  return { service, school, institutionId: access.instId } as const;
+  return { service, school, institutionId, restrictedTrack, restrictedCycles } as const;
+}
+
+function pairPermitted(
+  scope: { restrictedTrack: TeachingTrack | null; restrictedCycles: SchoolCycle[] | null },
+  pair: { track: TeachingTrack; cycle: SchoolCycle },
+): boolean {
+  return !scope.restrictedTrack ||
+    (pair.track === scope.restrictedTrack && scope.restrictedCycles?.includes(pair.cycle) === true);
 }
 
 function resolvePair(school: ReturnType<typeof parseSchoolCyclesSettings>, cycle: unknown, track: unknown) {
@@ -77,6 +100,7 @@ export async function GET(req: NextRequest) {
   const pair = resolvePair(access.school, req.nextUrl.searchParams.get("cycle"),
     req.nextUrl.searchParams.get("track"));
   if (!pair || !YEAR.test(year)) return json({ ok: false, error: "invalid_school_period_scope" }, 400);
+  if (!pairPermitted(access, pair)) return json({ ok: false, error: "foreign_teaching_track" }, 403);
   const { data, error } = await getRows(access.service, access.institutionId, year, pair.formationCode);
   if (error) return json({ ok: false, error: "periods_load_failed" }, 503);
   return json({ ok: true, academic_year: year, cycle: pair.cycle, track: pair.track,
@@ -100,6 +124,7 @@ export async function PUT(req: NextRequest) {
   if (!pair || !YEAR.test(year) || !Array.isArray(body.periods) || body.periods.length > 24) {
     return json({ ok: false, error: "invalid_school_period_scope" }, 400);
   }
+  if (!pairPermitted(access, pair)) return json({ ok: false, error: "foreign_teaching_track" }, 403);
   const { data: existing, error: existingError } = await getRows(
     access.service, access.institutionId, year, pair.formationCode);
   if (existingError) return json({ ok: false, error: "periods_load_failed" }, 503);
