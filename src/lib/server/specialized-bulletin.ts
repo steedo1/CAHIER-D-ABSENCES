@@ -268,10 +268,15 @@ export async function loadSpecializedBulletin(input: {
       for (const draft of drafts) {
         const rank = ranksByProgram.get(draft.track)?.get(student.id) ?? null;
         const isCiPrimaryFrench = ciPrimaryFrench && draft.track === "french";
-        const rawSubjectRows = draft.subjects.map(subject => ({ id: subject.subjectId,
-          name: subjectNames.get(subject.subjectId) || subject.subjectId,
-          coefficient: subject.coefficient, average: subject.average,
-          includeInAverage: subject.includeInAverage, denominator: subject.denominator, components: subject.components }));
+        // In specialized primary bulletins show ONLY subjects actually graded
+        // for this student and this period. Keep a genuine zero, omit null.
+        // The 11 configured subjects remain available in teacher/admin screens.
+        const rawSubjectRows = draft.subjects
+          .filter(subject => cycle !== "primary" || (typeof subject.average === "number" && Number.isFinite(subject.average)))
+          .map(subject => ({ id: subject.subjectId,
+            name: subjectNames.get(subject.subjectId) || subject.subjectId,
+            coefficient: subject.coefficient, average: subject.average,
+            includeInAverage: subject.includeInAverage, denominator: subject.denominator, components: subject.components }));
         const bulletinSubjectRows = isCiPrimaryFrench
           ? ciPrimaryFrenchBulletinRows(level, rawSubjectRows) : rawSubjectRows;
         const program: BulletinProgram = { track: draft.track, cycle: SCHOOL_CYCLE_OPTIONS.find(option => option.id === cycle)?.label || cycle, level, className: schoolClass.label || level,
