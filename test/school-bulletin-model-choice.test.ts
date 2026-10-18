@@ -74,16 +74,23 @@ test("model selection route saves only presentation and uses revision/role guard
   assert.match(route, /writeSchoolSettings/);
   assert.doesNotMatch(route, /from\("student_grades"\)|from\("grade_evaluations"\)|\.delete\(/);
   assert.match(real, /format: selectedBulletinFormat\(reports, cycle\)/);
-  assert.match(ui, /DemoBulletinClient/);
+  assert.doesNotMatch(ui, /DemoBulletinClient/);
+  assert.match(ui, /Correspondant Fichier → Bulletins/);
+  assert.match(ui, /item === "primary" \|\| item === "preschool"/);
+  assert.match(route, /secondary_uses_historical_bulletin/);
   const tab = params.slice(params.lastIndexOf('activeTab === "bulletin-models"'));
   assert.match(tab, /<SchoolBulletinModelPicker/);
   assert.doesNotMatch(tab, /<SchoolBulletinSettings\s*\/>/);
 });
 
-test("the preview reuses exact printable components with synthetic grades", () => {
+test("the example remains internal but is no longer exposed as a real bulletin", () => {
   const preview = readFileSync("src/app/admin/bulletins/modeles/DemoBulletinClient.tsx", "utf8");
   assert.match(preview, /FrancoArabicBulletin/);
   assert.match(preview, /PreschoolBookletDemo/);
   assert.match(preview, /sample: true/);
   assert.match(preview, /embedded && previewFormat === "combined"/);
+  const routePage = readFileSync("src/app/admin/bulletins/modeles/page.tsx", "utf8");
+  assert.doesNotMatch(routePage, /DemoBulletinClient/);
+  assert.match(routePage, /admin\/parametres\?tab=bulletin-models/);
+  assert.match(routePage, /redirect\("\/admin\/bulletins"\)/);
 });

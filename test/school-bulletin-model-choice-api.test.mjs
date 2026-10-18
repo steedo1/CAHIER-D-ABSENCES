@@ -46,9 +46,15 @@ test("school admin saves primary model only, preserving active engine and other 
   assert.equal(saved.legacy_csca_fixture, before.legacy_csca_fixture);
   assert.equal(db.calls.some(call => call.op !== "read" && call.table !== "institutions"), false);
   const stale = await createFixtureRouteLoader(db, db.legacyAdminId)(route).PATCH(req({
-    cycle: "secondary", format: "both", revision,
+    cycle: "primary", format: "both", revision,
   }));
   assert.equal(stale.status, 409);
+  const freshRevision = schoolSettingsRevision(db.tables.institutions[0].settings_json);
+  const blockedSecondary = await createFixtureRouteLoader(db, db.legacyAdminId)(route).PATCH(req({
+    cycle: "secondary", format: "both", revision: freshRevision,
+  }));
+  assert.equal(blockedSecondary.status, 400);
+  assert.equal((await blockedSecondary.json()).error, "secondary_uses_historical_bulletin");
   assert.equal(saved.franco_arabic_reports_v1.formatsByCycle.secondary, undefined);
 });
 test("authorization, cycle, and format validation fail without writes", async () => {
