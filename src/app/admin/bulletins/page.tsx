@@ -16,6 +16,8 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import SpecializedBulletinPanel from "@/components/bulletins/SpecializedBulletinPanel";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
+import { historicalSecondaryViews } from "@/lib/secondary-historical-layout";
+import type { BulletinTrack } from "@/components/bulletins/FrancoArabicBulletin";
 import { useAdminRole } from "@/app/admin/ui/admin-role-context";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import OfflineSyncBar from "@/components/OfflineSyncBar";
@@ -1391,6 +1393,8 @@ type StudentBulletinCardProps = {
 
   // ✅ pour calculer le "fit-to-page" malgré le zoom d’aperçu
   previewZoomForMeasure: number;
+  /** An official QR must never be simulated for a specialized document. */
+  disableLocalQr?: boolean;
 };
 
 function StudentBulletinCard({
@@ -1412,6 +1416,7 @@ function StudentBulletinCard({
   conductTotalMax,
   signaturesEnabled,
   previewZoomForMeasure,
+  disableLocalQr = false,
 }: StudentBulletinCardProps) {
   const signaturesActive = !!signaturesEnabled;
 
@@ -1895,6 +1900,10 @@ function StudentBulletinCard({
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    if (disableLocalQr) {
+      setQrDataUrl(null);
+      return;
+    }
     let cancelled = false;
     (async () => {
       const url = await generateQrDataUrl(qrText, QR_SIZE);
@@ -1903,9 +1912,9 @@ function StudentBulletinCard({
     return () => {
       cancelled = true;
     };
-  }, [qrText]);
+  }, [qrText, disableLocalQr]);
 
-  const qrImgSrc = item.qr_png || qrDataUrl;
+  const qrImgSrc = disableLocalQr ? null : item.qr_png || qrDataUrl;
 
   const totalTableRows = useMemo(() => {
     const subjectRows = subjectsForTable.reduce((acc, s) => {
@@ -2738,6 +2747,7 @@ function BulletinsPageContent() {
     useState<ConductSummaryResponse | null>(null);
 
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [secondaryTrack, setSecondaryTrack] = useState<BulletinTrack>("french");
   const [previewZoom, setPreviewZoom] = useState<number>(1);
 
   const selectClassContext = useCallback((row: ClassRow | null) => {
@@ -3280,6 +3290,28 @@ function BulletinsPageContent() {
   const specializedBulletins = bulletinRaw?.specialized?.engine === "specialized"
     ? bulletinRaw.specialized
     : null;
+
+  // The secondary uses the EXACT historical StudentBulletinCard, not the
+  // generic FrancoArabicBulletin model. French and Arabic marks remain
+  // separate and no official result is recalculated by this adapter.
+  const secondaryPrograms = specializedBulletins?.cycle === "secondary"
+    ? specializedBulletins.programs
+    : [];
+  const selectedSecondaryTrack: BulletinTrack = secondaryPrograms.includes(secondaryTrack)
+    ? secondaryTrack
+    : secondaryPrograms[0] || "french";
+  const secondaryViews = specializedBulletins?.cycle === "secondary"
+    ? historicalSecondaryViews(specializedBulletins, selectedSecondaryTrack)
+    : [];
+  const secondaryPrintReady = secondaryViews.length > 0 && secondaryViews.every(row => row.ready);
+  const secondaryStatistics = (() => {
+    const avgs = secondaryViews.map(row => row.item.general_avg)
+      .filter((avg): avg is number => typeof avg === "number" && Number.isFinite(avg));
+    return avgs.length === 0 ? { highest: null, lowest: null, classAvg: null } : {
+      highest: Math.max(...avgs), lowest: Math.min(...avgs),
+      classAvg: avgs.reduce((sum, avg) => sum + avg, 0) / avgs.length,
+    };
+  })();
 
   const stats = enriched?.stats ?? { highest: null, lowest: null, classAvg: null };
   const classInfo = enriched?.response.class;
@@ -4014,6 +4046,67 @@ function BulletinsPageContent() {
       `}</style>
 
       {previewOpen &&
+      specializedBulletins?.cycle === "secondary" &&
+      typeof document !== "undefined" ? (
+        createPortal(
+          <div className="preview-overlay bulletin-print-portal fixed inset-0 z-[60] overflow-y-auto bg-slate-200 p-2 md:p-6"
+            style={{ ["--preview-zoom" as any]: previewZoom }}>
+            <div className="preview-actions sticky top-2 z-10 mb-3 flex flex-wrap items-center justify-end gap-2 print:hidden">
+              <Button type="button" variant="ghost" onClick={() => setPreviewOpen(false)}>
+                <X className="h-4 w-4" /> Changer de classe ou de période
+              </Button>
+              {secondaryPrograms.length > 1 && <>
+                <label htmlFor="secondary-historical-track" className="text-sm font-semibold">Enseignement</label>
+                <Select id="secondary-historical-track" value={selectedSecondaryTrack}
+                  onChange={event => setSecondaryTrack(event.target.value as BulletinTrack)}>
+                  {secondaryPrograms.map(track => (
+                    <option key={track} value={track}>{track === "arabic" ? "Arabe" : "Français"}</option>
+                  ))}
+                </Select>
+              </>}
+              <Button type="button" disabled={!secondaryPrintReady || printPreparing || !!errorMsg}
+                onClick={() => window.print()}>
+                <Printer className="h-4 w-4" /> Imprimer les bulletins
+              </Button>
+            </div>
+            {(!secondaryPrintReady || errorMsg) && (
+              <p role="alert" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 print:hidden">
+                {errorMsg || "Bulletins incomplets : vérifiez les notes publiées, les périodes et le barème de cet enseignement avant impression."}
+              </p>
+            )}
+            <div className="preview-pages flex flex-col gap-6 pb-6">
+              {secondaryPrintReady && secondaryViews.map((row, index) => (
+                <StudentBulletinCard key={selectedSecondaryTrack + ":" + row.studentId}
+                  index={index} total={secondaryViews.length}
+                  item={row.item} subjects={row.subjects}
+                  subjectComponents={row.subjectComponents} subjectGroups={[]}
+                  classInfo={{
+                    id: bulletinRaw?.class.id || selectedClassId,
+                    label: row.program.className + " — " +
+                      (selectedSecondaryTrack === "arabic" ? "Arabe" : "Français"),
+                    level: row.program.level, academic_year: row.program.year,
+                    head_teacher: bulletinRaw?.class.head_teacher || null,
+                  }}
+                  period={{
+                    from: bulletinRaw?.period.from ?? null,
+                    to: bulletinRaw?.period.to ?? null,
+                    label: row.program.period, academic_year: row.program.year,
+                    is_last: row.program.historicalSecondary?.annualAverage != null,
+                  }}
+                  institution={institution ? {
+                    ...institution,
+                    institution_head_name: row.program.directorName || institution.institution_head_name,
+                  } : null}
+                  stats={secondaryStatistics}
+                  conduct={null} signaturesEnabled={false}
+                  disableLocalQr previewZoomForMeasure={previewZoom}
+                />
+              ))}
+            </div>
+          </div>,
+          document.body,
+        )
+      ) : previewOpen &&
       specializedBulletins &&
       typeof document !== "undefined" ? (
         createPortal(
