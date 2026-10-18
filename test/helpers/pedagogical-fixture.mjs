@@ -24,7 +24,8 @@ export function createPedagogicalFixture({ bilingual = true, specialized = true,
   db.tables.institution_level_subjects = db.tables.subjects.map((subject, index) => ({ id: `curriculum-${index}`, institution_id: institutionId,
     education_type: "general_secondary", formation_code: null, level_code: "CP1", subject_id: subject.id, is_active: true }));
   db.tables.grade_evaluations = db.tables.subjects.map((subject, index) => ({ id: `evaluation-${index}`, class_id: classId, subject_id: subject.id,
-    eval_date: "2026-10-01", scale: index === 0 ? 10 : 20, coeff: 1, is_published: true, publication_status: "published", publication_version: 2, grading_period_id: periodId }));
+    eval_date: "2026-10-01", eval_kind: "interro_ecrite", title: "Composition",
+    scale: index === 0 ? 10 : 20, coeff: 1, is_published: true, publication_status: "published", publication_version: 2, grading_period_id: periodId }));
   db.tables.class_enrollments = Array.from({ length: count }, (_, index) => ({ id: `enrollment-${index}`, institution_id: institutionId, class_id: classId,
     student_id: `student-${index}`, start_date: "2026-09-01", end_date: null, students: { id: `student-${index}`, institution_id: institutionId,
       full_name: `Élève fictif ${index}`, first_name: "Élève", last_name: `Fictif ${index}`, matricule: `TEST-${index}` } }));
