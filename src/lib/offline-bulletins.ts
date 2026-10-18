@@ -205,13 +205,22 @@ export async function getAdminBulletinClasses<T = any>(): Promise<T> {
   );
 }
 
+/** Les vues en ligne restent utilisables si IndexedDB est temporairement fermé. */
+async function rememberBulletinSnapshot(key: string, payload: unknown): Promise<void> {
+  try {
+    await cacheSet(key, payload);
+  } catch (error) {
+    console.warn("[Bulletins] Cache local indisponible; données chargées conservées.", error);
+  }
+}
+
 export async function getAdminBulletinSettings<T = any>(): Promise<T> {
   const payload = await offlineGetJson<any>(
     "/api/admin/institution/settings",
     ADMIN_BULLETIN_SETTINGS_KEY,
   );
   const enriched = await enrichSettingsForOffline(payload);
-  await cacheSet(ADMIN_BULLETIN_SETTINGS_KEY, enriched);
+  await rememberBulletinSnapshot(ADMIN_BULLETIN_SETTINGS_KEY, enriched);
   return enriched as T;
 }
 
@@ -239,7 +248,7 @@ export async function getAdminBulletin<T = any>(
     key,
   );
   const enriched = await enrichBulletinForOffline(payload);
-  await cacheSet(key, enriched);
+  await rememberBulletinSnapshot(key, enriched);
   return enriched as T;
 }
 

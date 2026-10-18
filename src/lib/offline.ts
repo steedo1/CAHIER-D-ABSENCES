@@ -193,7 +193,8 @@ async function openDB(): Promise<IDBDatabase> {
   if (!isBrowser()) throw new Error("offline.ts must run in the browser");
   if (_dbPromise) return _dbPromise;
 
-  _dbPromise = new Promise((resolve, reject) => {
+  let opening!: Promise<IDBDatabase>;
+  opening = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
 
     req.onupgradeneeded = () => {
@@ -223,11 +224,27 @@ async function openDB(): Promise<IDBDatabase> {
       }
     };
 
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      // Une autre version de la PWA peut fermer la connexion IndexedDB.
+      // Ne jamais réutiliser ensuite la promesse d'une connexion fermée.
+      db.onversionchange = () => {
+        db.close();
+        if (_dbPromise === opening) _dbPromise = null;
+      };
+      db.onclose = () => {
+        if (_dbPromise === opening) _dbPromise = null;
+      };
+      resolve(db);
+    };
+    req.onerror = () => {
+      if (_dbPromise === opening) _dbPromise = null;
+      reject(req.error);
+    };
   });
 
-  return _dbPromise;
+  _dbPromise = opening;
+  return opening;
 }
 
 /* ───────────────────────── KV cache ───────────────────────── */
@@ -810,7 +827,19 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
         throw new HttpResponseError("attendance_schedule_changed", 409, false);
       }
     }
-    await cacheSet(cacheKey, j);
+    // Le cache est facultatif pour les lectures admin en ligne. Une connexion
+    // IndexedDB en fermeture ne doit pas transformer un GET réussi en erreur
+    // réseau ni empêcher l'affichage des bulletins. Les caches enseignants
+    // conservent leur exigence d'intégrité/identité stricte.
+    if (scoped) {
+      await cacheSet(cacheKey, j);
+    } else {
+      try {
+        await cacheSet(cacheKey, j);
+      } catch (cacheError) {
+        console.warn("[offline] Cache local indisponible; réponse serveur conservée.", cacheError);
+      }
+    }
     return j as T;
   } catch (error) {
     if (error instanceof HttpResponseError && !error.allowCache) {
