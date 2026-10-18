@@ -1,6 +1,7 @@
 "use client";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import { mustDeferBilingualAdminProvisioning } from "@/lib/school-director-scope";
+import SchoolTeachingDirectorsManager from "@/components/admin/SchoolTeachingDirectorsManager";
 
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -1072,6 +1073,13 @@ export default function UsersPage() {
           uniquement pour les enseignants.
         </p>
       </div>
+
+      {navigation?.settings.enabled &&
+        navigation.settings.enabledCycles.some(cycle =>
+          navigation.settings.teachingTracksByCycle[cycle]?.includes("french") &&
+          navigation.settings.teachingTracksByCycle[cycle]?.includes("arabic")) && (
+        <SchoolTeachingDirectorsManager />
+      )}
 
       <StaffManager />
 
