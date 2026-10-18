@@ -126,7 +126,15 @@ export async function PUT(req: NextRequest) {
         return json({ error: "subject_not_configured_for_program" }, 400);
       }
     }
-    const ids = [...new Set(incoming.coefficients.map(row => row.subjectId))];
+    for (const row of incoming.primarySubjectScales || []) {
+      if (!cycles.enabledCycles.includes("primary") ||
+        !cycles.teachingTracksByCycle.primary?.includes("arabic") ||
+        !cycles.subjectTracksByCycle.primary?.[row.subjectId]?.includes("arabic")) {
+        return json({ error: "primary_arabic_subject_not_configured_for_program" }, 400);
+      }
+    }
+    const ids = [...new Set([...incoming.coefficients.map(row => row.subjectId),
+      ...(incoming.primarySubjectScales || []).map(row => row.subjectId)])];
     if (ids.length) {
       const active = await auth.service.from("institution_subjects").select("subject_id")
         .eq("institution_id", auth.institutionId).eq("is_active", true)
