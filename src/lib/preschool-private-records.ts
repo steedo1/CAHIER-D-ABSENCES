@@ -35,8 +35,9 @@ export async function readPreschoolCatalogs(service: SupabaseClient, institution
         !validPreschoolCatalog(row.competencies)) {
       throw Error("invalid_preschool_catalog_storage");
     }
-    result.catalogs[row.teaching_track] = row.competencies;
-    result.revisions[row.teaching_track] = Number(row.revision);
+    const track: TeachingTrack = row.teaching_track === "french" ? "french" : "arabic";
+    result.catalogs[track] = row.competencies;
+    result.revisions[track] = Number(row.revision);
   }
   return result;
 }
