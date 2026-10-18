@@ -3035,7 +3035,13 @@ function BulletinsPageContent() {
         const prepared = await prepareBulletinQrPreview(json, isOnline);
         if (prepared !== json) {
           json = prepared;
-          await cacheSet(adminBulletinDataKey(params), json);
+          // Le QR préparé est déjà dans la réponse. Son archivage hors ligne
+          // est optionnel : ne pas afficher d'erreur de QR si IndexedDB ferme.
+          try {
+            await cacheSet(adminBulletinDataKey(params), json);
+          } catch (cacheError) {
+            console.warn("[Bulletins] Aperçu QR chargé, cache indisponible.", cacheError);
+          }
         }
       } catch (error) {
         setErrorMsg(error instanceof Error ? error.message : "Préparation du QR indisponible.");
