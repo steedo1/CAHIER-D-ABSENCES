@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import styles from "./FrancoArabicBulletin.module.css";
 import { selectPrintablePrograms } from "@/lib/franco-arabic-print-layout";
 
@@ -36,6 +37,11 @@ export type BulletinSubject = {
   observation?: string | null;
   /** e.g. an excluded conduct discipline remains visible */
   includeInAverage?: boolean;
+  subjectRank?: number | null;
+  teacherName?: string | null;
+  bonus?: number | null;
+  components?: Array<{ id: string; name: string; coefficient: number;
+    average: number | null; rank: number | null }>;
 };
 export type BulletinProgram = {
   track: BulletinTrack;
@@ -54,6 +60,19 @@ export type BulletinProgram = {
   lates?: string | null;
   appreciation?: string | null;
   directorName?: string | null;
+  allowHistoricalNc?: boolean;
+  historicalSecondary?: {
+    conductAverage: number | null;
+    annualAverage: number | null;
+    annualRank: number | null;
+    generalBonus: number | null;
+    averageStatus: string | null;
+    previousPeriods: Array<{ label?: string | null; code?: string | null;
+      avg20?: number | null; rank?: number | null }>;
+    decision: { official_decision?: string | null; state?: string | null;
+      official_annual_average?: number | null; council_adjustment?: number | null } | null;
+    groups: Array<{ id: string; label: string; coefficient: number | null; average: number | null }>;
+  };
 };
 export type BulletinDocument = {
   school: BulletinSchool;
@@ -161,10 +180,14 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
       {!compact && <th scope="col">Observation</th>}
     </tr></thead>
     <tbody>
-      {program.subjects.map(row => <tr key={row.id}>
+      {program.subjects.map(row => <Fragment key={row.id}><tr>
         <td className={styles.subjectCell}>
           <span dir="auto">{row.name}</span>
           {row.arabicName && <small lang="ar" dir="rtl">{row.arabicName}</small>}
+          {program.historicalSecondary && row.subjectRank != null &&
+            <small>Rang matière : {row.subjectRank}</small>}
+          {program.historicalSecondary && row.teacherName &&
+            <small>Enseignant : {row.teacherName}</small>}
         </td>
         {secondary && <td>{number(row.coefficient, row.coefficient !== null && row.coefficient % 1 !== 0 ? 1 : 0)}</td>}
         <td className={styles.markCell}>{program.ciPrimaryFrench
@@ -172,7 +195,17 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
           : number(row.average)}</td>
         {!compact && <td>{number(row.classAverage)}</td>}
         {!compact && <td className={styles.observation}>{row.observation || "—"}</td>}
-      </tr>)}
+      </tr>
+      {program.historicalSecondary && (row.components || []).map(component => (
+          <tr key={`component-${row.id}-${component.id}`} className={styles.subjectComponentRow}>
+            <td className={styles.subjectCell}>↳ {component.name}{component.rank != null ? ` · Rang ${component.rank}` : ""}</td>
+            {secondary && <td>{number(component.coefficient, 0)}</td>}
+            <td>{component.average === null ? "NC" : number(component.average)}</td>
+            {!compact && <td>—</td>}
+            {!compact && <td className={styles.observation}>Sous-matière</td>}
+          </tr>
+        ))}
+      </Fragment>)}
     </tbody>
   </table>;
 }
@@ -193,9 +226,12 @@ function Summary({ program, compact, ordinary }: { program: BulletinProgram; com
     </div>}
     <div className={styles.summaryMetric}>
       <span>{ordinary ? "Moyenne générale" : `Moyenne ${program.track === "arabic" ? "arabe" : "française"}`}</span>
-      <strong>{score}<small> / {program.denominator}</small></strong>
+      <strong>{program.allowHistoricalNc && program.generalAverage === null ? "NC" : score}<small> / {program.denominator}</small></strong>
     </div>
     <div className={styles.summaryMetric}><span>Rang</span><strong>{rank}</strong></div>
+    {program.historicalSecondary && <div className={styles.summaryMetric}>
+      <span>Moyenne de conduite</span><strong>{number(program.historicalSecondary.conductAverage)}</strong>
+    </div>}
     {!compact && <div className={styles.summaryMetric}>
       <span>Absences / Retards</span><strong className={styles.miniMetric}>
         {program.absences || "—"} / {program.lates || "—"}
@@ -215,6 +251,35 @@ function Panel({ program, compact, ordinary }: { program: BulletinProgram; compa
     <Heading track={program.track} compact={compact} ordinary={ordinary}/>
     <CourseTable program={program} compact={compact}/>
     <Summary program={program} compact={compact} ordinary={ordinary}/>
+    {program.historicalSecondary && <div className={styles.historicalDetails}>
+      {program.historicalSecondary.groups.length > 0 && (
+        <div className={styles.historicalLine}>
+          <strong>Bilans disciplinaires</strong>
+          {program.historicalSecondary.groups.map(group => (
+            <span key={group.id}>{group.label} : {number(group.average)}
+              {group.coefficient != null ? ` (coef. ${number(group.coefficient, 0)})` : ""}</span>
+          ))}
+        </div>
+      )}
+      {program.historicalSecondary.previousPeriods.length > 0 && (
+        <div className={styles.historicalLine}>
+          <strong>Périodes précédentes</strong>
+          {program.historicalSecondary.previousPeriods.map((period, index) => (
+            <span key={index}>{period.label || period.code || `Période ${index + 1}`} :
+              {number(period.avg20)} /20{period.rank != null ? ` · Rang ${period.rank}` : ""}</span>
+          ))}
+        </div>
+      )}
+      {program.historicalSecondary.annualAverage !== null && <div className={styles.historicalLine}>
+        <strong>Moyenne annuelle</strong>
+        <span>{number(program.historicalSecondary.annualAverage)} /20
+          {program.historicalSecondary.annualRank != null ? ` · Rang ${program.historicalSecondary.annualRank}` : ""}</span>
+      </div>}
+      {program.historicalSecondary.decision?.official_decision && <div className={styles.historicalLine}>
+        <strong>Décision de fin d'année</strong>
+        <span>{program.historicalSecondary.decision.official_decision}</span>
+      </div>}
+    </div>}
     <div className={styles.appreciation}>
       <span>Appréciation générale</span>
       <p>{program.appreciation || "—"}</p>

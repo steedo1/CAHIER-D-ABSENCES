@@ -14,6 +14,7 @@ import { inferSchoolCycleFromLevel } from "@/lib/school-cycles";
 import { classSubjectIds, hasCiPrimaryFrenchReference } from "@/lib/school-class-subjects";
 import { ciPrimaryFrenchEntryForName, ciPrimaryFrenchDenominator, ciPrimaryFrenchBulletinRows } from "@/lib/primary-french-reference-ci";
 import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
+import { adaptHistoricalFrenchSecondaryBulletins, type HistoricalSecondaryFrenchResponse } from "@/lib/server/historical-french-secondary-adapter";
 
 export type SpecializedBulletinPayload = {
   engine: "specialized"; cycle: SchoolCycle; format: "separate" | "combined" | "both";
@@ -46,6 +47,9 @@ export async function loadSpecializedBulletin(input: {
   service: SupabaseClient; institutionId: string; schoolClass: SchoolClass;
   settingsJson: unknown; institutionName: string | null; institutionCode: string | null;
   searchParams: URLSearchParams; role: string;
+  /** SERVER-ONLY callback into the identical historical bulletin route. */
+  loadHistoricalFrench: (period: { from: string; to: string; academicYear: string; verifiedLinkedStudentIds: string[] }) =>
+    Promise<{ status: number; data: unknown }>;
 }): Promise<NextResponse | null> {
   const selected = resolvePedagogicalEngine(input.settingsJson, input.schoolClass);
   if (selected.engine === "legacy") return null;
@@ -179,7 +183,29 @@ export async function loadSpecializedBulletin(input: {
     const programs = classPolicy
       ? allPrograms.filter(track => classPolicy.tracks.includes(track))
       : allPrograms;
-    const resolved = programs.map(track => ({ track, ...resolveProgramCoefficients({
+    // The historical secondary-French route, not this specialized calculator,
+    // owns ALL French general-secondary marks, coefficients, averages, ranking,
+    // conduct (including institution-specific rules), bonuses and decisions.
+    const useHistoricalFrench = cycle === "secondary" && programs.includes("french");
+    const signatories = readSchoolTeachingSignatories(input.settingsJson);
+    let historicalFrenchPrograms = new Map<string, BulletinProgram>();
+    if (useHistoricalFrench) {
+      const history = await input.loadHistoricalFrench({ from: String(period.start_date),
+        to: String(period.end_date), academicYear: String(year), verifiedLinkedStudentIds: links });
+      if (history.status !== 200) return json({
+        ok: false, error: "SECONDARY_FRENCH_HISTORICAL_ENGINE_UNAVAILABLE",
+        historicalStatus: history.status,
+        historicalError: (history.data as { error?: string } | null)?.error || null,
+      }, history.status >= 400 && history.status < 500 ? history.status : 503);
+      historicalFrenchPrograms = adaptHistoricalFrenchSecondaryBulletins(
+        history.data as HistoricalSecondaryFrenchResponse,
+        { level, className: schoolClass.label || level, year,
+          period: period.label || period.code || "",
+          directorName: signatories.french?.name || null },
+      );
+    }
+    const resolved = programs.filter(track => !(useHistoricalFrench && track === "french"))
+      .map(track => ({ track, ...resolveProgramCoefficients({
       cycle, level, track, settingsJson: input.settingsJson,
       activeSubjectIds: activeSubjects.map(row => row.subject_id),
       classSubjectIds: classSubjectIds(input.settingsJson, year, schoolClass.id),
@@ -212,13 +238,14 @@ export async function loadSpecializedBulletin(input: {
       return { studentId: row.student.id, average: draft?.generalAverage ?? null, complete: draft?.status === "ready" };
     }))]));
 
-    const signatories = readSchoolTeachingSignatories(input.settingsJson);
     const documents: SpecializedBulletinPayload["documents"] = results.map(({ student, drafts }) => {
       const document: BulletinDocument = {
         school: { name: input.institutionName || "", code: input.institutionCode },
         student: { id: student.id, firstName: student.first_name || "", lastName: student.last_name || student.full_name || "",
           matricule: student.matricule, birthDate: student.birthdate },
       };
+      const historicalFrench = useHistoricalFrench ? historicalFrenchPrograms.get(student.id) : null;
+      if (historicalFrench) document.french = historicalFrench;
       for (const draft of drafts) {
         const rank = ranksByProgram.get(draft.track)?.get(student.id) ?? null;
         const isCiPrimaryFrench = ciPrimaryFrench && draft.track === "french";
@@ -238,9 +265,15 @@ export async function loadSpecializedBulletin(input: {
         };
         document[draft.track] = program;
       }
-      return { studentId: student.id, document, ready: drafts.length > 0 && drafts.every(row => row.status === "ready"),
-        programReadiness: Object.fromEntries(drafts.map(draft => [draft.track, draft.status === "ready"])),
-        problems: [...new Set(drafts.flatMap(row => row.problems))] };
+      const readiness: Partial<Record<TeachingTrack, boolean>> =
+        Object.fromEntries(drafts.map(draft => [draft.track, draft.status === "ready"]));
+      if (useHistoricalFrench) readiness.french = historicalFrench != null;
+      const errors = [...drafts.flatMap(row => row.problems)];
+      if (useHistoricalFrench && !historicalFrench) errors.push("SECONDARY_FRENCH_STUDENT_MISSING_IN_HISTORICAL_RESULT");
+      // Valid historical NC is preserved, never silently converted to 0.
+      return { studentId: student.id, document,
+        ready: programs.every(track => readiness[track] === true),
+        programReadiness: readiness, problems: [...new Set(errors)] };
     });
     return json({ ok: true, class: { ...schoolClass, label: schoolClass.label || level },
       period: { from: period.start_date, to: period.end_date, label: period.label, academic_year: year },

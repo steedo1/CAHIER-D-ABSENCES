@@ -45,8 +45,8 @@ export function printableAverageFields<
  * layout. A ready French report may be printed while Arabic is incomplete. */
 export function isSpecializedBulletinPrintable(
   model: {
-    french?: (PrintableProgramBase & { denominator: number }) | null;
-    arabic?: (PrintableProgramBase & { denominator: number }) | null;
+    french?: (PrintableProgramBase & { denominator: number; allowHistoricalNc?: boolean }) | null;
+    arabic?: (PrintableProgramBase & { denominator: number; allowHistoricalNc?: boolean }) | null;
     sample?: boolean;
     draft?: boolean;
   },
@@ -56,6 +56,8 @@ export function isSpecializedBulletinPrintable(
   const programs = selectPrintablePrograms(model, variant);
   return !model.sample && !model.draft && !!programs?.length && programs.every(program =>
     readiness[program.track] === true && Number.isFinite(program.denominator) && program.denominator > 0 &&
-    program.generalAverage !== null && Number.isFinite(program.generalAverage) &&
-    program.generalAverage >= 0 && program.generalAverage <= program.denominator);
+    ((program.generalAverage !== null && Number.isFinite(program.generalAverage) &&
+      program.generalAverage >= 0 && program.generalAverage <= program.denominator) ||
+      (("allowHistoricalNc" in program) && program.allowHistoricalNc === true &&
+        program.generalAverage === null)));
 }

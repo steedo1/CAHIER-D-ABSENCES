@@ -12,6 +12,7 @@ import { findExistingBulletinShortCodes, getOrCreateBulletinShortCode } from "@/
 import { signBulletinQR } from "@/lib/bulletin-qr";
 import { createBulletinQrDataUrl } from "@/lib/bulletin-qr-image";
 import { loadSpecializedBulletin } from "@/lib/server/specialized-bulletin";
+import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
 import { prepareBulletinPreviewShortCodes } from "@/lib/bulletin-qr-preview";
 import { bulletinOfficialNumber } from "@/lib/official-documents";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
@@ -1646,7 +1647,13 @@ async function attachOfficialEndOfYearDecisions(
 }
 
 /* ───────── GET /api/admin/grades/bulletin ───────── */
-async function loadBulletin(req: NextRequest, createQr: boolean) {
+async function loadBulletin(
+  req: NextRequest, createQr: boolean,
+  options: { reuseHistoricalFrenchSecondary?: boolean; verifiedLinkedStudentIds?: string[] } = {},
+) {
+  // Internal, server-only reuse by the specialized presentation. Never driven
+  // by a query parameter: a user cannot bypass the specialized engine.
+  const frenchSecondaryOnly = options.reuseHistoricalFrenchSecondary === true;
   const supabase = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
   const srvClient = srv as unknown as SupabaseClient;
@@ -1740,12 +1747,29 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
       );
   }
 
-  const specialized = await loadSpecializedBulletin({
-    service: srvClient, institutionId, schoolClass: classRow,
-    settingsJson: institutionSettingsJson, institutionName: institutionMeta.name || null,
-    institutionCode: institutionMeta.code_unique || null, searchParams, role: ctx.role,
-  });
-  if (specialized) return specialized;
+  if (!frenchSecondaryOnly) {
+    const specialized = await loadSpecializedBulletin({
+      service: srvClient, institutionId, schoolClass: classRow,
+      settingsJson: institutionSettingsJson, institutionName: institutionMeta.name || null,
+      institutionCode: institutionMeta.code_unique || null, searchParams, role: ctx.role,
+      loadHistoricalFrench: async (period) => {
+        // Re-enter THE SAME historical computation instead of implementing
+        // a second secondary-French formula. Rendering is handled separately.
+        const url = new URL(req.url);
+        url.searchParams.set("from", period.from);
+        url.searchParams.set("to", period.to);
+        url.searchParams.set("academic_year", period.academicYear);
+        url.searchParams.set("export_light", "1"); // no QR or PNG side effects
+        const nested = new NextRequest(url, { headers: req.headers, method: "GET" });
+        const response = await loadBulletin(nested, false, {
+          reuseHistoricalFrenchSecondary: true,
+          verifiedLinkedStudentIds: period.verifiedLinkedStudentIds,
+        });
+        return { status: response.status, data: await response.json() };
+      },
+    });
+    if (specialized) return specialized;
+  }
 
   const educationContext = resolveBulletinEducationContext({
     educationType: classRow.education_type,
@@ -1763,6 +1787,18 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
       : true;
 
   const isCSCA = isCSCAInstitution(institutionMeta);
+  // Never copy CSCA exceptions to other schools. The historical engine still
+  // identifies the institution itself; this option only limits the teaching
+  // scope for a specialized FRANCO-ARABIC secondary presentation.
+  const secondaryTracks = frenchSecondaryOnly
+    ? parseSchoolCyclesSettings(institutionSettingsJson).subjectTracksByCycle.secondary || {}
+    : {};
+  const frenchSubjectIds = new Set(Object.entries(secondaryTracks)
+    .filter(([, tracks]) => tracks.length === 1 && tracks[0] === "french")
+    .map(([id]) => id));
+  if (frenchSecondaryOnly && frenchSubjectIds.size === 0) {
+    return NextResponse.json({ ok: false, error: "SECONDARY_FRENCH_CURRICULUM_REQUIRED" }, { status: 409 });
+  }
 
   // 1a) Lookup du professeur principal (facultatif)
   let headTeacher: HeadTeacherRow | null = null;
@@ -1963,6 +1999,35 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
     if (!classStudentMap.has(sid)) classStudentMap.set(sid, row);
   }
 
+  if (frenchSecondaryOnly && options.verifiedLinkedStudentIds?.length) {
+    // The specialized server route already verified the current home-class
+    // enrollment, institution, year and level for these linked pupils.
+    // Load their identity from the SAME institution, without inserting or
+    // transferring an enrollment, so the historical French calculation can
+    // rank them with their classmates.
+    const missing = [...new Set(options.verifiedLinkedStudentIds)]
+      .filter(studentId => !classStudentMap.has(studentId) && isUuid(studentId));
+    if (missing.length > 500) return NextResponse.json({
+      ok: false, error: "SECONDARY_FRENCH_LINKED_LIMIT",
+    }, { status: 409 });
+    if (missing.length) {
+      const { data: linkedStudents, error: linkedError } = await srvClient
+        .from("students")
+        .select("id,institution_id,first_name,last_name,full_name,matricule,photo_path,photo_updated_at,gender,birthdate,birth_place,nationality,regime,is_repeater,is_boarder,is_affecte")
+        .eq("institution_id", institutionId).in("id", missing);
+      if (linkedError || !linkedStudents || linkedStudents.length !== missing.length) {
+        return NextResponse.json({ ok: false, error: "SECONDARY_FRENCH_LINKED_STUDENTS_UNAVAILABLE" }, { status: 409 });
+      }
+      const byId = new Map(linkedStudents.map(student => [student.id, student]));
+      for (const id of missing) {
+        const student = byId.get(id);
+        if (!student) return NextResponse.json({
+          ok: false, error: "SECONDARY_FRENCH_LINKED_STUDENT_INVALID",
+        }, { status: 409 });
+        classStudentMap.set(id, { student_id: id, students: student });
+      }
+    }
+  }
   const classStudents = Array.from(classStudentMap.values());
   const studentIds = classStudents.map((cs) => cs.student_id);
 
@@ -2457,6 +2522,15 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
   }
 
   const subjects = (subjData || []) as SubjectRow[];
+  if (frenchSecondaryOnly && subjects.some(subject => {
+    const tracks = secondaryTracks[subject.id] || [];
+    return tracks.length > 1 && tracks.includes("french") &&
+      (assignedSubjectIds.has(subject.id) || subjectIdSet.has(subject.id));
+  })) {
+    // A shared subject without persisted evaluation-level track would leak
+    // Arabic marks into French. Never guess from its label or from the UI.
+    return NextResponse.json({ ok: false, error: "SHARED_SECONDARY_SUBJECT_REQUIRES_TRACK_BINDING" }, { status: 409 });
+  }
   const subjectById = new Map<string, SubjectRow>();
   for (const s of subjects) subjectById.set(s.id, s);
 
@@ -2491,6 +2565,9 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
     .filter((sid) => {
       if (!isUuid(sid)) return false;
       if (isCSCADisciplineComponentSubjectId(sid)) return false;
+      if (frenchSecondaryOnly &&
+          !frenchSubjectIds.has(sid) &&
+          !(isConductSubjectId(sid) && !(secondaryTracks[sid] || []).includes("arabic"))) return false;
       if (!hasAssignedSubjectsForClass) return true;
       if (assignedSubjectIds.has(sid)) return true;
       if (isConductSubjectId(sid)) return true;
@@ -3558,7 +3635,9 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
 
     // 2) Charger le nom/code pour les matières manquantes
     const annualOrderedSubjectIds = Array.from(annualSubjectIds).filter(
-      (sid) => isUuid(sid) && !isCSCADisciplineComponentSubjectId(sid),
+      (sid) => isUuid(sid) && !isCSCADisciplineComponentSubjectId(sid) &&
+        (!frenchSecondaryOnly || frenchSubjectIds.has(sid) ||
+          (isConductSubjectId(sid) && !(secondaryTracks[sid] || []).includes("arabic"))),
     );
     const missingMetaIds = annualOrderedSubjectIds.filter((sid) => !subjectById.has(sid));
     if (missingMetaIds.length) {
