@@ -154,7 +154,8 @@ test("teacher class selector resolves all six primary levels and their separatel
     };
     for (const [subjectId, track, maxScore] of [[french, "french", 10], [arabic, "arabic", 20]]) {
       db.tables.class_teachers.push({ institution_id: db.legacyId, class_id: classUuid,
-        subject_id: subjectId, teacher_id: teacherId, end_date: null });
+        subject_id: subjectId, teacher_id: teacherId, end_date: null,
+        classes: db.tables.classes.at(-1) });
       schoolSettings.franco_arabic_reports_v1.scales.push({ cycle: "primary", level, track, maxScore });
     }
   }
