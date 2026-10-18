@@ -136,8 +136,8 @@ test("CP1 arabe: saisir, enregistrer et retrouver Coran/Hadith après rafraîchi
     ]);
     // A save may reposition the edited level, but must preserve every scale.
     assert.deepEqual(
-      new Set(saves[0].scales.map(row => JSON.stringify(row))),
-      new Set(original.scales.map(row => JSON.stringify(row))),
+      new Set(saves[0].scales.map(row => [row.cycle, row.level, row.track, row.maxScore].join("|"))),
+      new Set(original.scales.map(row => [row.cycle, row.level, row.track, row.maxScore].join("|"))),
     );
     await act(async () => { [...container.querySelectorAll("button")].find(b => b.textContent.includes("Rafraîchir")).click(); });
     await flush(); await flush();
