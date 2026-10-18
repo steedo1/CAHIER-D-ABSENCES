@@ -226,8 +226,10 @@ function Footer({ model, programs, ordinary }: {
       {programs.map(p => <Signature
         key={p.track}
         name={p.directorName}
-        title={ordinary && !p.directorName ? "Direction de l’établissement" :
-          (p.track === "french" ? "Directeur de l'enseignement français" : "Directeur de l'enseignement arabe")}
+        title={p.directorName
+          ? (p.track === "french" ? "Directeur de l'enseignement français" : "Directeur de l'enseignement arabe")
+          : ordinary ? "Direction de l’établissement"
+          : (p.track === "french" ? "Directeur de l'enseignement français" : "Directeur de l'enseignement arabe")}
       />)}
       <div className={styles.stampBox}>
         <span>Cachet de l’établissement</span><div className={styles.stampSpace}/>
