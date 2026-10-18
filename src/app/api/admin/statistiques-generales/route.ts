@@ -3,6 +3,10 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { loadStatisticsGradePeriods } from "@/lib/server/general-statistics-periods";
 import type { StatisticsGradePeriod } from "@/lib/general-statistics-averages";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, type TeachingTrack } from "@/lib/school-cycles";
+import {
+  expandPedagogicalEnrollments, programsForStudent, readStudentProgramSettings,
+} from "@/lib/school-student-programs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -139,10 +143,22 @@ export async function GET() {
   if ("error" in ctx) return ctx.error;
 
   const { srv, institutionId, canReadAcademic } = ctx;
+  const { data: institution, error: configurationError } = await srv.from("institutions")
+    .select("settings_json").eq("id", institutionId).maybeSingle();
+  if (configurationError || !institution) {
+    return NextResponse.json({ error: "school_configuration_unavailable" }, { status: 503 });
+  }
+  const settingsJson = institution.settings_json;
+  const school = parseSchoolCyclesSettings(settingsJson);
+  const schoolConfiguration = {
+    enabled: school.enabled,
+    enabled_cycles: school.enabledCycles,
+    teaching_tracks_by_cycle: school.teachingTracksByCycle,
+  };
   const academicYear = await currentAcademicYear(institutionId);
 
   if (!academicYear) {
-    return NextResponse.json({ items: [], academic_year: null });
+    return NextResponse.json({ items: [], academic_year: null, school_configuration: schoolConfiguration });
   }
 
   const [enrollmentsResult, yearProfilesResult] = await Promise.all([
@@ -203,6 +219,45 @@ export async function GET() {
     if (studentId) annualByStudent.set(studentId, row);
   }
 
+  // Build programme membership from the authoritative enrollment and the
+  // opt-in school mapping. An Arabic-linked class does not enroll/count the
+  // pupil a second time. Missing mappings stay unclassified, never French by default.
+  const programmeClasses = new Map<string, Partial<Record<TeachingTrack, string>>>();
+  const verifiedSchoolClasses = new Map<string, { id: string; level: string | null }>();
+  if (school.enabled) {
+    const { data: scopedClasses, error: classesError } = await srv.from("classes")
+      .select("id,level,institution_id,academic_year")
+      .eq("institution_id", institutionId).eq("academic_year", academicYear).limit(1000);
+    if (classesError || !scopedClasses || scopedClasses.length >= 1000) {
+      return NextResponse.json({ error: "school_program_classes_unavailable" }, { status: 503 });
+    }
+    const knownClasses = scopedClasses.map((row) => ({
+      id: row.id, level: row.level, cycle: resolveSchoolCycleForClass(row, school),
+    }));
+    for (const row of scopedClasses) {
+      verifiedSchoolClasses.set(row.id, { id: row.id, level: row.level });
+    }
+    const currentEnrollments = (enrollmentsResult.data || []).map((row: any) => ({
+      class_id: clean(row.class_id), student_id: clean(row.student_id), end_date: null,
+    }));
+    const yearPolicy = readStudentProgramSettings(settingsJson).years[academicYear];
+    for (const entry of expandPedagogicalEnrollments(school, yearPolicy, knownClasses, currentEnrollments)) {
+      const cls = knownClasses.find((row) => row.id === entry.class_id);
+      if (!cls) continue;
+      const tracks = programsForStudent(yearPolicy?.classes[cls.id], entry.student_id,
+        school.teachingTracksByCycle[cls.cycle] || []);
+      const record = programmeClasses.get(entry.student_id) || {};
+      for (const track of tracks) {
+        // Prefer the student's original class if it also offers the programme.
+        if (!record[track] || currentEnrollments.some((home) =>
+          home.student_id === entry.student_id && home.class_id === cls.id)) {
+          record[track] = cls.id;
+        }
+      }
+      programmeClasses.set(entry.student_id, record);
+    }
+  }
+
   const seen = new Set<string>();
   const items: any[] = [];
 
@@ -230,6 +285,11 @@ export async function GET() {
       class_id: clean(cls?.id || (row as any)?.class_id) || null,
       class_label: clean(cls?.label) || null,
       level: clean(cls?.level) || null,
+      ...(school.enabled ? {
+        school_cycle: resolveSchoolCycleForClass(cls, school),
+        teaching_tracks: Object.keys(programmeClasses.get(id) || {}),
+        program_class_ids: programmeClasses.get(id) || {},
+      } : {}),
       gender: clean(student?.gender) || null,
       birthdate: clean(student?.birthdate) || null,
       nationality: clean(student?.nationality) || null,
@@ -277,7 +337,21 @@ export async function GET() {
         const cls = (row as any).classes;
         if (cls?.id) classes.set(cls.id, cls);
       }
-      academicPeriods = await loadStatisticsGradePeriods(srv, institutionId, academicYear, Array.from(classes.values()));
+      // A pedagogical Arabic/French class may be linked to a pupil's
+      // administrative class without owning another enrollment row.
+      // It still needs its own validated grading periods in statistics.
+      for (const record of programmeClasses.values()) {
+        for (const id of Object.values(record)) {
+          const schoolClass = id && verifiedSchoolClasses.get(id);
+          if (schoolClass && !classes.has(schoolClass.id)) {
+            classes.set(schoolClass.id, {
+              ...schoolClass, education_type: "general_secondary",
+              formation_code: null, formation_level_code: null,
+            });
+          }
+        }
+      }
+      academicPeriods = await loadStatisticsGradePeriods(srv, institutionId, academicYear, Array.from(classes.values()), settingsJson);
     } catch {
       academicFilterError = "Les périodes scolaires n’ont pas pu être chargées. Actualisez la page pour utiliser les filtres de moyenne.";
     }
@@ -288,5 +362,6 @@ export async function GET() {
     can_filter_averages: canReadAcademic,
     academic_periods: academicPeriods,
     academic_filter_error: academicFilterError,
+    school_configuration: schoolConfiguration,
   });
 }
