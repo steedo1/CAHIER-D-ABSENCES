@@ -287,10 +287,12 @@ export default function SchoolCoefficientsClassicWorkflow() {
     try {
       const old = settings.reporting;
       // Preserve unrelated cycles, programs, reporting formats and coefficients.
-      let next: FrancoArabicReportsSettings = { ...old, enabled: true, engine: "specialized",
-        // Secondary French always uses its historical calculator. Arabic reads
-        // ONLY teaching-scoped policies, never shared French coefficient rows.
-        coefficientSource: "program" };
+      // Configuration-only for Arabic primary: keep the chosen rendering engine and
+      // coefficient authority unchanged until bulletin/teacher integration is approved.
+      const isPrimaryArabic = cycle === "primary" && track === "arabic";
+      let next: FrancoArabicReportsSettings = isPrimaryArabic
+        ? { ...old, enabled: true }
+        : { ...old, enabled: true, engine: "specialized", coefficientSource: "program" };
       if (cycle === "primary" || arabicSecondary) {
         const maximum = Number(scaleDisplay);
         if (!Number.isInteger(maximum) || maximum < 1 || maximum > 100)
@@ -352,11 +354,28 @@ export default function SchoolCoefficientsClassicWorkflow() {
       });
       const value = await parseResponse<SettingsPayload>(response,
         "Les coefficients sont enregistrés, mais les paramètres du bulletin doivent être rechargés.");
-      setSettings(prev => prev && ({ ...prev, reporting: value.reporting || next, revision: value.revision || prev.revision }));
+      if (isPrimaryArabic) {
+        // Confirm actual persistence from the server, not just React's local state.
+        const verifyResponse = await fetch(endpoint, { cache: "no-store" });
+        const verified = await parseResponse<SettingsPayload>(verifyResponse,
+          "Barèmes enregistrés, mais rechargement de vérification impossible.");
+        const persisted = verified.reporting?.primarySubjectScales || [];
+        const expected = next.primarySubjectScales || [];
+        const scaleFor = (rows: typeof expected, id: string) => rows.find(row =>
+          row.cycle === "primary" && row.track === "arabic" && row.subjectId === id &&
+          sameSchoolLevel(row.level, level, "primary"))?.maxScore ?? null;
+        if (!configuredSubjects.every(subject =>
+          scaleFor(expected, subject.id) === scaleFor(persisted, subject.id))) {
+          throw new Error("L'enregistrement n'a pas été confirmé après rechargement. Vérifiez avant de quitter.");
+        }
+        setSettings(verified);
+        setMessage("Barèmes arabes enregistrés et retrouvés après rechargement — " + selectedClass.label + ".");
+      } else {
+        setSettings(prev => prev && ({ ...prev, reporting: value.reporting || next, revision: value.revision || prev.revision }));
+        setMessage("Paramètres enregistrés pour " + selectedClass.label + " — " + trackLabel[track] + ".");
+      }
       setChanges({});
       setPrimarySubjectChanges({});
-      // No second checkbox: the specialized engine is enabled by this explicit save.
-      setMessage("Paramètres enregistrés pour " + selectedClass.label + " — " + trackLabel[track] + ".");
       if (frenchSecondary) {
         const r = await fetch(historicalEndpoint, { cache: "no-store" });
         const data = await parseResponse<LegacyPayload>(r, "Rechargement des coefficients impossible");
