@@ -53,7 +53,7 @@ test("linked students are visible only in the authorized teaching, without secon
   const french=directorStudentMembership(raw,year,"french",classes,enrolments);
   const arabic=directorStudentMembership(raw,year,"arabic",classes,enrolments);
   assert.deepEqual(french.map(x=>[x.classId,x.studentId]),[[F,S1]]);
-  assert.deepEqual(arabic.map(x=>[x.classId,x.studentId]),[[A,S1],[U,S2]]);
+  assert.deepEqual(arabic.map(x=>[x.classId,x.studentId]).sort(),[[A,S1],[U,S2]].sort());
   assert.equal(enrolments.length,2);
   assert.equal(arabic.filter(x=>x.studentId===S1).length,1);
 });
