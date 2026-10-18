@@ -40,7 +40,7 @@ test("revocation, foreign school and unauthorized teaching deny by default", () 
 });
 
 test("classic school UI unchanged; new nomination is strictly opt-in", () => {
-  const read = path => readFileSync(path, "utf8");
+  const read = (path: string) => readFileSync(path, "utf8");
   const users = read("src/app/admin/users/page.tsx");
   const api = read("src/app/api/admin/school-directors/route.ts");
   const sql = read("supabase/migrations/20261018014000_school_teaching_directors_role.sql");
