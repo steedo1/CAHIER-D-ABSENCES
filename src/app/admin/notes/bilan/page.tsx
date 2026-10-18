@@ -1,5 +1,9 @@
 // src/app/admin/notes/bilan/page.tsx
 "use client";
+import SpecializedCorrespondentReports from "@/components/admin/SpecializedCorrespondentReports";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import { isBilingualSchool } from "@/lib/school-student-programs";
+
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -508,6 +512,14 @@ function printHtmlDocument(html: string, onError: (message: string) => void) {
 }
 
 export default function BilanTrimestrielAnnuelPage() {
+  const navigation = useSchoolNavigation();
+  if (navigation && isBilingualSchool(navigation.settings)) {
+    return <SpecializedCorrespondentReports mode="balance" />;
+  }
+  return <LegacyBilanTrimestrielAnnuelPage />;
+}
+
+function LegacyBilanTrimestrielAnnuelPage() {
   const [data, setData] = useState<ReportData | null>(null);
   const [academicYear, setAcademicYear] = useState("");
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
