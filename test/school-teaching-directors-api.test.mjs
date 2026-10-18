@@ -77,3 +77,40 @@ test("one school director can be nominated without changing any classic school p
   assert.equal(again.status, 409);
   assert.equal(db.tables.school_teaching_directors.length, 1);
 });
+
+
+test("nomination reuses EPC teacher profile and preserves password, marks and historic teacher role", async () => {
+  const db = school();
+  const profileId = "55555555-5555-4555-8555-555555555555";
+  db.tables.profiles.push({
+    id: profileId, institution_id: db.legacyId,
+    display_name: "Directeur enseignant existant", phone: "+2250757003961",
+  });
+  db.tables.user_roles.push({
+    id: "77777777-7777-4777-8777-777777777777",
+    profile_id: profileId, institution_id: db.legacyId, role: "teacher",
+  });
+  db.tables.school_teaching_directors = [];
+  const marker = { student_id: "another-student", score: 18 };
+  db.tables.grade_published_scores = [marker];
+  db.service.auth = { admin: {
+    createUser: async () => { throw Error("Existing teacher should never be re-created"); },
+    updateUserById: async () => { throw Error("Existing teacher password must remain unchanged"); },
+  } };
+  const client = createFixtureRouteLoader(db, db.legacyAdminId)(route);
+  const response = await client.POST(post({ track: "arabic", existing_profile_id: profileId }));
+  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  const body = await response.json();
+  assert.equal(body.reused_existing_account, true);
+  assert.equal(body.temporary_password, undefined);
+  assert.deepEqual(db.tables.grade_published_scores, [marker]);
+  assert.equal(db.tables.profiles.filter(x => x.id === profileId).length, 1);
+  assert.deepEqual(
+    db.tables.user_roles.filter(x => x.profile_id === profileId).map(x => x.role).sort(),
+    ["teacher", "teaching_director"],
+  );
+  assert.equal(db.tables.school_teaching_directors[0].teaching_track, "arabic");
+  const again = await client.POST(post({ track: "french", existing_profile_id: profileId }));
+  assert.equal(again.status, 409);
+  assert.equal(db.tables.school_teaching_directors.length, 1);
+});
