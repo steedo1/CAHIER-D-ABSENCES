@@ -78,17 +78,33 @@ test("une attribution admin d'une autre école ne donne pas accès aux finances 
   assert.equal(result.reason, "role_not_allowed");
 });
 
-test("Finance Premium désactivé ou abonnement expiré : DG refusé, même si menu visible", async () => {
-  for (const [enabled, expiry, reason] of [
-    [false, "2027-07-11", "finance_not_enabled"],
-    [true, "2025-01-01", "subscription_expired"],
-  ]) {
-    const db = fixture(bilingual, enabled, expiry);
+test("DG franco-arabe : Finance disponible avec l'abonnement valide même si l'ancien drapeau Premium est désactivé", async () => {
+  const db = fixture(bilingual, false, "2027-10-17");
+  const access = createFixtureRouteLoader(db, db.legacyAdminId)("src/lib/finance-access.ts");
+  const full = await access.getFinanceAccessForCurrentUser("full");
+  assert.equal(full.ok, true);
+  assert.equal(full.scope, "full");
+  assert.equal(full.premiumEnabled, true, "Finance effective enabled for DG despite legacy flag");
+});
+
+test("DG franco-arabe : abonnement expiré interdit Finance même lorsque le Premium est désactivé", async () => {
+  for (const enabled of [true, false]) {
+    const db = fixture(bilingual, enabled, "2025-01-01");
     const access = createFixtureRouteLoader(db, db.legacyAdminId)("src/lib/finance-access.ts");
     const result = await access.getFinanceAccessForCurrentUser("full");
     assert.equal(result.ok, false);
-    assert.equal(result.reason, reason);
+    assert.equal(result.reason, "subscription_expired");
   }
+});
+
+test("les autres écoles ne contournent jamais Finance Premium ; droit historique finance_manager préservé", async () => {
+  const db = fixture(ordinary, false, "2027-07-11");
+  db.tables.user_roles = db.tables.user_roles.filter(row => row.profile_id !== db.legacyAdminId);
+  db.tables.user_roles.push({ profile_id: db.legacyAdminId, institution_id: db.legacyId, role: "finance_manager" });
+  const access = createFixtureRouteLoader(db, db.legacyAdminId)("src/lib/finance-access.ts");
+  const result = await access.getFinanceAccessForCurrentUser("full");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "finance_not_enabled");
 });
 
 test("le finance_manager historique garde ses droits inchangés dans un établissement ordinaire", async () => {
