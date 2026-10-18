@@ -14,6 +14,26 @@ export type TeachingDirectorResolution =
   | { ok: true; principal: TeachingDirectorPrincipal }
   | { ok: false; status: 401 | 403 | 503; error: string };
 
+/**
+ * Pure, fail-closed principal resolution. No role mixing and no scope based on
+ * a URL parameter. The active appointment is the only program authority.
+ */
+export function resolveTeachingDirectorGrant(input: {
+  institutionId: string;
+  roles: Array<{ role: string; institution_id: string | null }>;
+  appointments: Array<{ institution_id: string; teaching_track: string; is_active: boolean }>;
+}): TeachingTrack | null {
+  const { institutionId, roles, appointments } = input;
+  if (!institutionId || roles.length !== 1 ||
+      roles[0].role !== "teaching_director" ||
+      roles[0].institution_id !== institutionId) return null;
+  const active = appointments.filter(row => row.is_active && row.institution_id === institutionId);
+  if (appointments.some(row => row.is_active && row.institution_id !== institutionId)) return null;
+  if (active.length !== 1) return null;
+  return active[0].teaching_track === "french" || active[0].teaching_track === "arabic"
+    ? active[0].teaching_track : null;
+}
+
 /** Server-only identity. A client-selected language, cycle, name or class never grants access. */
 export async function requireTeachingDirector(
   client: SupabaseClient,
@@ -32,23 +52,12 @@ export async function requireTeachingDirector(
     return { ok: false, status: 503, error: "director_access_unavailable" };
   }
   const institutionId = String(profile.data?.institution_id || "");
-  const grants = (roles.data || []).filter(row => row.institution_id === institutionId);
-  // A director is NEVER an alias of the unrestricted admin role.
-  // Do not mix with teacher/educator roles until their APIs are program-scoped.
-  if (!institutionId || grants.length !== 1 || grants[0].role !== "teaching_director") {
-    return { ok: false, status: 403, error: "director_role_required" };
-  }
-  const assigned = (assignments.data || []).filter(row => row.institution_id === institutionId);
-  if (assigned.length !== 1 && assigned.length !== 2) {
-    return { ok: false, status: 403, error: "director_assignment_required" };
-  }
-  // One identity may be responsible for both directions, but no request can
-  // implicitly select which one. Such accounts need an explicit verified scope.
-  if (assigned.length !== 1) return { ok: false, status: 403, error: "multiple_director_scopes_not_supported" };
-  const teachingTrack = assigned[0].teaching_track;
-  if (teachingTrack !== "french" && teachingTrack !== "arabic") {
-    return { ok: false, status: 403, error: "invalid_director_scope" };
-  }
+  const teachingTrack = resolveTeachingDirectorGrant({
+    institutionId,
+    roles: roles.data || [],
+    appointments: assignments.data || [],
+  });
+  if (!teachingTrack) return { ok: false, status: 403, error: "director_scope_required" };
   const school = await service.from("institutions")
     .select("settings_json").eq("id", institutionId).maybeSingle();
   if (school.error) return { ok: false, status: 503, error: "school_unavailable" };
