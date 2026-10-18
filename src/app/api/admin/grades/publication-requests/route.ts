@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requiresDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
 import {
   publishEvaluationOfficially,
   requestChangesForEvaluation,
@@ -1303,6 +1304,7 @@ export async function GET(req: NextRequest) {
     if (!ctx.ok) return bad(ctx.error, ctx.status);
 
     const { srv, institutionId } = ctx;
+    if (await requiresDirectGradePublication(srv, institutionId)) return bad("DIRECT_PUBLICATION_NO_ADMIN_APPROVAL", 404);
     const { searchParams } = new URL(req.url);
 
     const evaluationId = cleanText(searchParams.get("evaluation_id"));
@@ -1528,6 +1530,7 @@ export async function POST(req: NextRequest) {
     if (!ctx.ok) return bad(ctx.error, ctx.status);
 
     const { srv, institutionId, profileId } = ctx;
+    if (await requiresDirectGradePublication(srv, institutionId)) return bad("DIRECT_PUBLICATION_NO_ADMIN_APPROVAL", 404);
 
     const body = (await req.json().catch(() => ({}))) as {
       evaluation_id?: string;
