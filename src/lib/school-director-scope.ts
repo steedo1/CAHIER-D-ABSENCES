@@ -84,9 +84,13 @@ export function resolveTeachingDirectorGrant(input: {
   appointments: Array<{ institution_id: string; teaching_track: string; is_active: boolean }>;
 }): TeachingTrack | null {
   const { institutionId, roles, appointments } = input;
-  if (!institutionId || roles.length !== 1 ||
-      roles[0].role !== "teaching_director" ||
-      roles[0].institution_id !== institutionId) return null;
+  // The school's directors already hold teacher accounts. Preserve that
+  // pre-existing teaching grant without allowing admin, finance or founder.
+  const roleSet = new Set(roles.map(row => row.role));
+  if (!institutionId || roleSet.size !== roles.length ||
+      !roleSet.has("teaching_director") ||
+      [...roleSet].some(role => role !== "teaching_director" && role !== "teacher") ||
+      roles.some(row => row.institution_id !== institutionId)) return null;
   const active = appointments.filter(row => row.is_active && row.institution_id === institutionId);
   if (appointments.some(row => row.is_active && row.institution_id !== institutionId)) return null;
   if (active.length !== 1) return null;
