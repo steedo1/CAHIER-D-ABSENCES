@@ -21,6 +21,13 @@ export type BulletinSchool = {
   motto?: string | null;
   city?: string | null;
   logoUrl?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  countryName?: string | null;
+  countryMotto?: string | null;
+  ministryName?: string | null;
+  regionalDirection?: string | null;
 };
 export type BulletinStudent = {
   id: string;
@@ -29,6 +36,8 @@ export type BulletinStudent = {
   matricule?: string | null;
   birthDate?: string | null;
   photoUrl?: string | null;
+  birthPlace?: string | null;
+  gender?: string | null;
 };
 export type BulletinSubject = {
   id: string;
@@ -56,6 +65,8 @@ export type BulletinProgram = {
   period: string;
   denominator: number;
   ciPrimaryFrench?: boolean;
+  primarySubjectScores?: boolean;
+  teacherName?: string | null;
   subjects: BulletinSubject[];
   generalAverage: number | null;
   rank?: number | null;
@@ -66,6 +77,8 @@ export type BulletinProgram = {
   directorName?: string | null;
   allowHistoricalNc?: boolean;
   historicalSecondary?: {
+    /** Original authorized historical row, retained without recalculation. */
+    sourceItem?: Record<string, unknown>;
     conductAverage: number | null;
     annualAverage: number | null;
     annualRank: number | null;
@@ -75,7 +88,7 @@ export type BulletinProgram = {
       avg20?: number | null; rank?: number | null }>;
     decision: { official_decision?: string | null; state?: string | null;
       official_annual_average?: number | null; council_adjustment?: number | null } | null;
-    groups: Array<{ id: string; label: string; coefficient: number | null; average: number | null }>;
+    groups: Array<{ id: string; label: string; coefficient: number | null; average: number | null; subjectIds?: string[] }>;
   };
 };
 export type BulletinDocument = {
@@ -114,8 +127,10 @@ function Head({ model, variant }: { model: BulletinDocument; variant: BulletinVa
   return <>
     <div className={styles.upperPattern} aria-hidden="true" />
     <header className={styles.header}>
-      <div className={styles.republic}>République de Côte d’Ivoire
-        <span>Union · Discipline · Travail</span>
+      <div className={styles.republic}>{model.school.countryName || "République de Côte d’Ivoire"}
+        <span>{model.school.countryMotto || "Union · Discipline · Travail"}</span>
+        <span>{model.school.ministryName || "MINISTÈRE DE L’ÉDUCATION NATIONALE ET DE L’ALPHABÉTISATION"}</span>
+        {model.school.regionalDirection && <span>{model.school.regionalDirection}</span>}
       </div>
       <div className={styles.brandLine}>
         {model.school.logoUrl
@@ -126,6 +141,9 @@ function Head({ model, variant }: { model: BulletinDocument; variant: BulletinVa
           <div className={styles.schoolName}>{model.school.name}</div>
           {model.school.subtitle && <div className={styles.schoolSubtitle}>{model.school.subtitle}</div>}
           {model.school.motto && <div className={styles.schoolMotto}>{model.school.motto}</div>}
+          {(model.school.phone || model.school.email || model.school.address) && <div className={styles.schoolContacts}>
+            {[model.school.phone && `Tél. : ${model.school.phone}`, model.school.email, model.school.address].filter(Boolean).join(" · ")}
+          </div>}
         </div>
         <div className={styles.schoolCode}>
           <span>Établissement</span>
@@ -146,13 +164,15 @@ function Identity({ model, context }: { model: BulletinDocument; context?: Bulle
       <div className={styles.sectionEyebrow}>Élève</div>
       <div className={styles.studentName}>{model.student.lastName} {model.student.firstName}</div>
       <div className={styles.meta}><span>Matricule</span><strong>{model.student.matricule || "—"}</strong></div>
-      <div className={styles.meta}><span>Né(e) le</span><strong>{model.student.birthDate || "—"}</strong></div>
+      {model.student.birthPlace && <div className={styles.meta}><span>Lieu de naissance</span><strong>{model.student.birthPlace}</strong></div>}
+      <div className={styles.meta}><span>Né(e) le</span><strong>{model.student.birthDate ? model.student.birthDate.slice(0, 10).split("-").reverse().join("/") : "—"}</strong></div>
     </div>
     <div className={styles.identityCol}>
       <div className={styles.sectionEyebrow}>Scolarité</div>
       <div className={styles.meta}><span>Cycle</span><strong>{context?.cycle || "—"}</strong></div>
       <div className={styles.meta}><span>Niveau</span><strong>{context?.level || "—"}</strong></div>
       <div className={styles.meta}><span>Classe</span><strong>{context?.className || "—"}</strong></div>
+      {context?.teacherName && <div className={styles.meta}><span>Instituteur</span><strong>{context.teacherName}</strong></div>}
     </div>
     <div className={styles.studentPhoto}>
       {model.student.photoUrl
@@ -179,7 +199,7 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
     <thead><tr>
       <th scope="col" className={styles.subjectColumn}>Discipline</th>
       {secondary && <th scope="col">Coef.</th>}
-      <th scope="col">{program.ciPrimaryFrench ? "Notes" : `Moy. /${program.denominator}`}</th>
+      <th scope="col">{(program.primarySubjectScores || program.ciPrimaryFrench) ? "Notes" : `Moy. /${program.denominator}`}</th>
       {!compact && <th scope="col">Classe</th>}
       {!compact && <th scope="col">Observation</th>}
     </tr></thead>
@@ -194,7 +214,7 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
             <small>Enseignant : {row.teacherName}</small>}
         </td>
         {secondary && <td>{number(row.coefficient, row.coefficient !== null && row.coefficient % 1 !== 0 ? 1 : 0)}</td>}
-        <td className={styles.markCell}>{program.ciPrimaryFrench
+        <td className={styles.markCell}>{(program.primarySubjectScores || program.ciPrimaryFrench)
           ? (row.average === null ? "" : `${number(row.average)}/${row.denominator || program.denominator}`)
           : number(row.average)}</td>
         {!compact && <td>{number(row.classAverage)}</td>}
@@ -216,7 +236,7 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
 
 function Summary({ program, compact, ordinary }: { program: BulletinProgram; compact: boolean; ordinary: boolean }) {
   const score = number(program.generalAverage);
-  const graded = program.ciPrimaryFrench
+  const graded = program.primarySubjectScores || program.ciPrimaryFrench
     ? program.subjects.filter(row => row.average !== null && row.denominator != null)
     : [];
   const totalPoints = graded.reduce((sum, row) => sum + row.average!, 0);
@@ -224,7 +244,7 @@ function Summary({ program, compact, ordinary }: { program: BulletinProgram; com
   const rank = program.rank != null && program.classSize != null
     ? `${program.rank} / ${program.classSize}` : "—";
   return <div className={`${styles.summary} ${compact ? styles.compactSummary : ""}`}>
-    {program.ciPrimaryFrench && <div className={styles.summaryMetric}>
+    {(program.primarySubjectScores || program.ciPrimaryFrench) && <div className={styles.summaryMetric}>
       <span>Total des compositions</span>
       <strong>{totalBarèmes > 0 ? `${number(totalPoints)}/${totalBarèmes}` : "—"}</strong>
     </div>}
@@ -329,11 +349,14 @@ export default function FrancoArabicBulletin({
   const programs = selectPrintablePrograms(model, variant);
   // A combined A4 document is only the juxtaposition of two subject reports.
   // The policy helper returns no "global average" and never merges results.
+  if (programs?.some(program => /^(secondaire|secondary)$/i.test(program.cycle.trim())))
+    return <p role="alert">Le secondaire utilise le bulletin historique dans Correspondant Fichier.</p>;
   if (!programs) return <p role="alert">Bulletin indisponible : données des enseignements incomplètes.</p>;
 
+  const primary = programs.every(program => /^(primaire|primary)$/i.test(program.cycle.trim()));
   const compact = variant === "combined";
   const context = programs[0];
-  return <article className={`${styles.page} ${printRoot ? "fa-report-print-root" : ""} ${compact ? styles.combinedPage : ""} ${variant === "ordinary" ? styles.ordinaryPage : ""}`}
+  return <article className={`${styles.page} ${primary ? styles.primaryPage : ""} ${printRoot ? "fa-report-print-root" : ""} ${compact ? styles.combinedPage : ""} ${variant === "ordinary" ? styles.ordinaryPage : ""}`}
     aria-label={`Bulletin ${variant}`}>
     <Head model={model} variant={variant}/>
     <div className={styles.body}>

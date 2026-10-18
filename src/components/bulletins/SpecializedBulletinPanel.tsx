@@ -33,6 +33,7 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
     window.addEventListener("keydown", printShortcut);
     return () => window.removeEventListener("keydown", printShortcut);
   }, [onPrint, printable, printPreparing]);
+  if (data.cycle === "secondary") return <a href="/admin/bulletins">Ouvrir les bulletins historiques du secondaire</a>;
   return <section className="space-y-4">
     <div className="flex flex-wrap items-center gap-3 print:hidden">
       <button type="button" onClick={onBack} className="rounded-lg border px-3 py-2">Changer de classe ou de période</button>

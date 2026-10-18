@@ -79,6 +79,8 @@ export function buildProgramBulletinDraft(params: {
   configurationProblems?: readonly string[];
   /** Enabled only for classes explicitly assigned the CI French primary reference. */
   primaryCiDenominators?: Readonly<Record<string, number>>;
+  /** Configured per-subject primary barèmes; preserve raw points and omit ungraded subjects. */
+  primarySubjectDenominators?: Readonly<Record<string, number | null>>;
   /** Server-selected components for this exact cycle/teaching/level. */
   subjectComponents?: readonly SubjectComponent[];
 }): ProgramBulletinDraft {
@@ -164,6 +166,7 @@ export function buildProgramBulletinDraft(params: {
   if (duplicateEvaluationIds.size) problems.push("duplicate_published_evaluation");
 
   const subjects: ProgramSubjectResult[] = [];
+  const primaryDenominators = params.primarySubjectDenominators ?? params.primaryCiDenominators;
   let generalSum = 0;
   let generalCoefficientSum = 0;
 
@@ -185,10 +188,11 @@ export function buildProgramBulletinDraft(params: {
     const totalEvaluationCoefficient = cycle === "primary"
       ? evaluations.length
       : evaluations.reduce((sum, row) => sum + row.evaluationCoefficient, 0);
-    const ciPrimary = cycle === "primary" && params.primaryCiDenominators !== undefined;
+    const ciPrimary = cycle === "primary" && primaryDenominators !== undefined;
     const ciDenominator = ciPrimary
-      ? params.primaryCiDenominators?.[subjectId] || targetScale
+      ? primaryDenominators?.[subjectId] ?? null
       : null;
+    if (ciPrimary && evaluations.length && !strictlyPositive(ciDenominator ?? 0)) problems.push("primary_subject_scale_not_configured");
     const displayScale = ciPrimary ? ciDenominator : targetScale;
     let preciseAverage = displayScale !== null && evaluations.length > 0 &&
       totalEvaluationCoefficient > 0
@@ -256,7 +260,7 @@ export function buildProgramBulletinDraft(params: {
     studentId, cycle, level, track,
     maximumScore: targetScale,
     status,
-    generalAverage: complete ? round2(generalSum / generalCoefficientSum * (params.primaryCiDenominators ? targetScale! : 1)) : null,
+    generalAverage: complete ? round2(generalSum / generalCoefficientSum * (primaryDenominators ? targetScale! : 1)) : null,
     subjects,
     problems: [...new Set(problems)],
   };

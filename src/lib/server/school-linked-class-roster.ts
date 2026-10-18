@@ -1,0 +1,66 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
+import { expandPedagogicalEnrollments, readStudentProgramSettings } from "@/lib/school-student-programs";
+
+export type SchoolRosterClass = { id: string; level?: string | null; academic_year?: string | null };
+/** Reverify the persisted teaching links without creating duplicate enrollments. */
+export async function loadLinkedClassEnrollments(service: SupabaseClient, institutionId: string,
+  classroom: SchoolRosterClass, settings: unknown) {
+  const school = parseSchoolCyclesSettings(settings);
+  if (!school.enabled) return [];
+  const year = classroom.academic_year || "";
+  const policy = readStudentProgramSettings(settings).years[year];
+  const links = policy?.classes[classroom.id]?.linkedStudentIds || [];
+  if (!links.length) return [];
+  const { data: homes, error: homeError } = await service.from("class_enrollments")
+    .select("student_id,class_id,start_date").eq("institution_id", institutionId)
+    .in("student_id", links).is("end_date", null).limit(701);
+  if (homeError || !homes || homes.length !== links.length) throw Error("STUDENT_PROGRAM_LINK_STALE");
+  const { data: sources, error: classError } = await service.from("classes")
+    .select("id,level,academic_year,institution_id").eq("institution_id", institutionId)
+    .eq("academic_year", year).in("id", [...new Set(homes.map(row => row.class_id))]).limit(701);
+  if (classError || !sources) throw Error("STUDENT_PROGRAM_LINK_STALE");
+  const classes = [...sources.filter(row => row.id !== classroom.id), classroom]
+    .map(row => ({ id: row.id, level: row.level, cycle: resolveSchoolCycleForClass(row, school) }));
+  const allowed = expandPedagogicalEnrollments(school, policy, classes, homes)
+    .filter(row => row.class_id === classroom.id).map(row => row.student_id);
+  if (links.some(id => !allowed.includes(id))) throw Error("STUDENT_PROGRAM_LINK_STALE");
+  const { data: students, error: studentError } = await service.from("students")
+    .select("id,first_name,last_name,full_name,matricule,gender,birthdate,birth_place,parent_names,parent_contact,nationality,is_repeater,lv2,is_affecte,is_boarder")
+    .eq("institution_id", institutionId).in("id", allowed).limit(701);
+  if (studentError || !students || students.length !== links.length) throw Error("STUDENT_SCOPE_INVALID");
+  return students.map(student => ({
+    student_id: student.id, start_date: homes.find(home => home.student_id === student.id)?.start_date,
+    students: student,
+  }));
+}
+
+/** Add a bounded membership check only for explicitly configured schools.
+ * The existing route remains responsible for evaluation ownership and locks. */
+export async function specializedGradeStudentsAllowed(service: SupabaseClient, actorId: string,
+  classId: string, studentIds: readonly string[], ownerProfileId?: string | null): Promise<boolean> {
+  const [profile, classroom] = await Promise.all([
+    service.from("profiles").select("institution_id").eq("id", actorId).maybeSingle(),
+    service.from("classes").select("id,institution_id,level,academic_year").eq("id", classId).maybeSingle(),
+  ]);
+  if (profile.error || classroom.error || !classroom.data || !profile.data?.institution_id ||
+    classroom.data?.institution_id !== profile.data.institution_id) return false;
+  const institutionId = profile.data.institution_id;
+  const { data: institution, error } = await service.from("institutions").select("settings_json")
+    .eq("id", institutionId).maybeSingle();
+  if (error || !institution) return false;
+  if (!parseSchoolCyclesSettings(institution.settings_json).enabled) return true;
+  if (ownerProfileId !== undefined && ownerProfileId !== actorId) {
+    const { data: roles, error: roleError } = await service.from("user_roles").select("role")
+      .eq("profile_id", actorId).eq("institution_id", institutionId);
+    if (roleError || !roles?.some(row => ["admin", "super_admin", "educator"].includes(row.role))) return false;
+  }
+  const [enrolled, linked] = await Promise.all([
+    service.from("class_enrollments").select("student_id").eq("institution_id", institutionId)
+      .eq("class_id", classId).is("end_date", null).limit(1501),
+    loadLinkedClassEnrollments(service, institutionId, classroom.data, institution.settings_json),
+  ]);
+  if (enrolled.error || !enrolled.data || enrolled.data.length >= 1501) return false;
+  const allowed = new Set([...enrolled.data, ...linked].map(row => row.student_id));
+  return studentIds.every(id => allowed.has(id));
+}

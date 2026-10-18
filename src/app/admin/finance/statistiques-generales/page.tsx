@@ -23,6 +23,7 @@ type Student = {
   school_cycle?: "preschool" | "primary" | "secondary";
   teaching_tracks?: Array<"french" | "arabic">;
   program_class_ids?: Partial<Record<"french" | "arabic", string>>;
+  program_class_labels?: Partial<Record<"french" | "arabic", string | null>>;
   gender: string | null;
   birthdate: string | null;
   nationality?: string | null;
@@ -359,7 +360,10 @@ export default function GeneralStatisticsPage() {
   const scopedStudents = useMemo(() => students.filter((student) =>
     (!specialSchool || cycle === "all" || student.school_cycle === cycle) &&
     (!specialSchool || track === "all" || student.teaching_tracks?.includes(track) === true),
-  ), [students, specialSchool, cycle, track]);
+  ).map(student => specialSchool && track !== "all" ? {
+    ...student, class_id: student.program_class_ids?.[track] || student.class_id,
+    class_label: student.program_class_labels?.[track] || student.class_label,
+  } : student), [students, specialSchool, cycle, track]);
   const unclassified = specialSchool ? students.filter((student) => !student.teaching_tracks?.length).length : 0;
   const levels = useMemo(() => sortedUnique(scopedStudents.map((student) => student.level)), [scopedStudents]);
   const nationalities = useMemo(() => sortedUnique(students.map((student) => nationalityLabel(student.nationality))), [students]);

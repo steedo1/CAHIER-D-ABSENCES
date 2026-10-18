@@ -20,6 +20,11 @@ const items = classes.flatMap((classroom) => ["M", "F"].flatMap((gender) =>
   full_name: `ÉLÈVE ${String(index * 14 + copy).padStart(4, "0")} Prénoms de démonstration`,
   first_name: "Prénoms de démonstration", last_name: "ÉLÈVE", regime: null,
 })));
+if (params.has("bilingual")) for (const item of items) Object.assign(item, {
+  school_cycle: "secondary", teaching_tracks: ["french", "arabic"],
+  program_class_ids: { french: item.class_id, arabic: "ar-" + item.class_id },
+  program_class_labels: { french: item.class_label + " — Français", arabic: item.class_label + " — Arabe" },
+});
 if (params.has("unknown")) Object.assign(items.at(-1)!, { class_id: null, class_label: null });
 if (params.has("single")) items.splice(8);
 const institution = {
@@ -41,7 +46,9 @@ const periods = [1, 2, 3].map((term) => ({ id: `t${term}`, label: `Trimestre ${t
 window.fetch = async (input, init) => {
   const url = String(input);
   if (url === "/api/admin/statistiques-generales") return Response.json({ items, academic_year: "2026-2027",
-    can_filter_averages: true, academic_periods: periods });
+    can_filter_averages: true, academic_periods: periods,
+    ...(params.has("bilingual") ? { school_configuration: { enabled: true, enabled_cycles: ["secondary"],
+      teaching_tracks_by_cycle: { secondary: ["french", "arabic"] } } } : {}) });
   if (url === "/api/admin/institution/settings") return Response.json(institution);
   if (url.startsWith("/api/admin/grades/bulletin?")) {
     academicRequests.push(url);

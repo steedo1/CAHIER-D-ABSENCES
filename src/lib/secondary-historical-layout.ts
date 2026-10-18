@@ -44,11 +44,13 @@ export function historicalSecondaryViews(payload: SpecializedBulletinPayload, tr
         component_rank: component.rank,
       })),
     );
-    const item = {
+    const fallbackItem = {
       student_id: row.studentId,
       full_name: [row.document.student.lastName, row.document.student.firstName].filter(Boolean).join(" "),
       matricule: row.document.student.matricule ?? null,
       birth_date: row.document.student.birthDate ?? null,
+      birth_place: row.document.student.birthPlace ?? null,
+      gender: row.document.student.gender ?? null,
       photo_url: row.document.student.photoUrl ?? null,
       general_avg: onTwenty(program.generalAverage, program.denominator),
       rank: program.rank ?? null,
@@ -60,7 +62,7 @@ export function historicalSecondaryViews(payload: SpecializedBulletinPayload, tr
         teacher_id: null,
       })),
       per_subject_components: perSubjectComponents,
-      per_group: [] as Array<{ group_id: string; group_avg: number | null }>,
+      per_group: (program.historicalSecondary?.groups || []).map(group => ({ group_id: group.id, group_avg: group.average })),
       annual_avg: program.historicalSecondary?.annualAverage ?? null,
       annual_rank: program.historicalSecondary?.annualRank ?? null,
       previous_period_avgs: program.historicalSecondary?.previousPeriods.map(previous => ({
@@ -71,10 +73,20 @@ export function historicalSecondaryViews(payload: SpecializedBulletinPayload, tr
       general_avg_status: program.generalAverage !== null ? "complete" : "empty",
       is_assigned: null,
     };
+    const item = { ...fallbackItem, ...program.historicalSecondary?.sourceItem } as typeof fallbackItem;
+    const subjectGroups = (program.historicalSecondary?.groups || []).map((group, index) => ({
+      id: group.id, code: group.id, label: group.label, short_label: null,
+      order_index: index + 1, is_active: true, annual_coeff: group.coefficient ?? 1,
+      items: (group.subjectIds || []).map((subjectId, order) => ({
+        id: `${group.id}:${subjectId}`, group_id: group.id, subject_id: subjectId,
+        subject_name: program.subjects.find(subject => subject.id === subjectId)?.name || subjectId,
+        order_index: order + 1, subject_coeff_override: null,
+      })),
+    }));
     const ready = row.programReadiness[track] === true &&
       Number.isFinite(program.denominator) && program.denominator > 0;
     return [{ studentId: row.studentId, program, item,
-      subjects: normalizedSubjects, subjectComponents: normalizedComponents,
+      subjects: normalizedSubjects, subjectComponents: normalizedComponents, subjectGroups,
       ready, problems: row.problems }];
   });
 }

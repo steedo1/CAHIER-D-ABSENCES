@@ -10,6 +10,7 @@ import {
   type EducationType,
 } from "@/lib/education-organization";
 
+import type { ClassListMarkSubject } from "@/lib/class-list-subjects";
 import DocumentDirectionSignatures from "@/components/DocumentDirectionSignatures";
 import type { TeachingDocumentSignatory } from "@/lib/franco-arabic-document-signatories";
 import { fitClassListName, estimateClassListNameWidth } from "@/lib/class-list-name";
@@ -43,6 +44,8 @@ type StudentRow = {
 
 type ClassListPayload = {
   ok?: boolean;
+  school_cycle?: "primary";
+  mark_subjects?: ClassListMarkSubject[];
   can_edit?: boolean;
   class: {
     id: string;
@@ -515,7 +518,10 @@ export default function ClassListPrintPage() {
     [students, editable],
   );
 
-  const studentsPerSheet = classEducationType === "general_secondary" ? 30 : 25;
+  const primaryList = data?.school_cycle === "primary";
+  const noteColumns = primaryList ? data?.mark_subjects || [] :
+    [1, 2, 3, 4].map(index => ({ id: String(index), name: `Note ${index}`, shortName: `Note ${index}`, denominator: null }));
+  const studentsPerSheet = primaryList ? 16 : classEducationType === "general_secondary" ? 30 : 25;
 
   // Each page repeats the header and places its watermark behind its own names.
   const printedPages = useMemo(() => Array.from(
@@ -707,6 +713,18 @@ export default function ClassListPrintPage() {
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5 text-slate-950 print:bg-white print:p-0">
       <style jsx global>{`
+        @page primary-class-list-page { size: A4 landscape; margin: 8mm; }
+        .primary-class-list { page: primary-class-list-page; }
+        .primary-class-list .class-list-sheet { page: primary-class-list-page; }
+        .primary-class-list .roster-table .col-no { width: 2%; }
+        .primary-class-list .roster-table .col-matricule { width: 9%; }
+        .primary-class-list .roster-table .col-name { width: 27%; }
+        .primary-class-list .roster-table .col-affect { width: 4%; }
+        .primary-class-list .roster-table .col-date { width: 10%; }
+        .primary-class-list .roster-table .col-sex, .primary-class-list .roster-table .col-red { width: 3%; }
+        .primary-class-list .roster-table .col-note { width: auto; }
+        .subject-denominator { display: block; font-size: 8px; font-weight: normal; }
+        .primary-subject-legend { font-size: 9px; line-height: 1.4; margin-top: 2mm; }
         @page {
           size: A4 portrait;
           margin: 8mm;
@@ -920,8 +938,8 @@ export default function ClassListPrintPage() {
           </div>
           <div className="text-sm text-slate-600">
             Vérifiez l’éducateur et les informations d’identité utiles, puis
-            exportez en PDF. Les colonnes Note1 à Note4 restent volontairement
-            vides pour la saisie manuelle des notes.
+            exportez en PDF. {primaryList ? "Les colonnes portent les matières de la classe pour la saisie des notes sur papier."
+              : "Les colonnes Note1 à Note4 restent volontairement vides pour la saisie manuelle des notes."}
           </div>
         </div>
 
@@ -1373,6 +1391,10 @@ export default function ClassListPrintPage() {
                 })}
               </tbody>
             </table>
+            {primaryList && <div className="primary-subject-legend">
+              {noteColumns.length ? noteColumns.map(subject => `${subject.shortName} : ${subject.name}`).join(" · ")
+                : "Aucune matière configurée pour cette classe."}
+            </div>}
           </div>
         </div>
       ) : null}
@@ -1389,7 +1411,7 @@ export default function ClassListPrintPage() {
           </button>
         </div>
       ) : data ? (
-        <section className="class-list-print-root">
+        <section className={`class-list-print-root ${primaryList ? "primary-class-list" : ""}`}>
           {printedPages.map(({ students: pageStudents, startIndex }, pageIndex) => (
           <article className="class-list-sheet" key={pageIndex}>
             <header className="official-header">
@@ -1459,7 +1481,7 @@ export default function ClassListPrintPage() {
 
             <div className="staff-line">
               <div>
-                <strong>Professeur principal :</strong> {headTeacherLabel}
+                <strong>{primaryList ? "Instituteur :" : "Professeur principal :"}</strong> {headTeacherLabel}
               </div>
               <div>
                 <strong>Éducateur de niveau :</strong> {selectedEducator}
@@ -1487,17 +1509,18 @@ export default function ClassListPrintPage() {
                   <th className="col-date">Né(e) le</th>
                   <th className="col-sex">Sexe</th>
                   <th className="col-red">Red</th>
-                  <th className="col-note">Note 1</th>
-                  <th className="col-note">Note 2</th>
-                  <th className="col-note">Note 3</th>
-                  <th className="col-note">Note 4</th>
+                  {noteColumns.map(subject => <th key={subject.id} className="col-note"
+                    title={subject.name} style={primaryList ? { width: `${42 / Math.max(noteColumns.length, 1)}%` } : undefined}>
+                    <span>{subject.shortName}</span>
+                    {primaryList && subject.denominator !== null && <small className="subject-denominator">/{subject.denominator}</small>}
+                  </th>)}
                 </tr>
               </thead>
               <tbody>
                 {pageStudents.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={11}
+                      colSpan={7 + noteColumns.length}
                       className="py-8 text-center text-slate-500"
                     >
                       Aucun élève inscrit dans cette classe.
@@ -1531,10 +1554,7 @@ export default function ClassListPrintPage() {
                       <td className="col-red">
                         {student.is_repeater ? "R" : ""}
                       </td>
-                      <td className="col-note"></td>
-                      <td className="col-note"></td>
-                      <td className="col-note"></td>
-                      <td className="col-note"></td>
+                      {noteColumns.map(subject => <td key={subject.id} className="col-note"></td>)}
                     </tr>
                   ))
                 )}

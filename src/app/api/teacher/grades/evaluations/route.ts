@@ -12,11 +12,11 @@ import {
 } from "@/lib/grades/publication";
 import { computeAcademicYear } from "@/lib/academicYear";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
-import { resolveEvaluationTeachingTrack } from "@/lib/pedagogical-engine";
-import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
+import { primarySubjectScale, primarySubjectTeachingTrack } from "@/lib/grades/primary-subject-scale";
+
 import { encodePrimaryEvaluation, isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
-import { hasCiPrimaryFrenchReference } from "@/lib/school-class-subjects";
-import { ciPrimaryFrenchEntryForName, ciPrimaryFrenchDenominator } from "@/lib/primary-french-reference-ci";
+import { classSubjectIds } from "@/lib/school-class-subjects";
+
 import {
   autoDetectApplicableGradePeriod,
   getApplicableGradePeriodById,
@@ -832,29 +832,28 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, error: "primary_eval_kind_not_allowed" }, { status: 400 });
       }
       const track = globalId
-        ? resolveEvaluationTeachingTrack(schoolCtx.settings, "primary", globalId) : null;
-      if (!track) {
+        ? primarySubjectTeachingTrack(schoolCtx.settings, schoolCtx.year, class_id, globalId) : null;
+      if (!track || !globalId) {
         return NextResponse.json({ ok: false, error: "primary_subject_teaching_unconfigured" }, { status: 409 });
       }
-      primaryScale = getConfiguredScoringScale(
-        parseFrancoArabicReportsSettings(schoolCtx.settings), "primary", schoolCtx.level, track);
-      if (primaryScale == null) {
-        return NextResponse.json({ ok: false, error: "primary_scale_not_configured" }, { status: 409 });
+      const selectedSubjects = classSubjectIds(schoolCtx.settings, schoolCtx.year, class_id);
+      if (selectedSubjects !== null && !selectedSubjects.includes(globalId)) {
+        return NextResponse.json({ ok: false, error: "primary_subject_outside_class" }, { status: 403 });
       }
-      // The already-applied CI curriculum has per-subject examination denominators
-      // at CM1/CM2. Only ACTIVE catalog names and verified class+year opt-in qualify.
-      if (track === "french" && globalId &&
-          hasCiPrimaryFrenchReference(schoolCtx.settings, schoolCtx.year, class_id)) {
-        const { data: ciSubject, error: ciError } = await srv.from("institution_subjects")
-          .select("custom_name,subjects:subject_id(name)")
-          .eq("institution_id", institutionId).eq("subject_id", globalId)
-          .eq("is_active", true).maybeSingle();
-        if (ciError || !ciSubject) {
-          return NextResponse.json({ ok: false, error: "primary_ci_subject_unavailable" }, { status: 409 });
-        }
-        const relation = Array.isArray(ciSubject.subjects) ? ciSubject.subjects[0] : ciSubject.subjects;
-        const known = ciPrimaryFrenchEntryForName(ciSubject.custom_name || relation?.name || "");
-        if (known) primaryScale = ciPrimaryFrenchDenominator(schoolCtx.level, known.code);
+      const { data: primarySubject, error: primarySubjectError } = await srv.from("institution_subjects")
+        .select("custom_name,subjects:subject_id(name)")
+        .eq("institution_id", institutionId).eq("subject_id", globalId)
+        .eq("is_active", true).maybeSingle();
+      if (primarySubjectError || !primarySubject) {
+        return NextResponse.json({ ok: false, error: "primary_subject_unavailable" }, { status: 409 });
+      }
+      const relation = Array.isArray(primarySubject.subjects) ? primarySubject.subjects[0] : primarySubject.subjects;
+      primaryScale = primarySubjectScale(schoolCtx.settings, {
+        year: schoolCtx.year, classId: class_id, level: schoolCtx.level, track,
+        subjectId: globalId, subjectName: primarySubject.custom_name || relation?.name || "",
+      });
+      if (primaryScale === null) {
+        return NextResponse.json({ ok: false, error: "primary_scale_not_configured" }, { status: 409 });
       }
       if (!Number.isFinite(scale) || scale !== primaryScale || coeff !== 1) {
         return NextResponse.json({ ok: false, error: "primary_scale_or_weight_mismatch" }, { status: 400 });
