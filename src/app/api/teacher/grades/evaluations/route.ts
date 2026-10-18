@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requiresDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
 import {
   getGradePublicationSettings,
   handleTeacherPublicationIntent,
@@ -687,7 +688,8 @@ export async function GET(req: NextRequest) {
 
     const items = (data ?? []) as unknown as EvalRow[];
 
-    return NextResponse.json({ items }, { status: 200 });
+    const direct_publication = await requiresDirectGradePublication(srv, institutionId);
+    return NextResponse.json({ items, direct_publication }, { status: 200 });
   } catch (e) {
     console.error("[teacher/grades/evaluations] unexpected GET", e);
     return NextResponse.json({ items: [] as EvalRow[] }, { status: 500 });
