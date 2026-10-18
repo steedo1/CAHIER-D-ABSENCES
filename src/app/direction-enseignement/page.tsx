@@ -6,6 +6,7 @@ import { requireTeachingDirector } from "@/lib/auth/teaching-director";
 import { loadTeachingDirectorWorkspace } from "@/lib/server/school-director-workspace";
 import SchoolGradingPeriodsEditor from "@/components/admin/SchoolGradingPeriodsEditor";
 import SchoolClassSubjectsEditor from "@/components/admin/SchoolClassSubjectsEditor";
+import DirectorTeacherServices from "@/components/admin/DirectorTeacherServices";
 import type { SchoolCycle } from "@/lib/school-cycles";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +62,7 @@ export default async function TeachingDirectionHome() {
       </a>
     </nav>
     <SchoolClassSubjectsEditor />
+    <DirectorTeacherServices classes={workspace.classes.map(c => ({id:c.id,label:c.label}))} />
     {workspace.year && <SchoolGradingPeriodsEditor
       academicYear={workspace.year}
       allowedPrograms={cycles.map(cycle => ({ cycle, track: teachingTrack }))}
