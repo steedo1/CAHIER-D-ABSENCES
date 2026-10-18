@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requiresDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
 import {
   getGradePublicationSettings,
   handleTeacherPublicationIntent,
@@ -282,7 +283,8 @@ async function teacherHasAccessToClass(
   institutionId: string,
   profileId: string,
   classId: string,
-  subjectCandidates: string[]
+  subjectCandidates: string[],
+  requireExactSubjectAssignment = false,
 ) {
   if (subjectCandidates.length > 0) {
     const { data } = await srv
@@ -297,6 +299,11 @@ async function teacherHasAccessToClass(
 
     if (Array.isArray(data) && data.length > 0) return true;
   }
+
+  // Franco-Arabic programmes cannot authorize an unrelated discipline
+  // solely because a teacher has another assignment in the same class.
+  // The fallback stays available for classic schools.
+  if (requireExactSubjectAssignment) return false;
 
   const { data: anyRow } = await srv
     .from("class_teachers")
@@ -687,7 +694,8 @@ export async function GET(req: NextRequest) {
 
     const items = (data ?? []) as unknown as EvalRow[];
 
-    return NextResponse.json({ items }, { status: 200 });
+    const direct_publication = await requiresDirectGradePublication(srv, institutionId);
+    return NextResponse.json({ items, direct_publication }, { status: 200 });
   } catch (e) {
     console.error("[teacher/grades/evaluations] unexpected GET", e);
     return NextResponse.json({ items: [] as EvalRow[] }, { status: 500 });
@@ -809,6 +817,8 @@ export async function POST(req: NextRequest) {
       (x): x is string => !!x
     );
 
+    const requireExactSubjectAssignment =
+      !isPrivileged(roles) && await requiresDirectGradePublication(srv, institutionId);
     const accessOk = isPrivileged(roles)
       ? true
       : await teacherHasAccessToClass(
@@ -816,7 +826,8 @@ export async function POST(req: NextRequest) {
           institutionId,
           profileId,
           class_id,
-          subjectCandidates
+          subjectCandidates,
+          requireExactSubjectAssignment
         );
 
     if (!accessOk) {
