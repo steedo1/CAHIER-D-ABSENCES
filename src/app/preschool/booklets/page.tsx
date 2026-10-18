@@ -100,7 +100,10 @@ export default function PreschoolBookletPage() {
 
   useEffect(() => { void load("", "", ""); }, [load]);
   useEffect(() => {
-    if (year && !classId) void load(year, "", "");
+    // Do not issue database requests on every keystroke in the academic-year field.
+    if (!/^\\d{4}-\\d{4}$/.test(year) || classId) return;
+    const handle = window.setTimeout(() => { void load(year, "", ""); }, 400);
+    return () => window.clearTimeout(handle);
   }, [year, classId, load]);
   useEffect(() => {
     if (year && classId) void load(year, classId, periodId);
@@ -281,7 +284,7 @@ export default function PreschoolBookletPage() {
             onClick={() => window.print()}>Imprimer le livret</button>
         </div>
         {!printable && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900 print:hidden">
-          Impression officielle indisponible tant que chaque compétence du/des enseignements affichés
+          Impression finale indisponible tant que chaque compétence du/des enseignements affichés
           n'a pas été observée et enregistrée.
         </p>}
         <article id="preschool-booklet-print" className="space-y-5 rounded-xl border bg-white p-5 text-slate-900 shadow print:shadow-none">
