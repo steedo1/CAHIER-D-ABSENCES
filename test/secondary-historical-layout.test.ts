@@ -27,7 +27,7 @@ function fixture(): SpecializedBulletinPayload {
           subjects: [{ id: "ar-only", name: "Coran", coefficient: 2, average: 0 },
             { id: "ar-reading", name: "Lecture arabe", coefficient: 1, average: 10 }] },
       } },
-    }],
+    ],
   };
 }
 
