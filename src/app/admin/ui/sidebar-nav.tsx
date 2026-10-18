@@ -31,6 +31,7 @@ import type { AppRole } from "@/lib/auth/role";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import { isFileCorrespondentPathAllowed } from "@/lib/auth/file-correspondent";
 import { isBilingualSchool } from "@/lib/school-student-programs";
+import { isBilingualGeneralDirectorFinanceEligible } from "@/lib/bilingual-general-director-finance";
 
 type NavItem = {
   href: string;
@@ -796,6 +797,11 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
   const schoolNavigation = useSchoolNavigation();
   const specializedSettingsEnabled = Boolean(schoolNavigation);
   const directSchoolGradePublication = Boolean(schoolNavigation && isBilingualSchool(schoolNavigation.settings));
+  // Presentation only; full finance access is re-verified against the role,
+  // institution and enabled Finance Premium subscription on the server.
+  const canGeneralDirectorViewFinance = Boolean(schoolNavigation &&
+    role === "admin" &&
+    isBilingualGeneralDirectorFinanceEligible(role, schoolNavigation.settings));
 
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
   const isResizingRef = React.useRef(false);
@@ -1091,14 +1097,16 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
 
     return [...ADMIN_ITEMS, ...(isEducator || isInfirmier ? [] : [PARENT_CONNECT_ITEM])].flatMap((item) => {
       if (item.href.startsWith("/admin/finance")) {
-        if (isAdmin) return [ADMIN_PAYROLL_ITEM];
+        if (isAdmin) return canGeneralDirectorViewFinance
+          ? [item, ADMIN_PAYROLL_ITEM]
+          : [ADMIN_PAYROLL_ITEM];
         if (isEducator) return [];
         return [item];
       }
       if (isEducator && item.href.startsWith("/admin/communication")) return [];
       return [item];
     });
-  }, [isFileCorrespondent, isAdmin, isEducator, isFinanceManager, isFinanceOnlyShell]);
+  }, [isFileCorrespondent, isAdmin, isEducator, isFinanceManager, isFinanceOnlyShell, canGeneralDirectorViewFinance]);
 
   const callsControlItems = React.useMemo(
     () => (isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : CALLS_CONTROL_ITEMS),
