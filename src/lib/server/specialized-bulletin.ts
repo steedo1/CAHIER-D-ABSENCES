@@ -7,7 +7,7 @@ import { normalizePedagogicalLevel, resolveEvaluationTeachingTrack, resolvePedag
 import type { BulletinDocument, BulletinProgram } from "@/components/bulletins/FrancoArabicBulletin";
 import { SCHOOL_CYCLE_OPTIONS, type SchoolCycle, type TeachingTrack } from "@/lib/school-cycles";
 import { buildPedagogicalRanks } from "@/lib/pedagogical-ranking";
-import { programsForStudent, readStudentProgramSettings } from "@/lib/school-student-programs";
+import { isBilingualSchool, programsForStudent, readStudentProgramSettings } from "@/lib/school-student-programs";
 import { sameSchoolLevel } from "@/lib/school-levels";
 import { selectedBulletinFormat } from "@/lib/franco-arabic-reporting";
 import { inferSchoolCycleFromLevel } from "@/lib/school-cycles";
@@ -240,7 +240,7 @@ export async function loadSpecializedBulletin(input: {
 
     const documents: SpecializedBulletinPayload["documents"] = results.map(({ student, drafts }) => {
       const document: BulletinDocument = {
-        school: { name: input.institutionName || "", code: input.institutionCode },
+        school: { name: input.institutionName || "", code: input.institutionCode, isFrancoArabic: isBilingualSchool(school) },
         student: { id: student.id, firstName: student.first_name || "", lastName: student.last_name || student.full_name || "",
           matricule: student.matricule, birthDate: student.birthdate },
       };

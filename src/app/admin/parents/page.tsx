@@ -12,6 +12,7 @@ import {
   type SelectHTMLAttributes,
 } from "react";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import { resolveAttestationSignatory } from "@/lib/franco-arabic-document-signatories";
 import {
   DEFAULT_EDUCATION_SCOPE,
   getClassLevelCode,
@@ -139,6 +140,7 @@ type InstitutionSettings = {
   institution_status?: string | null;
   institution_head_name?: string | null;
   institution_head_title?: string | null;
+  settings_json?: unknown;
   country_name?: string | null;
   country_motto?: string | null;
   ministry_name?: string | null;
@@ -283,9 +285,10 @@ function buildAttestationHtml(args: {
   const institutionPhone = (cfg.institution_phone || "").trim();
   const institutionEmail = (cfg.institution_email || "").trim();
   const institutionCode = (cfg.institution_code || "").trim();
-  const headName = (cfg.institution_head_name || "").trim() || "Le responsable";
-  const headTitle =
-    (cfg.institution_head_title || "").trim() || "Chef d'etablissement";
+  // Franco-Arabic: ONE certificate per pupil, including dual-track pupils,
+  // signed by the institution's general director, not by either teaching head.
+  // Other institutions retain their original signatory/title unchanged.
+  const { name: headName, title: headTitle, signatureTitle } = resolveAttestationSignatory(cfg);
   const logoUrl = (cfg.institution_logo_url || "").trim();
 
   const pages = rows.map((student, idx) => {
@@ -464,7 +467,7 @@ function buildAttestationHtml(args: {
             <div class="signature-wrap">
               <div class="signature-box">
                 <div>Fait à ${escapeHtml(place)} le ${escapeHtml(today)}</div>
-                <div class="signature-title">${escapeHtml(headTitle)}</div>
+                <div class="signature-title">${escapeHtml(signatureTitle)}</div>
                 <div class="signature-space"></div>
                 <div class="signature-name">${escapeHtml(headName)}</div>
               </div>
@@ -983,6 +986,7 @@ export default function AdminStudentsByClassPage() {
           institution_status: settingsJson?.institution_status ?? "",
           institution_head_name: settingsJson?.institution_head_name ?? "",
           institution_head_title: settingsJson?.institution_head_title ?? "",
+          settings_json: settingsJson?.settings_json ?? {},
           country_name: settingsJson?.country_name ?? "",
           country_motto: settingsJson?.country_motto ?? "",
           ministry_name: settingsJson?.ministry_name ?? "",
