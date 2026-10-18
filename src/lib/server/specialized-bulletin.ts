@@ -11,6 +11,7 @@ import { sameSchoolLevel } from "@/lib/school-levels";
 import { selectedBulletinFormat } from "@/lib/franco-arabic-reporting";
 import { inferSchoolCycleFromLevel } from "@/lib/school-cycles";
 import { classSubjectIds } from "@/lib/school-class-subjects";
+import { schoolTeachingSignatories } from "@/lib/server/school-director-signatories";
 
 export type SpecializedBulletinPayload = {
   engine: "specialized"; cycle: SchoolCycle; format: "separate" | "combined" | "both";
@@ -42,6 +43,7 @@ async function pages<T>(query: (from: number, to: number) => PromiseLike<{ data:
 export async function loadSpecializedBulletin(input: {
   service: SupabaseClient; institutionId: string; schoolClass: SchoolClass;
   settingsJson: unknown; institutionName: string | null; institutionCode: string | null;
+  institutionContacts?: { logoUrl?: string | null; phone?: string | null; email?: string | null; address?: string | null; regionalDirection?: string | null };
   searchParams: URLSearchParams; role: string;
 }): Promise<NextResponse | null> {
   const selected = resolvePedagogicalEngine(input.settingsJson, input.schoolClass);
@@ -192,9 +194,16 @@ export async function loadSpecializedBulletin(input: {
       const subject = Array.isArray(row.subjects) ? row.subjects[0] : row.subjects;
       return [row.subject_id, row.custom_name || subject?.name || row.subject_id];
     }));
+    const signatories = await schoolTeachingSignatories(service, institutionId);
     const documents: SpecializedBulletinPayload["documents"] = results.map(({ student, drafts }) => {
       const document: BulletinDocument = {
-        school: { name: input.institutionName || "", code: input.institutionCode },
+        school: { name: input.institutionName || "", code: input.institutionCode,
+          logoUrl: input.institutionContacts?.logoUrl,
+          phone: input.institutionContacts?.phone,
+          email: input.institutionContacts?.email,
+          address: input.institutionContacts?.address,
+          subtitle: input.institutionContacts?.regionalDirection,
+        },
         student: { id: student.id, firstName: student.first_name || "", lastName: student.last_name || student.full_name || "",
           matricule: student.matricule, birthDate: student.birthdate },
       };
@@ -206,6 +215,7 @@ export async function loadSpecializedBulletin(input: {
             coefficient: subject.coefficient, average: subject.average, includeInAverage: subject.includeInAverage })),
           generalAverage: draft.generalAverage, rank, classSize: students.size,
           appreciation: draft.status === "ready" ? null : "Résultats incomplets — configuration ou notes à vérifier.",
+          directorName: signatories[draft.track]?.name || null,
         };
         document[draft.track] = program;
       }
