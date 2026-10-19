@@ -7,6 +7,7 @@ import { computeAcademicYear } from "@/lib/academicYear";
 import { getApplicableGradePeriodById } from "@/lib/education-grading-periods";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
 import { isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
+import { primaryEventIdFromTitle, primaryEventForClass, readPrimaryEvents } from "@/lib/grades/primary-evaluation-events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -164,6 +165,7 @@ export async function GET(req: NextRequest) {
       normalizeUuidLike(searchParams.get("grading_period_id")) ??
       normalizeUuidLike(searchParams.get("gradingPeriodId"));
 
+    const primary_event_id = String(searchParams.get("primary_event_id") || "").trim();
     const academic_year_param = String(
       searchParams.get("academic_year") || ""
     ).trim();
@@ -250,7 +252,7 @@ export async function GET(req: NextRequest) {
       // compositions, never draft devoirs or hypothetical missing zeros.
       published_only = true;
       missing = "ignore";
-      if (!grading_period_id) return bad("PRIMARY_PERIOD_REQUIRED", 400);
+      if (grading_period_id) return bad("PRIMARY_HAS_NO_GRADING_PERIOD", 400);
     }
 
     console.log(LOG_PREFIX, "class info", cls);
@@ -308,8 +310,25 @@ export async function GET(req: NextRequest) {
     const { data: evals, error: eErr } = await qEvals;
     if (eErr) return bad(eErr.message || "EVALS_FETCH_FAILED", 400);
 
-    const evaluations = ((evals ?? []) as unknown as EvaluationRow[]).filter(e =>
-      !primaryFrancoArabic || (e.grading_period_id === grading_period_id && isPrimaryComposition(e)));
+    const configuredPrimaryEvents = primaryFrancoArabic
+      ? readPrimaryEvents(componentSettings, academic_year)
+      : [];
+    const selectedPrimaryEvent = primary_event_id && primaryFrancoArabic
+      ? primaryEventForClass(configuredPrimaryEvents, primary_event_id, classLevel)
+      : null;
+    if (primary_event_id && primaryFrancoArabic && !selectedPrimaryEvent)
+      return bad("PRIMARY_EVENT_NOT_FOUND", 400);
+    const evaluations = ((evals ?? []) as unknown as EvaluationRow[]).filter(e => {
+      if (!primaryFrancoArabic) return true;
+      const eventId = primaryEventIdFromTitle(e.title);
+      if (selectedPrimaryEvent) return eventId === selectedPrimaryEvent.id;
+      if (eventId) {
+        const event = primaryEventForClass(configuredPrimaryEvents, eventId, classLevel);
+        return !!event && event.kind === "composition";
+      }
+      // Données historiques (avant la refonte) : compositions explicites uniquement.
+      return isPrimaryComposition(e);
+    });
     const evaluationIds = evaluations.map((e) => e.id);
 
     console.log(LOG_PREFIX, "evals loaded", {
