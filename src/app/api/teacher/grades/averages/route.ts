@@ -165,6 +165,7 @@ export async function GET(req: NextRequest) {
       normalizeUuidLike(searchParams.get("grading_period_id")) ??
       normalizeUuidLike(searchParams.get("gradingPeriodId"));
 
+    const primary_event_id = String(searchParams.get("primary_event_id") || "").trim();
     const academic_year_param = String(
       searchParams.get("academic_year") || ""
     ).trim();
@@ -312,12 +313,18 @@ export async function GET(req: NextRequest) {
     const configuredPrimaryEvents = primaryFrancoArabic
       ? readPrimaryEvents(componentSettings, academic_year)
       : [];
+    const selectedPrimaryEvent = primary_event_id && primaryFrancoArabic
+      ? primaryEventForClass(configuredPrimaryEvents, primary_event_id, classLevel)
+      : null;
+    if (primary_event_id && primaryFrancoArabic && !selectedPrimaryEvent)
+      return bad("PRIMARY_EVENT_NOT_FOUND", 400);
     const evaluations = ((evals ?? []) as unknown as EvaluationRow[]).filter(e => {
       if (!primaryFrancoArabic) return true;
       const eventId = primaryEventIdFromTitle(e.title);
+      if (selectedPrimaryEvent) return eventId === selectedPrimaryEvent.id;
       if (eventId) {
         const event = primaryEventForClass(configuredPrimaryEvents, eventId, classLevel);
-        return !!event && (event.kind === "composition" || event.kind === "passage");
+        return !!event && event.kind === "composition";
       }
       // Données historiques (avant la refonte) : compositions explicites uniquement.
       return isPrimaryComposition(e);
