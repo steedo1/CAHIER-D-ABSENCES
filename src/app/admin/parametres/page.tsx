@@ -20,6 +20,7 @@ import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
 import SchoolCoefficientsClassicWorkflow from "@/components/admin/SchoolCoefficientsClassicWorkflow";
 import SchoolBulletinModelPicker from "@/components/admin/SchoolBulletinModelPicker";
 import SchoolGradingPeriodsEditor from "@/components/admin/SchoolGradingPeriodsEditor";
+import PrimaryEvaluationEventsEditor from "@/components/admin/PrimaryEvaluationEventsEditor";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
 } from "@/components/admin/EducationScopeSwitcher";
@@ -3789,7 +3790,10 @@ export default function AdminSettingsPage() {
         {activeTab === "grading-periods" && (
           <>
             {hasSpecializedSettings ? (
-              <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} />
+              <div className="space-y-6">
+                {hasBilingualPrograms && <PrimaryEvaluationEventsEditor academicYear={selectedAcademicYear} />}
+                <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} />
+              </div>
             ) : (
               <>
             {!hasSpecializedSettings && (
