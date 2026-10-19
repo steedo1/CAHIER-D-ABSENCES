@@ -3092,6 +3092,20 @@ export default function ClassDeviceNotesPage() {
             </div>
           )}
 
+          {isMobile && isPrimaryProgram && primaryCatalogEnabled && currentActiveEval &&
+            isEvaluationDeletable(currentActiveEval) && (
+            <button
+              type="button"
+              onClick={() => deleteEvaluation(currentActiveEval)}
+              disabled={!isOnline || !!publishBusy[currentActiveEval.id]}
+              aria-label="Supprimer la note ouverte"
+              className="mb-3 inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Supprimer la note
+            </button>
+          )}
+
           {/* ==== LAYOUT PC : tableau classique ==== */}
           {!isMobile && (
             <div className="overflow-x-auto rounded-xl border">
