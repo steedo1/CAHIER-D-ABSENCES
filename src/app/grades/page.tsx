@@ -258,7 +258,8 @@ function isEvaluationChangesRequested(ev: Evaluation) {
   return getPublicationStatus(ev) === "changes_requested";
 }
 
-function isEvaluationEditableForTeacher(ev: Evaluation) {
+function isEvaluationEditableForTeacher(ev: Evaluation, allowPublishedPrimaryCorrection = false) {
+  if (allowPublishedPrimaryCorrection && isEvaluationPublished(ev)) return true;
   const status = getPublicationStatus(ev);
 
   return (
@@ -313,7 +314,9 @@ function publicationLockReason(ev: Evaluation, directPublication = false) {
   }
 
   if (isEvaluationPublished(ev)) {
-    return "Évaluation publiée officiellement : les notes sont verrouillées.";
+    return directPublication
+      ? "Évaluation publiée : les notes peuvent être corrigées, puis republiées automatiquement à l’enregistrement."
+      : "Évaluation publiée officiellement : les notes sont verrouillées.";
   }
 
   return null;
@@ -1106,7 +1109,7 @@ export default function TeacherNotesPage() {
     if (selectedPeriodClosed) return;
 
     const ev = evaluations.find((e) => e.id === evId);
-    if (ev && !isEvaluationEditableForTeacher(ev)) return;
+    if (ev && !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)) return;
 
     if (isEvalLocked(evId)) return;
 
@@ -1145,12 +1148,12 @@ export default function TeacherNotesPage() {
     );
     const blockedByPublication = perEvalAll.filter(([evaluation_id]) => {
       const ev = evaluationById.get(evaluation_id);
-      return ev ? !isEvaluationEditableForTeacher(ev) : false;
+      return ev ? !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication) : false;
     });
 
     const perEval = perEvalAll.filter(([evaluation_id]) => {
       const ev = evaluationById.get(evaluation_id);
-      const editable = ev ? isEvaluationEditableForTeacher(ev) : true;
+      const editable = ev ? isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication) : true;
       return editable && !isEvalLocked(evaluation_id);
     });
 
@@ -1203,6 +1206,11 @@ export default function TeacherNotesPage() {
       }
 
       const savedEvalIds = new Set(perEval.map(([evaluation_id]) => evaluation_id));
+      if (isPrimaryProgram && directGradePublication) {
+        setEvaluations(prev => prev.map(ev => savedEvalIds.has(ev.id)
+          ? { ...ev, is_published: true, publication_status: "published" }
+          : ev));
+      }
 
       // Merge local uniquement pour les évaluations réellement enregistrées.
       setGrades((prev) => {
@@ -1242,7 +1250,9 @@ export default function TeacherNotesPage() {
       setMsg(
         notes.length > 0
           ? `Notes enregistrées ✅ (${notes.join(" ; ")})`
-          : "Notes enregistrées ✅"
+          : isPrimaryProgram && directGradePublication
+            ? "Notes enregistrées et publiées automatiquement ✅"
+            : "Notes enregistrées ✅"
       );
     } catch (e: any) {
       setMsg(e?.message || "Échec d’enregistrement des notes.");
@@ -2805,7 +2815,7 @@ export default function TeacherNotesPage() {
                 gradeWritesBlocked ||
                 selectedPeriodClosed ||
                 isEvalLocked(ev.id) ||
-                !isEvaluationEditableForTeacher(ev),
+                !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication),
               disabledReason: selectedPeriodClosed
                 ? "Cette période est clôturée."
                 : gradeWritesBlocked
@@ -2886,11 +2896,11 @@ export default function TeacherNotesPage() {
                     disabled={
                       !isOnline ||
                       selectedPeriodClosed ||
-                      !isEvaluationEditableForTeacher(ev) ||
+                      !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication) ||
                       !!lockBusy[ev.id]
                     }
                     title={
-                      !isEvaluationEditableForTeacher(ev)
+                      !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)
                         ? publicationLockReason(ev, directGradePublication) || "Évaluation non modifiable"
                         : locked
                         ? "Déverrouiller cette évaluation (PIN)"
@@ -2978,7 +2988,7 @@ export default function TeacherNotesPage() {
                               disabled={
                                 !isOnline ||
                                 selectedPeriodClosed ||
-                                !isEvaluationEditableForTeacher(ev) ||
+                                !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication) ||
                                 !!lockBusy[ev.id]
                               }
                               className={[
@@ -3076,7 +3086,7 @@ export default function TeacherNotesPage() {
                                   gradeWritesBlocked ||
                                   selectedPeriodClosed ||
                                   isEvalLocked(ev.id) ||
-                                  !isEvaluationEditableForTeacher(ev)
+                                  !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)
                                 }
                                 title={
                                   gradeWritesBlocked
@@ -3085,7 +3095,7 @@ export default function TeacherNotesPage() {
                                     ? "Période clôturée"
                                     : isEvalLocked(ev.id)
                                     ? "Évaluation verrouillée"
-                                    : !isEvaluationEditableForTeacher(ev)
+                                    : !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)
                                     ? publicationLockReason(ev, directGradePublication) || "Évaluation non modifiable"
                                     : undefined
                                 }
@@ -3187,7 +3197,7 @@ export default function TeacherNotesPage() {
                                   gradeWritesBlocked ||
                                   selectedPeriodClosed ||
                                   isEvalLocked(ev.id) ||
-                                  !isEvaluationEditableForTeacher(ev)
+                                  !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)
                                 }
                                 title={
                                   gradeWritesBlocked
@@ -3196,7 +3206,7 @@ export default function TeacherNotesPage() {
                                     ? "Période clôturée"
                                     : isEvalLocked(ev.id)
                                     ? "Évaluation verrouillée"
-                                    : !isEvaluationEditableForTeacher(ev)
+                                    : !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)
                                     ? publicationLockReason(ev, directGradePublication) || "Évaluation non modifiable"
                                     : undefined
                                 }
