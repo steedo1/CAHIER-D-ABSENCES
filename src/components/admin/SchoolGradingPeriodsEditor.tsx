@@ -6,6 +6,7 @@ import {
   type SchoolCycle, type TeachingTrack,
 } from "@/lib/school-cycles";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import { isVisibleGradingPeriodCycle, type EvaluationSettingsCycle } from "@/lib/grades/evaluation-settings-scope";
 
 type Program = { cycle: SchoolCycle; track: TeachingTrack };
 type GradePeriod = {
@@ -16,7 +17,7 @@ type GradePeriod = {
 const endpoint = "/api/admin/school-grading-periods";
 let nextTemporaryId = 0;
 
-export default function SchoolGradingPeriodsEditor({ academicYear, hidePrimary = false }: { academicYear: string; hidePrimary?: boolean }) {
+export default function SchoolGradingPeriodsEditor({ academicYear, hidePrimary = false, cycleScope = "all" }: { academicYear: string; hidePrimary?: boolean; cycleScope?: EvaluationSettingsCycle }) {
   const navigation = useSchoolNavigation();
   const [programs, setPrograms] = useState<Program[]>([]);
   const [programKey, setProgramKey] = useState("");
@@ -46,7 +47,7 @@ export default function SchoolGradingPeriodsEditor({ academicYear, hidePrimary =
           enabledCycles: SchoolCycle[];
           teachingTracksByCycle: Partial<Record<SchoolCycle, TeachingTrack[]>>;
         };
-        const available = config.enabledCycles.filter(cycle => !hidePrimary || cycle !== "primary").flatMap(cycle =>
+        const available = config.enabledCycles.filter(cycle => isVisibleGradingPeriodCycle(cycle, cycleScope, hidePrimary)).flatMap(cycle =>
           (config.teachingTracksByCycle[cycle] || []).map(track => ({ cycle, track })));
         setPrograms(available);
         const preferred = available.find(p =>
@@ -63,7 +64,7 @@ export default function SchoolGradingPeriodsEditor({ academicYear, hidePrimary =
     // Program list belongs to this editor. A navigation filter may be changed
     // later using the explicit selector without discarding unsaved rows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hidePrimary]);
+  }, [hidePrimary, cycleScope]);
 
   useEffect(() => {
     setItems([]);
