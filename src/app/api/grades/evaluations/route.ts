@@ -1,4 +1,8 @@
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
+import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
+import { usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
+import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
 import { selectProgramComponents } from "@/lib/school-subject-components";
 // src/app/api/grades/evaluations/route.ts
@@ -1291,6 +1295,8 @@ export async function DELETE(req: NextRequest) {
         [
           "id",
           "class_id",
+          "subject_id",
+          "title",
           "is_published",
           "publication_status",
           "published_at",
@@ -1354,6 +1360,69 @@ export async function DELETE(req: NextRequest) {
     }
 
     const roles = await getUserRoles(srv, profile.id, profile.institution_id);
+
+    // Only the Franco-Arabic primary class-device flow receives the new
+    // capability. Existing classic school and teacher deletion rules stay intact.
+    const classDeviceOnly = roles.has("class_device") &&
+      !roles.has("teacher") && !isPrivileged(roles);
+    if (classDeviceOnly) {
+      const { data: institution, error: institutionError } = await srv
+        .from("institutions").select("settings_json")
+        .eq("id", profile.institution_id).maybeSingle();
+      const { data: cls, error: classError } = await srv.from("classes")
+        .select("id,level").eq("id", evalRow.class_id)
+        .eq("institution_id", profile.institution_id).maybeSingle();
+      if (institutionError || classError || !institution || !cls) {
+        return NextResponse.json({ ok: false, error: "school_configuration_unavailable" }, { status: 503 });
+      }
+      const cycles = parseSchoolCyclesSettings(institution.settings_json);
+      const isFrancoArabicPrimary = cycles.enabled &&
+        usesDirectGradePublication(institution.settings_json) &&
+        resolveSchoolCycleForClass(cls, cycles) === "primary";
+      if (isFrancoArabicPrimary) {
+        if (!await classDeviceMayAccessClass({
+          service: srv, userId: profile.id, classId: evalRow.class_id,
+        })) return NextResponse.json({ ok: false, error: "class_device_class_forbidden" }, { status: 403 });
+        if (!(evalRow as any).subject_id || !parsePrimaryEventTitle((evalRow as any).title)) {
+          return NextResponse.json({ ok: false, error: "primary_evaluation_not_authorized" }, { status: 403 });
+        }
+        const { data: assigned, error: assignmentError } = await srv
+          .from("class_teachers").select("id")
+          .eq("institution_id", profile.institution_id)
+          .eq("class_id", evalRow.class_id)
+          .eq("subject_id", (evalRow as any).subject_id)
+          .is("end_date", null).limit(1);
+        if (assignmentError || !assigned?.length) {
+          return NextResponse.json({ ok: false, error: "class_device_subject_forbidden" }, { status: 403 });
+        }
+        // A previously published (even since unpublished) grade retains a
+        // permanent official audit. Never remove its row or any attached score.
+        const { data: history, error: historyError } = await srv
+          .from("grade_published_scores").select("id")
+          .eq("evaluation_id", evaluation_id).limit(1);
+        if (historyError) {
+          return NextResponse.json({ ok: false, error: "publication_history_unavailable" }, { status: 503 });
+        }
+        if (history?.length) {
+          return NextResponse.json({
+            ok: false, error: "primary_evaluation_has_official_history",
+            message: "Cette évaluation a déjà été publiée. La suppression nécessite une correction officielle.",
+          }, { status: 423 });
+        }
+        const { data: scores, error: scoreError } = await srv
+          .from("student_grades").select("student_id")
+          .eq("evaluation_id", evaluation_id).limit(1);
+        if (scoreError) {
+          return NextResponse.json({ ok: false, error: "evaluation_scores_unavailable" }, { status: 503 });
+        }
+        if (scores?.length) {
+          return NextResponse.json({
+            ok: false, error: "primary_evaluation_has_scores",
+            message: "Cette colonne contient déjà des notes. Sa suppression doit suivre la procédure de correction.",
+          }, { status: 423 });
+        }
+      }
+    }
 
     const closedResp = await getClosedPeriodResponseIfNeeded(
       srv,
