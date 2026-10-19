@@ -3,12 +3,12 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import ts from "typescript";
 import { NextRequest } from "next/server.js";
+import { generateActualAttestationHtml } from "./helpers/attestation-fixture.mjs";
 import { createPedagogicalFixture } from "./helpers/pedagogical-fixture.mjs";
 import { parseSchoolCyclesSettings } from "../src/lib/school-cycles";
 import { readSchoolTeachingSignatories } from "../src/lib/school-teaching-signatories";
-import { resolveAttestationSignatory, resolveTeachingDocumentSignatories, teachingDocumentSignaturesHtml } from "../src/lib/franco-arabic-document-signatories";
+import { resolveAttestationSignatory, resolveAttestationSignatories, resolveTeachingDocumentSignatories, teachingDocumentSignaturesHtml } from "../src/lib/franco-arabic-document-signatories";
 import { createMulticycleFixture, createFixtureRouteLoader } from "./helpers/multicycle-fixture.mjs";
 
 const settings = {
@@ -22,7 +22,7 @@ const settings = {
   },
 };
 
-test("attestation franco-arabe : un seul administrateur général avec le titre configuré", () => {
+test("documents regroupés : la direction générale conserve son titre configuré", () => {
   const signer = resolveAttestationSignatory({
     settings_json: settings, institution_head_name: "Directeur général de l'école",
     institution_head_title: "Proviseur",
@@ -54,38 +54,21 @@ test("une direction générale non renseignée n'est jamais remplacée par le di
   assert.equal(signer.signatureTitle, "Directeur des études");
 });
 
-function generateActualAttestationHtml(args) {
-  // Exercise the ACTUAL certificate template without mounting a browser or
-  // contacting Supabase: extract its pure template, compile it with TypeScript,
-  // and supply only the existing display helpers that it calls.
-  const source = readFileSync(new URL("../src/app/admin/parents/page.tsx", import.meta.url), "utf8");
-  const start = source.indexOf("function buildAttestationHtml(");
-  const end = source.indexOf("\nfunction openPrintDocument(", start);
-  assert.ok(start > 0 && end > start, "existing A4 certificate generator must remain in use");
-  const compiled = ts.transpileModule(source.slice(start, end), { compilerOptions: {
-    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
-  } }).outputText;
-  assert.match(source, /settings_json: settingsJson\?\.settings_json \?\? \{\}/);
-  assert.match(source, /resolveAttestationSignatory\(cfg\)/);
-  const factory = new Function(
-    "resolveAttestationSignatory", "formatDateLongFr", "institutionDisplayName",
-    "escapeHtml", "formatDateShortFr", "safeSlug", "studentOfficialName",
-    compiled + "\nreturn buildAttestationHtml;",
-  );
-  const escape = value => String(value ?? "").replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  const slug = value => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-  const html = factory(
-    resolveAttestationSignatory,
-    () => "18 octobre 2026",
-    cfg => cfg.institution_name || "École",
-    escape,
-    () => "01/01/2015",
-    slug,
-    row => [row.last_name, row.first_name].filter(Boolean).join(" "),
-  );
-  return html(args);
-}
+
+test("attestation bilingue : deux positions nominatives même si une nomination manque, sans remplacer par le DG", () => {
+  const json = structuredClone(settings);
+  delete json.school_teaching_signatories_v1.arabic;
+  const signers = resolveAttestationSignatories({ settings_json: json, institution_head_name: "Nom DG" });
+  assert.equal(signers.length, 2);
+  assert.equal(signers[0].name, "Responsable de l'enseignement français");
+  assert.equal(signers[1].name, "Nom du directeur non renseigné");
+  assert.equal(signers[0].signatureTitle, "Directeur des études");
+  assert.equal(signers[1].signatureTitle, "Directeur des études");
+  assert.equal(JSON.stringify(signers).includes("Nom DG"), false);
+  assert.deepEqual(resolveAttestationSignatories({ settings_json: {}, institution_head_name: "Chef classique",
+    institution_head_title: "Proviseur" }), [resolveAttestationSignatory({ settings_json: {},
+    institution_head_name: "Chef classique", institution_head_title: "Proviseur" })]);
+});
 
 const students = [
   { id: "double-track", last_name: "ÉLÈVE", first_name: "Bilingue", matricule: "MAT100",
@@ -94,7 +77,7 @@ const students = [
     class_id: "classe1", class_label: "CM1", birth_place: "Dimbokro", birthdate: "2015-01-01" },
 ];
 
-test("A4 : exactement une attestation par élève bilingue, nom DG et titre paramétré, sans vérification des présences", () => {
+test("A4 : une attestation par élève avec les deux directeurs des études, sans vérification des présences", () => {
   const html = generateActualAttestationHtml({
     cfg: { institution_name: "École franco-arabe", institution_head_name: "DG authentifié",
       institution_head_title: "Proviseur", settings_json: settings },
@@ -103,10 +86,12 @@ test("A4 : exactement une attestation par élève bilingue, nom DG et titre para
     selectedEducationType: "general_secondary",
   });
   assert.equal((html.match(/<h1>ATTESTATION DE FREQUENTATION<\/h1>/g) || []).length, 2);
-  assert.equal((html.match(/<div class="signature-name">DG authentifié<\/div>/g) || []).length, 2);
-  assert.equal((html.match(/<div class="signature-title">Proviseur<\/div>/g) || []).length, 2);
-  assert.doesNotMatch(html, /Directeur des études|Responsable de l'enseignement/);
-  assert.match(html, /<strong>Proviseur<\/strong> du/);
+  assert.equal((html.match(/<div class="signature-name">Responsable de l'enseignement français<\/div>/g) || []).length, 2);
+  assert.equal((html.match(/<div class="signature-name">Responsable de l'enseignement arabe<\/div>/g) || []).length, 2);
+  assert.equal((html.match(/<div class="signature-title">Directeur des études<\/div>/g) || []).length, 4);
+  assert.equal((html.match(/Nous soussignés/g) || []).length, 2);
+  assert.equal((html.match(/attestons que l'élève/g) || []).length, 2);
+  assert.doesNotMatch(html, /DG authentifié|Proviseur|Je soussigné/);
 });
 
 test("bulletins : un directeur par enseignement séparé, un seul administrateur général pour le combiné", () => {

@@ -2,7 +2,7 @@ import { isSchoolCycle, parseSchoolCyclesSettings, type SchoolCycle, type Teachi
 import { isBilingualSchool, readStudentProgramSettings } from "./school-student-programs";
 import { readSchoolTeachingSignatories, SCHOOL_TEACHING_DIRECTOR_TITLE } from "./school-teaching-signatories";
 
-/** The attendance certificate always belongs to the institution. */
+/** General institution head, also used by the unchanged classic certificate. */
 export function resolveAttestationSignatory(settings: {
   institution_head_name?: string | null;
   institution_head_title?: string | null;
@@ -14,6 +14,29 @@ export function resolveAttestationSignatory(settings: {
     (bilingual ? "Directeur" : "Chef d'etablissement");
   return { name: name || (bilingual ? "Nom du directeur non renseigné" : "Le responsable"),
     title, signatureTitle: title };
+}
+
+export type AttestationSignatory = {
+  name: string;
+  title: string;
+  signatureTitle: string;
+  teachingLabel?: string;
+};
+
+/** One certificate per pupil, with BOTH teaching directors for a bilingual school. */
+export function resolveAttestationSignatories(
+  settings: Parameters<typeof resolveAttestationSignatory>[0],
+): AttestationSignatory[] {
+  if (!isBilingualSchool(parseSchoolCyclesSettings(settings.settings_json))) {
+    return [resolveAttestationSignatory(settings)];
+  }
+  const names = readSchoolTeachingSignatories(settings.settings_json);
+  return (["french", "arabic"] as const).map(track => ({
+    name: names[track]?.name || "Nom du directeur non renseigné",
+    title: SCHOOL_TEACHING_DIRECTOR_TITLE,
+    signatureTitle: SCHOOL_TEACHING_DIRECTOR_TITLE,
+    teachingLabel: track === "french" ? "Enseignement français" : "Enseignement arabe",
+  }));
 }
 
 export type TeachingDocumentSignatory = {
