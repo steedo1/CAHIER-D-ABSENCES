@@ -62,6 +62,37 @@ test("French-only primary calendar, homework without a period and concurrent set
   assert.equal(rows.primary_event_catalog_enabled, true); assert.deepEqual(rows.primary_events, []);
 });
 
+test("large EPC settings allow a primary composition label update without a long JSONB URL", async () => {
+  const db = setup("CP1", true);
+  db.tables.institutions[0].settings_json.unrelatedLargeSettings = { preserve: "z".repeat(25000) };
+  const originalFrom = db.service.from;
+  db.service.from = table => {
+    const query = originalFrom(table);
+    if (table === "institutions") {
+      const originalEq = query.eq.bind(query);
+      query.eq = (field, value) => {
+        if (field === "settings_json" && typeof value === "string" && value.length > 8000) {
+          throw new Error("oversized full-document HTTP filter");
+        }
+        return originalEq(field, value);
+      };
+    }
+    return query;
+  };
+  const api = db.admin(calendarPath);
+  const loaded = await (await api.GET(req(`/api/admin/institution/primary-evaluation-events?academic_year=${year}`))).json();
+  const renamed = loaded.events.map(event => event.code === "DEC"
+    ? { ...event, label: "Composition n° 1 de l'EPC" } : event);
+  const response = await api.PUT(req("/api/admin/institution/primary-evaluation-events",
+    { academic_year: year, revision: loaded.revision, events: renamed }, "PUT"));
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  assert.equal(db.tables.institutions[0].settings_json.unrelatedLargeSettings.preserve.length, 25000);
+  const latest = await (await api.GET(req(`/api/admin/institution/primary-evaluation-events?academic_year=${year}`))).json();
+  assert.equal(latest.events.find(event => event.code === "DEC").label, "Composition n° 1 de l'EPC");
+  assert.equal((await api.PUT(req("/api/admin/institution/primary-evaluation-events",
+    { academic_year: year, revision: loaded.revision, events: renamed }, "PUT"))).status, 409);
+});
+
 test("server dates, publication identity, repeated event selection and used calendar protection", async () => {
   const db = setup(), ev = await create(db, "DEC");
   assert.equal((await create(db, "DEC", "french", { eval_date: "2030-01-01" })).id, ev.id);
