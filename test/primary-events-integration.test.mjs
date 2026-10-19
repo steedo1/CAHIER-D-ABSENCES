@@ -232,12 +232,11 @@ test("actual production scale CHECK: /50 keeps raw points, displayed scales and 
 
 test("EPC CP1 class-device shares configured compositions and publishes each grade save", async () => {
   const db = setup("CP1", true);
-  const classDevice = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const classDevice = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
   db.users.set(classDevice, { user: db.user(classDevice, "class-cp1@example.invalid") });
   db.tables.profiles.push({ id: classDevice, institution_id: db.legacyId, display_name: "CP1 français" });
   db.tables.user_roles.push({ profile_id: classDevice, institution_id: db.legacyId, role: "class_device" });
   db.tables.classes[0].class_device_auth_user_id = classDevice;
-  const classRoute = db.teacher; // teacher path remains unchanged
   const classLogin = createFixtureRouteLoader(db, classDevice);
   const evalRoute = classLogin(evaluationPath);
   const listed = await evalRoute.GET(req(`/api/teacher/grades/evaluations?class_id=${cls}&subject_id=${math}&teaching_track=french`));
