@@ -1,6 +1,9 @@
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
+import { usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
+import { publishEvaluationOfficially } from "@/lib/grades/publication";
 // src/app/api/teacher/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -293,10 +296,33 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ✅ Verrou métier publication AVANT toute écriture.
-    const editable = assertEvaluationEditable(ge);
+    // Only a directly assigned primary teacher in a Franco-Arabic school
+    // may correct a published evaluation. The traditional approval workflow
+    // remains unchanged for every other school, cycle and actor.
+    let directPrimaryTeacher = false;
+    if (ge.teacher_id === auth.user.id) {
+      const { data: cls, error: classError } = await srv.from("classes")
+        .select("id,institution_id,level").eq("id", ge.class_id).maybeSingle();
+      if (classError) return bad("TEACHER_CLASS_LOOKUP_FAILED", 503);
+      if (cls?.institution_id) {
+        const { data: inst, error: instError } = await srv.from("institutions")
+          .select("settings_json").eq("id", cls.institution_id).maybeSingle();
+        if (instError || !inst) return bad("TEACHER_INSTITUTION_LOOKUP_FAILED", 503);
+        if (usesDirectGradePublication(inst.settings_json)) {
+          const { data: roles, error: rolesError } = await srv.from("user_roles")
+            .select("role").eq("profile_id", auth.user.id).eq("institution_id", cls.institution_id);
+          if (rolesError) return bad("TEACHER_ROLE_LOOKUP_FAILED", 503);
+          const settings = parseSchoolCyclesSettings(inst.settings_json);
+          directPrimaryTeacher = (roles || []).some((row: any) => row.role === "teacher") &&
+            resolveSchoolCycleForClass(cls, settings) === "primary";
+        }
+      }
+    }
 
-    if (!editable.ok) {
+    // ✅ Keep published notes editable in this single opt-in teaching path.
+    const editable = assertEvaluationEditable(ge);
+    const wasPublished = ge.is_published === true || ge.publication_status === "published";
+    if (!editable.ok && !(directPrimaryTeacher && wasPublished)) {
       console.warn("[teacher/grades/scores/bulk] evaluation not editable", {
         evaluation_id,
         error: editable.error,
@@ -488,6 +514,27 @@ export async function POST(req: NextRequest) {
       warnings.push(`${violations.length} ligne(s) ignorée(s) (validation)`);
     }
 
+    // Official snapshots and notifications must be refreshed after each
+    // saved correction. Only changed pupils are notified on republication.
+    let publication: Awaited<ReturnType<typeof publishEvaluationOfficially>> | null = null;
+    if (directPrimaryTeacher && wasPublished && (upserted > 0 || deleted > 0)) {
+      publication = await publishEvaluationOfficially({
+        evaluationId: evaluation_id,
+        actorProfileId: auth.user.id,
+        forceNewVersion: wasPublished,
+        queuePush: true,
+        notifyStudentIds: [...new Set([...upserts.map(item => item.student_id), ...toDelete])],
+      });
+      if (!publication.ok) {
+        console.error("[teacher/grades/scores/bulk] primary scores saved; publication pending",
+          { evaluation_id, error: publication.error });
+        return bad("PRIMARY_PUBLICATION_PENDING", publication.status || 503, {
+          saved: true,
+          message: "Notes enregistrées, publication officielle à reprendre. Rechargez les notes avant de réessayer.",
+        });
+      }
+    }
+
     console.log("[teacher/grades/scores/bulk] done", {
       evaluation_id,
       received_items: items.length,
@@ -505,7 +552,11 @@ export async function POST(req: NextRequest) {
       upserted,
       deleted,
       warnings,
-      publication_status: editable.publication_status,
+      publication_status: publication?.ok ? "published" : editable.publication_status,
+      publication: publication?.ok ? {
+        is_published: true, publication_version: publication.publication_version,
+        push_queued: publication.push_queued,
+      } : null,
     });
   } catch (e: any) {
     console.error("[teacher/grades/scores/bulk] unexpected error", e);

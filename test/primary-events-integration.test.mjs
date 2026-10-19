@@ -324,3 +324,51 @@ test("EPC class-device can remove an unused opened primary note, but cannot eras
   assert.equal(forbidden.status, 403, JSON.stringify(await forbidden.clone().json()));
   assert.equal(db.tables.grade_evaluations.length, 1);
 });
+
+
+test("EPC primary teacher corrects a published note without unpublishing or deleting history", async () => {
+  const db = setup("CP1", true);
+  const evaluation = await publish(db, "DEC", "french", 0.7);
+  const previousVersion = db.tables.grade_evaluations.find(row => row.id === evaluation.id).publication_version;
+  const route = db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts");
+
+  const correction = await route.POST(req("/api/teacher/grades/scores/bulk", {
+    evaluation_id: evaluation.id, items: [{ student_id: pupil0, score: 9.5 }],
+  }));
+  assert.equal(correction.status, 200, JSON.stringify(await correction.clone().json()));
+  const result = await correction.json();
+  assert.equal(result.publication?.is_published, true);
+  assert.equal(result.publication.publication_version, previousVersion + 1);
+  const current = db.tables.grade_published_scores.filter(row =>
+    row.evaluation_id === evaluation.id && row.is_current);
+  assert.equal(current.find(row => row.student_id === pupil0)?.score, 9.5);
+  assert.equal(db.tables.grade_published_scores.some(row =>
+    row.evaluation_id === evaluation.id && !row.is_current), true,
+    "the previous official version is archived, not deleted");
+
+  const outsider = "aaaaaaaa-bbbb-4aaa-8aaa-aaaaaaaaaaaa";
+  db.users.set(outsider, { user: db.user(outsider, "outsider@example.invalid") });
+  db.tables.profiles.push({ id: outsider, institution_id: db.legacyId });
+  db.tables.user_roles.push({ profile_id: outsider, institution_id: db.legacyId, role: "teacher" });
+  const foreign = await createFixtureRouteLoader(db, outsider)(
+    "src/app/api/teacher/grades/scores/bulk/route.ts"
+  ).POST(req("/api/teacher/grades/scores/bulk", {
+    evaluation_id: evaluation.id, items: [{ student_id: pupil0, score: 3 }],
+  }));
+  assert.equal(foreign.status, 423, "a different teacher cannot change the published note");
+  assert.equal(db.tables.student_grades.find(row =>
+    row.evaluation_id === evaluation.id && row.student_id === pupil0)?.score, 9.5);
+});
+
+test("classic primary teachers retain the existing published-grade protection", async () => {
+  const db = setup("CP1", false);
+  const evaluation = await create(db, "DEC", "french");
+  const row = db.tables.grade_evaluations.find(item => item.id === evaluation.id);
+  row.is_published = true;
+  row.publication_status = "published";
+  const attempt = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts")
+    .POST(req("/api/teacher/grades/scores/bulk", {
+      evaluation_id: evaluation.id, items: [{ student_id: pupil0, score: 3 }],
+    }));
+  assert.equal(attempt.status, 423, "classic school policy must not change");
+});
