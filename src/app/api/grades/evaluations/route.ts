@@ -1365,6 +1365,7 @@ export async function DELETE(req: NextRequest) {
     // capability. Existing classic school and teacher deletion rules stay intact.
     const classDeviceOnly = roles.has("class_device") &&
       !roles.has("teacher") && !isPrivileged(roles);
+    let scopedPrimaryClassDelete = false;
     if (classDeviceOnly) {
       const { data: institution, error: institutionError } = await srv
         .from("institutions").select("settings_json")
@@ -1380,6 +1381,7 @@ export async function DELETE(req: NextRequest) {
         usesDirectGradePublication(institution.settings_json) &&
         resolveSchoolCycleForClass(cls, cycles) === "primary";
       if (isFrancoArabicPrimary) {
+        scopedPrimaryClassDelete = true;
         if (!await classDeviceMayAccessClass({
           service: srv, userId: profile.id, classId: evalRow.class_id,
         })) return NextResponse.json({ ok: false, error: "class_device_class_forbidden" }, { status: 403 });
@@ -1453,10 +1455,19 @@ export async function DELETE(req: NextRequest) {
 
     // 2️⃣ Puis supprimer l'évaluation
     // Ici c’est sûr : l’évaluation n’est ni soumise ni publiée.
-    const { error } = await srv
-      .from("grade_evaluations")
-      .delete()
-      .eq("id", evaluation_id);
+    let deleteEvaluationQuery = srv.from("grade_evaluations")
+      .delete().eq("id", evaluation_id);
+    if (scopedPrimaryClassDelete) {
+      // Re-check publication status at the last write boundary.
+      deleteEvaluationQuery = deleteEvaluationQuery.eq("is_published", false);
+    }
+    const { data: deleted, error } = await deleteEvaluationQuery.select("id");
+    if (!error && scopedPrimaryClassDelete && !deleted?.length) {
+      return NextResponse.json({
+        ok: false, error: "primary_evaluation_publication_changed",
+        message: "Cette évaluation vient d'être publiée. Actualisez le cahier.",
+      }, { status: 409 });
+    }
 
     if (error) {
       console.error("[grades/evaluations] DELETE error", error);
