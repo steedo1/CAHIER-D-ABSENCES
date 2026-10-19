@@ -17,6 +17,7 @@ import {
   FileText,
 } from "lucide-react";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
+import type { PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
   gradesClassesKey,
@@ -89,6 +90,7 @@ type TeachClass = {
   subject_name: string | null;
   school_cycle?: "preschool" | "primary" | "secondary" | null;
   teaching_track?: "french" | "arabic" | null;
+  configured_scale?: number | null;
   education_type?: string | null;
   education_label?: string | null;
   formation_code?: string | null;
@@ -98,7 +100,7 @@ type TeachClass = {
 
 type RosterItem = { id: string; full_name: string; matricule: string | null };
 
-type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
+type EvalKind = "devoir" | "composition" | "interro_ecrite" | "interro_orale";
 
 type PublicationStatus =
   | "draft"
@@ -116,7 +118,7 @@ type Evaluation = {
   grading_period_id?: string | null;
   eval_date: string; // yyyy-mm-dd
   eval_kind: EvalKind;
-  scale: 5 | 10 | 20 | 40 | 60;
+  scale: number;
   coeff: number;
   is_published: boolean;
   published_at?: string | null;
@@ -525,12 +527,13 @@ export default function ClassDeviceNotesPage() {
   const classOptions = useMemo(
     () =>
       teachClasses.map((tc) => ({
-        key: `${tc.class_id}|${tc.subject_id ?? ""}`,
+        key: `${tc.class_id}|${tc.subject_id ?? ""}|${tc.teaching_track ?? ""}`,
         label: `${tc.class_label}${
           tc.subject_name ? ` — ${tc.subject_name}` : ""
         }`,
-        group:
-          tc.education_type === "general_secondary" || !tc.education_type
+        group: tc.school_cycle
+          ? `${tc.school_cycle === "primary" ? "Primaire" : tc.school_cycle === "preschool" ? "Préscolaire" : "Secondaire"} — ${tc.teaching_track === "arabic" ? "Enseignement arabe" : tc.teaching_track === "french" ? "Enseignement français" : "Enseignement à préciser"}`
+          : tc.education_type === "general_secondary" || !tc.education_type
             ? "Secondaire général"
             : `${tc.education_label || "Autre enseignement"}${
                 tc.formation_label ? ` — ${tc.formation_label}` : ""
@@ -553,6 +556,11 @@ export default function ClassDeviceNotesPage() {
     () => classOptions.find((o) => o.key === selKey)?.value || null,
     [classOptions, selKey]
   );
+  const isPrimaryProgram = selected?.school_cycle === "primary";
+  const [primaryEvents, setPrimaryEvents] = useState<PrimaryEvent[]>([]);
+  const [primaryCatalogEnabled, setPrimaryCatalogEnabled] = useState(false);
+  const [newPrimaryEventCode, setNewPrimaryEventCode] = useState("DEVOIR");
+  const selectedPrimaryEvent = primaryEvents.find(event => event.code === newPrimaryEventCode) || null;
 
   const [gradePeriods, setGradePeriods] = useState<GradePeriod[]>([]);
   const [loadingPeriods, setLoadingPeriods] = useState(false);
@@ -573,12 +581,15 @@ export default function ClassDeviceNotesPage() {
   }
 
   const selectedPeriodClosed = useMemo(
-    () => isPeriodClosed(selectedPeriod),
-    [selectedPeriod]
+    () => !(isPrimaryProgram && primaryCatalogEnabled) && isPeriodClosed(selectedPeriod),
+    [selectedPeriod, isPrimaryProgram, primaryCatalogEnabled]
   );
 
   function appendSelectedPeriod(params: URLSearchParams) {
-    if (selectedPeriodId) {
+    if (isPrimaryProgram && selected?.teaching_track) {
+      params.set("teaching_track", selected.teaching_track);
+    }
+    if (selectedPeriodId && !isPrimaryProgram) {
       params.set("grading_period_id", selectedPeriodId);
     }
     return params;
@@ -624,7 +635,7 @@ export default function ClassDeviceNotesPage() {
     new Date().toISOString().slice(0, 10)
   );
   const [newType, setNewType] = useState<EvalKind>("devoir");
-  const [newScale, setNewScale] = useState<5 | 10 | 20>(20);
+  const [newScale, setNewScale] = useState<number>(20);
   const [newCoeff, setNewCoeff] = useState<number>(1);
   const [creating, setCreating] = useState(false);
 
@@ -678,7 +689,7 @@ export default function ClassDeviceNotesPage() {
         setTeachClasses(arr);
         if (!selKey && arr.length) {
           const first = arr[0];
-          const defaultKey = `${first.class_id}|${first.subject_id ?? ""}`;
+          const defaultKey = `${first.class_id}|${first.subject_id ?? ""}|${first.teaching_track ?? ""}`;
           logInfo("useEffect[classes] -> sélection par défaut", defaultKey);
           setSelKey(defaultKey);
         }
@@ -696,7 +707,7 @@ export default function ClassDeviceNotesPage() {
   useEffect(() => {
     let cancelled = false;
 
-    if (!selected?.class_id) {
+    if (!selected?.class_id || isPrimaryProgram) {
       setGradePeriods([]);
       setSelectedPeriodId("");
       return () => {
@@ -768,7 +779,7 @@ export default function ClassDeviceNotesPage() {
     return () => {
       cancelled = true;
     };
-  }, [academicYearLabel, selected?.class_id]);
+  }, [academicYearLabel, selected?.class_id, isPrimaryProgram]);
 
   /* ==========================================
      Chargement des sous-matières (collège)
@@ -886,7 +897,7 @@ export default function ClassDeviceNotesPage() {
         }
         appendSelectedPeriod(evalParams);
 
-        const evalsUrl = `/api/grades/evaluations?${evalParams.toString()}`;
+        const evalsUrl = `${isPrimaryProgram ? "/api/teacher/grades/evaluations" : "/api/grades/evaluations"}?${evalParams.toString()}`;
         logInfo("useEffect[data] -> fetch evaluations", evalsUrl);
         const jEvals: any = await gradesGetJson(
           evalsUrl,
@@ -894,9 +905,11 @@ export default function ClassDeviceNotesPage() {
             "class-device",
             selected.class_id,
             selected.subject_id,
-            selectedPeriodId || null
+            (isPrimaryProgram ? "primary:" + selected.teaching_track : selectedPeriodId) || null
           )
         );
+        setPrimaryEvents(isPrimaryProgram && Array.isArray(jEvals.primary_events) ? jEvals.primary_events : []);
+        setPrimaryCatalogEnabled(isPrimaryProgram && jEvals.primary_event_catalog_enabled === true);
         const evals = (jEvals.items || []) as Evaluation[];
         evals.sort((a, b) => a.eval_date.localeCompare(b.eval_date));
         logInfo("useEffect[data] -> évaluations reçues", evals);
@@ -939,7 +952,7 @@ export default function ClassDeviceNotesPage() {
         setLoading(false);
       }
     })();
-  }, [selected?.class_id, selected?.subject_id, selectedPeriodId]);
+  }, [selected?.class_id, selected?.subject_id, selected?.teaching_track, selectedPeriodId]);
 
   /* ==========================================
      Actions
@@ -1060,6 +1073,20 @@ export default function ClassDeviceNotesPage() {
     }
   }
 
+  // A direct-publication primary snapshot may receive the next pupils' marks.
+  // The server issues a new audited official version after each successful save.
+  function editableForSelectedClass(ev: Evaluation | null) {
+    return (isPrimaryProgram && primaryCatalogEnabled && ev &&
+      getPublicationStatus(ev) === "published") || isEvaluationEditable(ev);
+  }
+
+  useEffect(() => {
+    setPrimaryEvents([]);
+    setPrimaryCatalogEnabled(false);
+    setNewPrimaryEventCode("DEVOIR");
+    if (isPrimaryProgram && selected?.configured_scale) setNewScale(selected.configured_scale);
+  }, [selected?.class_id, selected?.subject_id, selected?.teaching_track, selected?.configured_scale, isPrimaryProgram]);
+
   function setGrade(
     evId: string,
     studentId: string,
@@ -1082,7 +1109,7 @@ export default function ClassDeviceNotesPage() {
     logInfo("setGrade ->", { evId, studentId, value, clamped: v, scale });
 
     const ev = evaluations.find((x) => x.id === evId) || null;
-    if (!isEvaluationEditable(ev)) {
+    if (!editableForSelectedClass(ev)) {
       setMsg(
         getPublicationStatus(ev) === "submitted"
           ? "Cette évaluation est soumise à validation. Les notes sont bloquées en attendant la décision de l’administration."
@@ -1143,7 +1170,7 @@ export default function ClassDeviceNotesPage() {
         const ev = evaluations.find((x) => x.id === evaluation_id) || null;
 
         // Si l’évaluation est déjà soumise/publiée, on ne tente même pas l’écriture.
-        if (!isEvaluationEditable(ev)) {
+        if (!editableForSelectedClass(ev)) {
           publicationLockedEvalIds.push(evaluation_id);
           continue;
         }
@@ -1208,6 +1235,12 @@ export default function ClassDeviceNotesPage() {
         }
 
         savedEvalIds.push(evaluation_id);
+        if (isPrimaryProgram && primaryCatalogEnabled && j?.publication?.is_published) {
+          setEvaluations(prev => prev.map(ev => ev.id === evaluation_id
+            ? { ...ev, is_published: true, publication_status: "published",
+                publication_version: j.publication.publication_version ?? ev.publication_version }
+            : ev));
+        }
       }
 
       // Applique les notes en mémoire uniquement pour les évaluations réellement enregistrées
@@ -1253,7 +1286,9 @@ export default function ClassDeviceNotesPage() {
           "Évaluation(s) verrouillée(s) 🔒 : déverrouillez avec le PIN pour enregistrer."
         );
       } else {
-        setMsg("Notes enregistrées ✅");
+        setMsg(isPrimaryProgram && primaryCatalogEnabled
+          ? "Notes enregistrées et publiées automatiquement ✅"
+          : "Notes enregistrées ✅");
       }
 
       logInfo("saveAllChanges -> terminé", {
@@ -1296,18 +1331,25 @@ export default function ClassDeviceNotesPage() {
     setCreating(true);
     setMsg(null);
     try {
+      if (isPrimaryProgram && (!selected.configured_scale || !selected.teaching_track)) {
+        setMsg("Barème ou enseignement du primaire non configuré.");
+        return;
+      }
       const payload = {
         class_id: selected.class_id,
         subject_id: selected?.subject_id ?? null,
         subject_component_id: hasComponents ? selectedComponentId : null,
-        grading_period_id: selectedPeriodId || null,
-        eval_date: newDate,
-        eval_kind: newType,
-        scale: newScale,
-        coeff: newCoeff,
+        grading_period_id: isPrimaryProgram && primaryCatalogEnabled ? null : selectedPeriodId || null,
+        eval_date: isPrimaryProgram && primaryCatalogEnabled && selectedPrimaryEvent ? selectedPrimaryEvent.date : newDate,
+        eval_kind: isPrimaryProgram && primaryCatalogEnabled
+          ? selectedPrimaryEvent?.kind === "official" || selectedPrimaryEvent?.kind === "passage" ? "composition" : "devoir"
+          : newType,
+        ...(isPrimaryProgram && primaryCatalogEnabled ? { primary_event_code: newPrimaryEventCode, teaching_track: selected.teaching_track } : {}),
+        scale: isPrimaryProgram ? selected.configured_scale! : newScale,
+        coeff: isPrimaryProgram ? 1 : newCoeff,
       };
       logInfo("addEvaluation -> POST /api/grades/evaluations", payload);
-      const r = await fetch("/api/grades/evaluations", {
+      const r = await fetch(isPrimaryProgram ? "/api/teacher/grades/evaluations" : "/api/grades/evaluations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
