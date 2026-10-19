@@ -2457,7 +2457,7 @@ export default function BulletinsPage() {
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
   const { primaryBulletinEvents, selectedPrimaryEventCode, setSelectedPrimaryEventCode,
     usesPrimaryEventBulletins, primaryCalendarLoading, primaryCalendarError } = usePrimaryBulletinCalendar(
-      classes.find(row => row.id === selectedClassId), selectedAcademicYear);
+      classes.find(row => row.id === selectedClassId), selectedAcademicYear, institution?.settings_json);
 
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");

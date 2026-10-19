@@ -2,12 +2,17 @@
 import { useEffect, useState } from "react";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import type { PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
+import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
 
 /** Both existing bulletin screens use the same dated calendar and class scope. */
-export function usePrimaryBulletinCalendar(classroom: { id: string; level?: string | null } | undefined, year: string) {
+export function usePrimaryBulletinCalendar(classroom: { id: string; level?: string | null } | undefined, year: string, institutionSettings?: unknown) {
   const school = useSchoolNavigation();
+  // Correspondant Fichier has its own shell, without the administrator's
+  // navigation provider. Reuse the institution settings already authorized and
+  // loaded by both bulletin screens; calendar access remains server-checked.
+  const settings = school?.settings ?? parseSchoolCyclesSettings(institutionSettings);
   const level = String(classroom?.level || "").replace(/[\s.-]/g, "").toUpperCase();
-  const enabled = school?.settings.enabledCycles.includes("primary") === true && /^(CP[12]|CE[12]|CM[12])$/.test(level);
+  const enabled = settings.enabled && settings.enabledCycles.includes("primary") && /^(CP[12]|CE[12]|CM[12])$/.test(level);
   const [calendar, setCalendar] = useState<{ key: string; events: PrimaryEvent[]; error: string }>({ key: "", events: [], error: "" });
   const [selectedPrimaryEventCode, setSelectedPrimaryEventCode] = useState("");
   const key = `${classroom?.id || ""}:${year}`;
