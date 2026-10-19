@@ -12,7 +12,7 @@ import { createFixtureRouteLoader } from "./helpers/multicycle-fixture.mjs";
 
 // Mount the actual TSX screens in Chromium, with the existing API handlers and
 // an isolated in-memory Supabase transport. No production session or data writes.
-test("browser: administrator calendar → teacher entry/publication → main Correspondant bulletin screen", { timeout: 120000 }, async () => {
+for (const bulletinRole of ["admin", "file_correspondent"]) test(`browser: administrator calendar → teacher entry/publication → ${bulletinRole} bulletin screen`, { timeout: 120000 }, async () => {
   const db = setup();
   const settings = db.tables.institutions[0].settings_json;
   settings.school_teaching_signatories_v1 = { version: 1, french: { name: "DIRECTEUR FRANÇAIS TEST" }, arabic: { name: "DIRECTEUR ARABE TEST" } };
@@ -20,12 +20,19 @@ test("browser: administrator calendar → teacher entry/publication → main Cor
   db.tables.institutions[0].phone = "0700000000";
   const noDispatch = new Map([["src/lib/push-dispatch.ts", "export async function triggerPushDispatch(){return true;}"]]);
   db.teacher = createFixtureRouteLoader(db, teacher, noDispatch);
+  const correspondentId = "77777777-7777-4777-8777-777777777777";
+  db.users.set(correspondentId, { user: db.user(correspondentId, "correspondent@example.invalid") });
+  db.tables.profiles.push({ id: correspondentId, institution_id: db.legacyId });
+  db.tables.user_roles.push({ profile_id: correspondentId, institution_id: db.legacyId, role: "file_correspondent" });
+  let bulletinReader = db.admin;
   const temp = await mkdtemp(path.join(tmpdir(), "primary-events-browser-"));
   const mocks = {
     "next/link": 'import React from "react";export default function Link({href,children,...p}){return React.createElement("a",{...p,href},children)}',
     "next/navigation": 'export const useSearchParams=()=>new URLSearchParams(location.search);export const usePathname=()=>location.pathname;export const useRouter=()=>({push(){},replace(){},refresh(){}});',
-    "@/components/admin/SchoolNavigationProvider": `export const useSchoolNavigation=()=>({settings:${JSON.stringify(settings.school_cycles_v1)},selection:{cycle:"primary",track:"all",level:"",classId:""},classes:[],href:x=>x});`,
-    "@/app/admin/ui/admin-role-context": 'export const useAdminRole=()=>"admin";',
+    "@/components/admin/SchoolNavigationProvider": bulletinRole === "file_correspondent"
+      ? "export const useSchoolNavigation=()=>null;"
+      : `export const useSchoolNavigation=()=>({settings:${JSON.stringify(settings.school_cycles_v1)},selection:{cycle:"primary",track:"all",level:"",classId:""},classes:[],href:x=>x});`,
+    "@/app/admin/ui/admin-role-context": `export const useAdminRole=()=>${JSON.stringify(bulletinRole)};`,
     "@/hooks/useOnlineStatus": 'export const useOnlineStatus=()=>({isOnline:true});',
     "@/hooks/useEducationTeachingContext": 'export const useEducationTeachingContext=()=>({educationTypes:["general_secondary"],loading:false,formationsFor:()=>[],levelsFor:()=>[]});',
     "@/components/OfflineReadinessCard": 'export default function Empty(){return null}',
@@ -65,14 +72,14 @@ test("browser: administrator calendar → teacher entry/publication → main Cor
       requests.push({path:url.pathname,query:url.search,method:request.method});
       const json = value => {response.setHeader("Content-Type","application/json");response.end(JSON.stringify(value));};
       if (url.pathname === "/api/admin/classes") return json({items:db.tables.classes});
-      if (url.pathname === "/api/admin/institution/settings") return json({institution_name:"École fictive",institution_logo_url:db.tables.institutions[0].logo_url,settings_json:settings});
+      if (url.pathname === "/api/admin/institution/settings") return json({institution_name:"École fictive",institution_logo_url:db.tables.institutions[0].logo_url,settings_json:db.tables.institutions[0].settings_json});
       if (url.pathname.includes("grading-periods")) return json({items:[]});
       if (url.pathname.includes("/locks")) return json({lock:{is_locked:false}});
       if (url.pathname === "/api/teacher/institution/settings" || url.pathname === "/api/teacher/settings" || url.pathname === "/api/institution/settings") return json({academic_year:year,current_academic_year:year});
       let route;
       if (url.pathname === "/api/grades/classes") route=db.teacher("src/app/api/grades/classes/route.ts");
       else if (url.pathname.startsWith("/api/teacher/")) route=db.teacher(`src/app${url.pathname}/route.ts`);
-      else if (url.pathname.startsWith("/api/admin/")) route=db.admin(`src/app${url.pathname}/route.ts`);
+      else if (url.pathname.startsWith("/api/admin/")) route=bulletinReader(`src/app${url.pathname}/route.ts`);
       if (!route?.[request.method]) {unexpected.push(url.pathname);return json({items:[]});}
       const apiRequest = new NextRequest(url, {method:request.method,headers:{...request.headers,"content-type":"application/json"},...(raw?{body:raw}:{})});
       const result = await route[request.method](apiRequest);
@@ -115,6 +122,14 @@ test("browser: administrator calendar → teacher entry/publication → main Cor
     assert.equal((await db.teacher("src/app/api/teacher/grades/evaluations/route.ts").GET(new NextRequest(base+`/api/teacher/grades/evaluations?class_id=${cls}&subject_id=${math}&teaching_track=arabic`))).status,200);
     // Complete the official Arabic event through the same tested handlers.
     await publish(db,"DEC","arabic",0.4);
+    const cm2Class = "33333333-3333-4333-8333-222222222222";
+    db.tables.classes.push({ ...db.tables.classes[0], id: cm2Class, level: "CM2", label: "CM2 Français" });
+    db.tables.institutions[0].settings_json.primary_evaluation_events_v1.years[year].events.push({
+      code: "CM2BLANC", kind: "mock", date: "2027-04-08", label: "Examen blanc CM2",
+      levels: ["CM2"], tracks: ["french"], printBulletin: true,
+    });
+    bulletinReader = bulletinRole === "file_correspondent" ? createFixtureRouteLoader(db, correspondentId) : db.admin;
+    const callsBeforeBulletins = db.calls.length;
     await page.goto(base+"/admin/bulletins");
     const select=page.locator("select").filter({has:page.locator(`option[value="${cls}"]`)});
     await select.last().selectOption(cls);
@@ -125,10 +140,28 @@ test("browser: administrator calendar → teacher entry/publication → main Cor
     await page.locator('select#specialized-bulletin-layout').selectOption("french");
     await page.getByText("DIRECTEUR FRANÇAIS TEST",{exact:true}).first().waitFor();
     assert.ok(await page.getByAltText("Logo de l’établissement").first().isVisible());
+    await page.locator('select#specialized-bulletin-layout').selectOption("arabic");
+    await page.getByText("DIRECTEUR ARABE TEST",{exact:true}).first().waitFor();
+    assert.equal(await page.getByText("DIRECTEUR FRANÇAIS TEST",{exact:true}).count(),0,"Arabic presentation uses its own director");
+    await page.locator('select#specialized-bulletin-layout').selectOption("french");
     assert.ok(requests.some(r=>r.path==="/api/admin/grades/bulletin"&&r.query.includes("primary_event_code=DEC")));
+    assert.ok(requests.some(r=>r.path==="/api/admin/institution/primary-evaluation-events"&&r.query.includes(`class_id=${cls}`)));
+    assert.equal(db.calls.slice(callsBeforeBulletins).some(call=>call.op!=="read"),false,"bulletin consultation never changes notes or settings");
     assert.deepEqual(errors,[]);
     assert.deepEqual(unexpected,[]);
     if(process.env.PRIMARY_PRINT_OUTPUT) await page.screenshot({path:path.join(process.env.PRIMARY_PRINT_OUTPUT,"bulletin-browser.png"),fullPage:true});
+    await page.getByRole("button",{name:"Changer de classe ou d’évaluation",exact:true}).click();
+    const levelSelect = page.locator("select").filter({has:page.locator('option[value="CM2"]')});
+    await levelSelect.selectOption("CM2");
+    await page.locator("select").filter({has:page.locator(`option[value="${cm2Class}"]`)}).selectOption(cm2Class);
+    await page.locator('#primary-bulletin-event option[value="CM2BLANC"]').waitFor({state:"attached"});
+    assert.equal(await page.locator('#primary-bulletin-event option[value="PASS"]').count(),0,"CM2 never offers the primary passage composition");
+    assert.equal(await page.locator('#primary-bulletin-event option[value="DEC"]').count(),0,"events from the previous class disappear");
+    await levelSelect.selectOption("CP1");
+    await select.last().selectOption(cls);
+    await page.locator('#primary-bulletin-event option[value="DEC"]').waitFor({state:"attached"});
+    assert.equal(await page.locator('#primary-bulletin-event').inputValue(),"","changing classes resets the selected event");
+    assert.equal(await page.locator('#primary-bulletin-event option[value="CM2BLANC"]').count(),0);
   } catch (error) {
     console.error({ errors, unexpected, text: (await page.locator("body").innerText()).slice(-7000), requests: requests.slice(-10) });
     throw error;
