@@ -14,7 +14,20 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 class Query {
   constructor(db, table) { this.db = db; this.table = table; this.filters = []; this.sort = []; this.op = "read"; }
   select(_columns, options = {}) { this.head = options.head; return this; }
-  eq(key, value) { this.filters.push(row => key === "settings_json" && typeof value === "string" ? same(row[key], JSON.parse(value)) : key.includes("->") ? key.split(/->>?/).reduce((part, segment) => part?.[segment], row) === value : row[key] === value); return this; }
+  eq(key, value) {
+    this.filters.push(row => {
+      const actual = key.includes("->")
+        ? key.split(/->>?/).reduce((part, segment) => part?.[segment], row)
+        : row[key];
+      if (key.startsWith("settings_json") && typeof value === "string" &&
+          (value.startsWith("{") || value.startsWith("["))) {
+        try { return same(actual, JSON.parse(value)); }
+        catch { return false; }
+      }
+      return actual === value;
+    });
+    return this;
+  }
   like(key, pattern) { const prefix = pattern.replace(/%$/, ""); this.filters.push(row => String(row[key] || "").startsWith(prefix)); return this; }
   neq(key, value) { this.filters.push(row => row[key] !== value); return this; }
   gte(key, value) { this.filters.push(row => row[key] >= value); return this; }
