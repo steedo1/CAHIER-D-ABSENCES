@@ -12,7 +12,7 @@ import {
   type SelectHTMLAttributes,
 } from "react";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
-import { resolveAttestationSignatory } from "@/lib/franco-arabic-document-signatories";
+import { resolveAttestationSignatories } from "@/lib/franco-arabic-document-signatories";
 import {
   DEFAULT_EDUCATION_SCOPE,
   getClassLevelCode,
@@ -285,10 +285,14 @@ function buildAttestationHtml(args: {
   const institutionPhone = (cfg.institution_phone || "").trim();
   const institutionEmail = (cfg.institution_email || "").trim();
   const institutionCode = (cfg.institution_code || "").trim();
-  // Franco-Arabic: ONE certificate per pupil, including dual-track pupils,
-  // signed by the institution's general director, not by either teaching head.
-  // Other institutions retain their original signatory/title unchanged.
-  const { name: headName, title: headTitle, signatureTitle } = resolveAttestationSignatory(cfg);
+  // One certificate per pupil; both teaching directors sign in a bilingual school.
+  const signatories = resolveAttestationSignatories(cfg);
+  const dualSignatures = signatories.length > 1;
+  const introduction = dualSignatures
+    ? `Nous soussignés, ${signatories.map(signer => `<strong>${escapeHtml(signer.name)}</strong>`).join(" et ")},
+       <strong>directeurs des études</strong> du <strong>${escapeHtml(institutionName)}</strong>, attestons que l'élève :`
+    : `Je soussigné(e), <strong>${escapeHtml(signatories[0].name)}</strong>,
+       <strong>${escapeHtml(signatories[0].title)}</strong> du <strong>${escapeHtml(institutionName)}</strong>, atteste que l'élève :`;
   const logoUrl = (cfg.institution_logo_url || "").trim();
 
   const pages = rows.map((student, idx) => {
@@ -400,9 +404,7 @@ function buildAttestationHtml(args: {
             </div>
 
             <p class="body">
-              Je soussigné(e), <strong>${escapeHtml(headName)}</strong>,
-              <strong>${escapeHtml(headTitle)}</strong> du
-              <strong>${escapeHtml(institutionName)}</strong>, atteste que l'élève :
+              ${introduction}
             </p>
 
             <div class="student-box">
@@ -464,13 +466,15 @@ function buildAttestationHtml(args: {
               de droit.
             </p>
 
-            <div class="signature-wrap">
-              <div class="signature-box">
-                <div>Fait à ${escapeHtml(place)} le ${escapeHtml(today)}</div>
-                <div class="signature-title">${escapeHtml(signatureTitle)}</div>
+            <div class="signature-wrap${dualSignatures ? " signature-wrap-dual" : ""}">
+              ${dualSignatures ? `<div class="signature-date">Fait à ${escapeHtml(place)} le ${escapeHtml(today)}</div>` : ""}
+              ${signatories.map(signer => `<div class="signature-box">
+                ${dualSignatures ? "" : `<div>Fait à ${escapeHtml(place)} le ${escapeHtml(today)}</div>`}
+                <div class="signature-title">${escapeHtml(signer.signatureTitle)}</div>
+                ${signer.teachingLabel ? `<div class="signature-teaching">${escapeHtml(signer.teachingLabel)}</div>` : ""}
                 <div class="signature-space"></div>
-                <div class="signature-name">${escapeHtml(headName)}</div>
-              </div>
+                <div class="signature-name">${escapeHtml(signer.name)}</div>
+              </div>`).join("")}
             </div>
           </main>
 
@@ -751,6 +755,30 @@ function buildAttestationHtml(args: {
       text-align: center;
       font-size: 13px;
       line-height: 1.45;
+    }
+
+    .signature-wrap-dual {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 8mm;
+      row-gap: 2mm;
+      break-inside: avoid;
+    }
+
+    .signature-wrap-dual .signature-box {
+      width: auto;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .signature-date {
+      grid-column: 1 / -1;
+      text-align: right;
+      font-size: 13px;
+    }
+
+    .signature-teaching {
+      font-size: 12px;
     }
 
     .signature-title {
