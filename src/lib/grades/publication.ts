@@ -596,6 +596,7 @@ export async function publishEvaluationOfficially(params: {
   comment?: string | null;
   forceNewVersion?: boolean;
   queuePush?: boolean;
+  notifyStudentIds?: string[];
 }): Promise<GradePublicationResult> {
   const srv = getSupabaseServiceClient();
 
@@ -678,7 +679,8 @@ export async function publishEvaluationOfficially(params: {
 
   if (shouldQueuePush) {
     try {
-      await queueGradeNotificationsForEvaluation(evaluation.id);
+      await queueGradeNotificationsForEvaluation(evaluation.id,
+        params.notifyStudentIds ? { studentIds: params.notifyStudentIds } : undefined);
       pushQueued = true;
     } catch (pushErr) {
       console.error("[grades/publication] push queue failed", {

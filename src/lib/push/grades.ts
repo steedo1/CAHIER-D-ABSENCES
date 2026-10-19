@@ -109,7 +109,8 @@ function toFiniteNumber(value: unknown, fallback: number): number {
  * - les lignes déjà marquées push_queued_at ne sont pas renvoyées.
  */
 export async function queueGradeNotificationsForEvaluation(
-  evaluationId: string
+  evaluationId: string,
+  options?: { studentIds?: readonly string[] },
 ): Promise<void> {
   const srv = getSupabaseServiceClient();
   const cleanEvaluationId = String(evaluationId || "").trim();
@@ -223,7 +224,9 @@ export async function queueGradeNotificationsForEvaluation(
   });
 
   // 2️⃣ Récupérer les notes OFFICIELLES publiées de cette évaluation
-  const { data: officialRowsRaw, error: officialErr } = await srv
+  const scopedStudentIds = options?.studentIds ? [...new Set(options.studentIds.filter(Boolean))] : null;
+  if (scopedStudentIds && scopedStudentIds.length === 0) return;
+  let officialQuery = srv
     .from("grade_published_scores")
     .select(
       `
@@ -239,6 +242,8 @@ export async function queueGradeNotificationsForEvaluation(
     )
     .eq("evaluation_id", cleanEvaluationId)
     .eq("is_current", true);
+  if (scopedStudentIds) officialQuery = officialQuery.in("student_id", scopedStudentIds);
+  const { data: officialRowsRaw, error: officialErr } = await officialQuery;
 
   if (officialErr) {
     console.error("[push/grades] erreur chargement grade_published_scores", {
