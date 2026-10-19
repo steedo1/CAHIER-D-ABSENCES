@@ -1333,6 +1333,7 @@ export default function ClassDeviceNotesPage() {
     try {
       if (isPrimaryProgram && (!selected.configured_scale || !selected.teaching_track)) {
         setMsg("Barème ou enseignement du primaire non configuré.");
+        setCreating(false);
         return;
       }
       const payload = {
@@ -1386,6 +1387,10 @@ export default function ClassDeviceNotesPage() {
   }
 
   async function togglePublish(ev: Evaluation) {
+    if (isPrimaryProgram && primaryCatalogEnabled) {
+      setMsg("Les notes du primaire sont publiées automatiquement lors de l’enregistrement.");
+      return;
+    }
     setMsg(null);
 
     if (!isOnline) {
@@ -1458,6 +1463,10 @@ export default function ClassDeviceNotesPage() {
   }
 
   async function deleteEvaluation(ev: Evaluation) {
+    if (isPrimaryProgram && primaryCatalogEnabled) {
+      setMsg("La suppression d’une évaluation du primaire doit passer par la procédure de correction officielle.");
+      return;
+    }
     logInfo("deleteEvaluation -> demande de suppression", ev);
 
     if (!isOnline) {
@@ -2719,7 +2728,7 @@ export default function ClassDeviceNotesPage() {
             </div>
           </div>
 
-          <div>
+          {!(isPrimaryProgram && primaryCatalogEnabled) && <div>
             <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
               <FileText className="h-3.5 w-3.5" />
               Période configurée
@@ -2752,7 +2761,8 @@ export default function ClassDeviceNotesPage() {
                   )}${selectedPeriodClosed ? " • clôturée" : ""}`
                 : "Bonus et notes restent compatibles avec l’année scolaire."}
             </div>
-          </div>
+          </div>}
+
 
           {/* Création NOTE */}
           {isOnline && (
@@ -2762,7 +2772,7 @@ export default function ClassDeviceNotesPage() {
                 hasComponents ? "md:grid-cols-6" : "md:grid-cols-5"
               }`}
             >
-              <div>
+              {(!isPrimaryProgram || !primaryCatalogEnabled || newPrimaryEventCode === "DEVOIR") && <div>
                 <Input
                   type="date"
                   value={newDate}
@@ -2776,23 +2786,33 @@ export default function ClassDeviceNotesPage() {
                   aria-label="Date"
                   disabled={selectedPeriodClosed}
                 />
-              </div>
+              </div>}
               <div>
                 <Select
-                  value={newType}
+                  value={isPrimaryProgram && primaryCatalogEnabled ? newPrimaryEventCode : newType}
                   onChange={(e) => {
                     logInfo(
                       "UI -> changement type nouvelle note",
                       e.target.value
                     );
-                    setNewType(e.target.value as EvalKind);
+                    if (isPrimaryProgram && primaryCatalogEnabled) setNewPrimaryEventCode(e.target.value);
+                    else setNewType(e.target.value as EvalKind);
                   }}
                   aria-label="Type d’évaluation"
                   disabled={selectedPeriodClosed}
                 >
-                  <option value="devoir">Devoir</option>
-                  <option value="interro_ecrite">Interrogation écrite</option>
-                  <option value="interro_orale">Interrogation orale</option>
+                  {isPrimaryProgram && primaryCatalogEnabled ? <>
+                    <option value="DEVOIR">Devoir de classe (date libre)</option>
+                    {primaryEvents.map(event => <option key={event.code} value={event.code}>
+                      {event.label} — {new Date(event.date + "T12:00:00Z").toLocaleDateString("fr-FR")}
+                    </option>)}
+                  </> : <>
+                    <option value="devoir">Devoir</option>
+                    {isPrimaryProgram ? <option value="composition">Composition</option> : <>
+                      <option value="interro_ecrite">Interrogation écrite</option>
+                      <option value="interro_orale">Interrogation orale</option>
+                    </>}
+                  </>}
                 </Select>
               </div>
 
@@ -2833,19 +2853,19 @@ export default function ClassDeviceNotesPage() {
                       "UI -> changement échelle nouvelle note",
                       e.target.value
                     );
-                    setNewScale(Number(e.target.value) as 5 | 10 | 20);
+                    setNewScale(Number(e.target.value));
                   }}
                   aria-label="Échelle"
                   disabled={selectedPeriodClosed}
                 >
-                  {[5, 10, 20].map((s) => (
+                  {(isPrimaryProgram && selected?.configured_scale ? [selected.configured_scale] : [5, 10, 20]).map((s) => (
                     <option key={s} value={s}>
                       /{s}
                     </option>
                   ))}
                 </Select>
               </div>
-              <div className="col-span-2 md:col-span-2">
+              {!isPrimaryProgram && <div className="col-span-2 md:col-span-2">
                 <Select
                   value={String(newCoeff)}
                   onChange={(e) => {
@@ -2864,10 +2884,10 @@ export default function ClassDeviceNotesPage() {
                     </option>
                   ))}
                 </Select>
-              </div>
+              </div>}
             </div>
             <div className="mt-2">
-              <Button onClick={addEvaluation} disabled={!selected || creating || selectedPeriodClosed}>
+              <Button onClick={addEvaluation} disabled={!selected || creating || selectedPeriodClosed || (isPrimaryProgram && (!primaryCatalogEnabled || !selected.configured_scale || !selected.teaching_track))}>
                 <Plus className="h-4 w-4" />
                 {creating ? "Ajout…" : "Ajouter une note"}
               </Button>
@@ -2989,7 +3009,7 @@ export default function ClassDeviceNotesPage() {
                 gradeWritesBlocked ||
                 selectedPeriodClosed ||
                 !!lockByEvalId[ev.id]?.locked ||
-                !isEvaluationEditable(ev),
+                !editableForSelectedClass(ev),
               disabledReason: selectedPeriodClosed
                 ? "Cette période est clôturée."
                 : gradeWritesBlocked
