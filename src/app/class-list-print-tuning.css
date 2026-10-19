@@ -138,3 +138,87 @@
     page-break-inside: avoid !important;
   }
 }
+
+/* RECTO-VERSO: pagination compacte des listes de classes.
+   Un seul en-tête institutionnel, colonnes de notes inchangées. */
+@media print {
+  body .class-list-print-root .class-list-sheet {
+    margin: 0 !important; /* annule l'espacement écran entre feuilles */
+    padding: 0 !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+  body .class-list-print-root .class-list-sheet:not(:first-child) .official-header,
+  body .class-list-print-root .class-list-sheet:not(:first-child) .staff-line {
+    display: none !important;
+  }
+  /* Pour les listes A4 portrait du secondaire, jusqu'à 45 lignes par feuille. */
+  body .class-list-print-root:not(.primary-class-list) .class-list-sheet-dense .roster-table tbody tr {
+    height: 4.7mm !important;
+  }
+  body .class-list-print-root:not(.primary-class-list) .class-list-sheet-dense .roster-table th,
+  body .class-list-print-root:not(.primary-class-list) .class-list-sheet-dense .roster-table td {
+    padding-top: 0.25mm !important;
+    padding-bottom: 0.25mm !important;
+    font-size: 10px !important;
+  }
+  body .class-list-print-root:not(.primary-class-list) .class-list-sheet-dense .roster-table .col-name {
+    font-size: calc(var(--class-list-name-font-size, 12px) * 0.88) !important;
+  }
+  /* Primaires : limiter l'en-tête à l'essentiel sans le supprimer. */
+  body .primary-class-list .official-header {
+    gap: 1mm 3mm !important;
+    margin-bottom: 1mm !important;
+  }
+  body .primary-class-list .school-logo { width: 11mm !important; height: 11mm !important; }
+  body .primary-class-list .school-name { font-size: 11px !important; line-height: 1.12 !important; }
+  body .primary-class-list .school-meta { font-size: 8.5px !important; line-height: 1.15 !important; }
+  body .primary-class-list .right-meta { font-size: 9px !important; line-height: 1.18 !important; }
+  body .primary-class-list .list-title {
+    font-size: 12px !important;
+    line-height: 1.1 !important;
+    padding: 0.8mm 2mm !important;
+  }
+  body .primary-class-list .staff-line {
+    gap: 2mm !important;
+    margin: 1mm 0 1.5mm !important;
+    padding: 0.7mm 1mm !important;
+    font-size: 9px !important;
+    line-height: 1.1 !important;
+  }
+  body .primary-class-list .roster-table thead th {
+    height: 6.5mm !important;
+    font-size: 9px !important;
+  }
+  body .primary-class-list .roster-table thead th.col-note {
+    font-size: 8px !important;
+  }
+  body .primary-class-list .sheet-footer {
+    margin-top: 1.5mm !important;
+    padding-top: 0.7mm !important;
+    font-size: 8px !important;
+  }
+  /* 25-32 élèves : format intermédiaire, plus facile à renseigner à la main. */
+  body .primary-class-list .class-list-sheet-medium .roster-table tbody tr {
+    height: 4.6mm !important;
+  }
+  body .primary-class-list .class-list-sheet-medium .roster-table td {
+    padding: 0.35mm 0.45mm !important;
+    font-size: 10px !important;
+  }
+  body .primary-class-list .class-list-sheet-medium .roster-table .col-name {
+    font-size: calc(var(--class-list-name-font-size, 12px) * 0.9) !important;
+  }
+  /* 33-40 élèves : toutes les lignes sur une feuille A4 paysage, sans tronquer. */
+  body .primary-class-list .class-list-sheet-dense .roster-table tbody tr {
+    height: 3.7mm !important;
+  }
+  body .primary-class-list .class-list-sheet-dense .roster-table td {
+    padding: 0.17mm 0.35mm !important;
+    font-size: 9.3px !important;
+    line-height: 1.1 !important;
+  }
+  body .primary-class-list .class-list-sheet-dense .roster-table .col-name {
+    font-size: calc(var(--class-list-name-font-size, 12px) * 0.8) !important;
+  }
+}
