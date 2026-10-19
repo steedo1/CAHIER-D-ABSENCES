@@ -5,7 +5,7 @@ import { requireInstitutionRole } from "@/lib/auth/server-context";
 import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
 import { asSettingsObject, schoolSettingsRevision, writeSchoolSettings } from "@/lib/school-settings-write";
 import {
-  PRIMARY_EVENTS_SETTINGS_KEY, readPrimaryEvents, validatePrimaryEvents,
+  PRIMARY_EVENTS_SETTINGS_KEY, primaryEventTitle, readPrimaryEvents, validatePrimaryEvents,
 } from "@/lib/grades/primary-evaluation-events";
 
 export const runtime = "nodejs";
@@ -70,6 +70,27 @@ export async function PUT(req: NextRequest) {
   try { events = validatePrimaryEvents(body.events,year); }
   catch (e) {
     return json({ ok:false,error:e instanceof Error ? e.message : "invalid_events" },400);
+  }
+  // Les notes existantes restent liées à l'événement original : une évaluation
+  // déjà utilisée ne peut ni être supprimée ni changer de date, nature ou niveaux.
+  const previous = readPrimaryEvents(context.settings, year);
+  const changed = previous.filter(old => {
+    const next = events.find(event => event.id === old.id);
+    return !next || old.date !== next.date || old.kind !== next.kind ||
+      JSON.stringify([...old.levels].sort()) !== JSON.stringify([...next.levels].sort());
+  });
+  if (changed.length) {
+    const classes = await context.service.from("classes").select("id")
+      .eq("institution_id", context.institutionId).eq("academic_year", year);
+    if (classes.error) return json({ ok:false,error:"primary_event_integrity_check_failed" },503);
+    const ids = (classes.data || []).map(row => row.id);
+    if (ids.length) {
+      const used = await context.service.from("grade_evaluations").select("id")
+        .eq("academic_year", year).in("class_id", ids)
+        .in("title", changed.map(event => primaryEventTitle(event.id))).limit(1);
+      if (used.error) return json({ ok:false,error:"primary_event_integrity_check_failed" },503);
+      if (used.data?.length) return json({ ok:false,error:"primary_event_already_used" },409);
+    }
   }
   const current = asSettingsObject(context.settings);
   const root = asSettingsObject(current[PRIMARY_EVENTS_SETTINGS_KEY]);
