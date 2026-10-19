@@ -77,6 +77,13 @@ export type BulletinProgram = {
   appreciation?: string | null;
   directorName?: string | null;
   allowHistoricalNc?: boolean;
+  primaryAnnual?: {
+    ordinary: Array<{ label: string; average: number | null }>;
+    ordinaryAverage: number | null;
+    passageAverage: number | null;
+    annualAverage: number | null;
+    decision: string | null;
+  };
   historicalSecondary?: {
     /** Original authorized historical row, retained without recalculation. */
     sourceItem?: Record<string, unknown>;
@@ -276,6 +283,22 @@ function Panel({ program, compact, ordinary }: { program: BulletinProgram; compa
     <Heading track={program.track} compact={compact} ordinary={ordinary}/>
     <CourseTable program={program} compact={compact}/>
     <Summary program={program} compact={compact} ordinary={ordinary}/>
+    {program.primaryAnnual && <div className={styles.historicalDetails}>
+      <div className={styles.historicalLine}>
+        <strong>Récapitulatif des compositions officielles</strong>
+        {program.primaryAnnual.ordinary.map((item, index) => <span key={index}>
+          {item.label} : {number(item.average)} /{program.denominator}
+        </span>)}
+      </div>
+      <div className={styles.historicalLine}><strong>Moyenne des compositions</strong>
+        <span>{number(program.primaryAnnual.ordinaryAverage)} /{program.denominator}</span></div>
+      <div className={styles.historicalLine}><strong>Composition de passage (coefficient 2)</strong>
+        <span>{number(program.primaryAnnual.passageAverage)} /{program.denominator}</span></div>
+      <div className={styles.historicalLine}><strong>Moyenne générale annuelle</strong>
+        <span>{number(program.primaryAnnual.annualAverage)} /{program.denominator}</span></div>
+      {program.primaryAnnual.decision && <div className={styles.historicalLine}>
+        <strong>Décision de passage</strong><span>{program.primaryAnnual.decision}</span></div>}
+    </div>}
     {program.historicalSecondary && <div className={styles.historicalDetails}>
       {program.historicalSecondary.groups.length > 0 && (
         <div className={styles.historicalLine}>

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import { isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
+import { readPrimaryEventsCatalog, primaryEventTitle, parsePrimaryEventTitle, primaryPassageAverage, type PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import { buildProgramBulletinDraft, type OfficialEvaluationScore } from "@/lib/franco-arabic-bulletin-calculation";
 import { normalizePedagogicalLevel, resolveEvaluationTeachingTrack, resolvePedagogicalEngine, resolveProgramCoefficients, type InstitutionCoefficient } from "@/lib/pedagogical-engine";
 import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
@@ -84,8 +85,20 @@ export async function loadSpecializedBulletin(input: {
     return json({ ok: false, error: "CLASS_TEACHING_NOT_CONFIGURED" }, 409);
   }
   try {
-    const periods = await listApplicableGradePeriods(service, institutionId, year, schoolClass.id);
-    const period = periods.items.find(row => row.is_active !== false &&
+    const primaryCatalog = cycle === "primary"
+      ? readPrimaryEventsCatalog(input.settingsJson).years[year]?.events || [] : [];
+    const eventsMode = cycle === "primary" && primaryCatalog.length > 0;
+    const eventCode = searchParams.get("primary_event_code");
+    const primaryEvent = eventsMode ? primaryCatalog.find(event =>
+      event.code === eventCode && event.levels.includes(level.replace(/[\\s.-]/g, "").toUpperCase() as any)) : null;
+    if (eventsMode && (!primaryEvent || (primaryEvent.kind === "internal" && !primaryEvent.printBulletin))) {
+      return json({ ok: false, error: "PRIMARY_EVENT_NOT_APPLICABLE_TO_CLASS" }, 400);
+    }
+    const periods = eventsMode ? null : await listApplicableGradePeriods(service, institutionId, year, schoolClass.id);
+    const period = primaryEvent ? {
+      id: "MCPE:" + primaryEvent.code, start_date: primaryEvent.date, end_date: primaryEvent.date,
+      label: primaryEvent.label, code: primaryEvent.code,
+    } : periods?.items.find(row => row.is_active !== false &&
       (searchParams.get("period_id") ? row.id === searchParams.get("period_id") :
         row.start_date === searchParams.get("from") && row.end_date === searchParams.get("to")));
     if (!period) return json({ ok: false, error: "PERIOD_NOT_APPLICABLE_TO_CLASS" }, 400);
@@ -175,11 +188,13 @@ export async function loadSpecializedBulletin(input: {
       const evaluation = evaluationById.get(row.evaluation_id);
       if (!evaluation || !evaluation.is_published || (evaluation.publication_status && evaluation.publication_status !== "published")) continue;
       if (evaluation.grading_period_id && evaluation.grading_period_id !== period.id) continue;
-      // Primaire: seules les COMPOSITIONS explicitement identifiées et liées
-      // à CETTE période entrent au bulletin; les devoirs restent consultables.
-      // Les anciennes interrogations sans marqueur ne deviennent jamais des compositions.
-      if (cycle === "primary" &&
-          (evaluation.grading_period_id !== period.id || !isPrimaryComposition(evaluation))) continue;
+      // Primaire avec calendrier : sélection exacte de l’événement, jamais un devoir
+      // ni une évaluation interne dans un bulletin de composition officielle.
+      if (cycle === "primary") {
+        if (primaryEvent) {
+          if (evaluation.title !== primaryEventTitle(primaryEvent)) continue;
+        } else if (evaluation.grading_period_id !== period.id || !isPrimaryComposition(evaluation)) continue;
+      }
       if (evaluation.subject_id !== row.subject_id || row.publication_version !== evaluation.publication_version) {
         publicationProblems.push("official_publication_version_mismatch"); continue;
       }
@@ -200,9 +215,10 @@ export async function loadSpecializedBulletin(input: {
         componentId: evaluation.subject_component_id, teachingTrack });
     }
     const allPrograms = school.teachingTracksByCycle[cycle] || [];
-    const programs = classPolicy
+    const programs = (classPolicy
       ? allPrograms.filter(track => classPolicy.tracks.includes(track))
-      : allPrograms;
+      : allPrograms).filter(track => !primaryEvent || primaryEvent.tracks.includes(track));
+    if (!programs.length) return json({ ok: false, error: "PRIMARY_EVENT_TEACHING_NOT_APPLICABLE" }, 400);
     // The historical secondary-French route, not this specialized calculator,
     // owns ALL French general-secondary marks, coefficients, averages, ranking,
     // conduct (including institution-specific rules), bonuses and decisions.
@@ -264,6 +280,44 @@ export async function loadSpecializedBulletin(input: {
       const rows = scoresByStudent.get(score.studentId) || [];
       rows.push(score); scoresByStudent.set(score.studentId, rows);
     }
+    // Récupération de la série officielle uniquement pour le bulletin de passage.
+    // Aucun devoir, examen blanc ni évaluation interne ne peut alimenter la MGA.
+    const passageMode = cycle === "primary" && primaryEvent?.kind === "passage";
+    const applicableOrdinaryEvents = passageMode ? primaryCatalog.filter(event =>
+      event.kind === "official" && event.levels.includes(level.replace(/[\\s.-]/g, "").toUpperCase() as any)) : [];
+    const [annualEvaluations, annualPublished] = passageMode
+      ? await Promise.all([
+        pages<Evaluation>((from, to) => service.from("grade_evaluations")
+          .select("id,subject_id,subject_component_id,eval_kind,title,is_published,publication_status,publication_version,grading_period_id")
+          .eq("class_id", schoolClass.id).gte("eval_date", year.slice(0,4) + "-09-01")
+          .lte("eval_date", year.slice(5) + "-08-31").order("id").range(from,to)),
+        pages<PublishedScore>((from,to) => service.from("grade_published_scores")
+          .select("id,student_id,evaluation_id,subject_id,score,scale,coeff,publication_version")
+          .eq("institution_id",institutionId).eq("class_id",schoolClass.id).eq("is_current",true)
+          .gte("eval_date",year.slice(0,4) + "-09-01").lte("eval_date",year.slice(5) + "-08-31")
+          .order("id").range(from,to)),
+      ]) : [[], []] as [Evaluation[], PublishedScore[]];
+    const annualEvaluationById = new Map(annualEvaluations.map(row => [row.id, row]));
+    const annualScoresByEvent = new Map<string, OfficialEvaluationScore[]>();
+    for (const score of annualPublished) {
+      const evalRow = annualEvaluationById.get(score.evaluation_id);
+      const marker = parsePrimaryEventTitle(evalRow?.title);
+      if (!marker || (marker.kind !== "official" && marker.kind !== "passage") ||
+          !evalRow?.is_published || (evalRow.publication_status && evalRow.publication_status !== "published") ||
+          score.publication_version !== evalRow.publication_version || !score.subject_id ||
+          evalRow.subject_id !== score.subject_id || score.score === null || !students.has(score.student_id)) continue;
+      const configured = primaryCatalog.find(event => event.code === marker.code && event.kind === marker.kind);
+      if (!configured || !configured.levels.includes(level.replace(/[\\s.-]/g, "").toUpperCase() as any)) continue;
+      const eventTrack = trackBySubject.get(score.subject_id) ?? null;
+      const entry: OfficialEvaluationScore = {
+        studentId: score.student_id, evaluationId: score.evaluation_id,
+        subjectId: score.subject_id, score: score.score, scale: score.scale,
+        evaluationCoefficient: score.coeff, isCurrentPublished: true,
+        componentId: evalRow.subject_component_id, teachingTrack: eventTrack,
+      };
+      const list = annualScoresByEvent.get(configured.code) || [];
+      list.push(entry); annualScoresByEvent.set(configured.code, list);
+    }
     const results = [...students.values()].map(student => ({ student, drafts: resolved.map(policy => buildProgramBulletinDraft({
       studentId: student.id, cycle, level, track: policy.track, school, reports, officialScores: scoresByStudent.get(student.id) || [],
       subjectComponents: cycle !== "secondary" ? undefined : policy.policies.flatMap(subject => selectProgramComponents(
@@ -313,6 +367,24 @@ export async function loadSpecializedBulletin(input: {
             includeInAverage: subject.includeInAverage, denominator: subject.denominator, components: subject.components }));
         const bulletinSubjectRows = isCiPrimaryFrench
           ? ciPrimaryFrenchBulletinRows(level, rawSubjectRows) : rawSubjectRows;
+        const annualOrdinary = passageMode ? applicableOrdinaryEvents.filter(event => event.tracks.includes(draft.track)).map(event => {
+          const policy = resolved.find(item => item.track === draft.track);
+          const row = policy && buildProgramBulletinDraft({
+            studentId: student.id, cycle, level, track: draft.track, school, reports,
+            officialScores: annualScoresByEvent.get(event.code) || [],
+            resolvedPolicies: policy.policies, configurationProblems: policy.problems,
+            ...(ciPrimaryFrench && draft.track === "french" ? { primaryCiDenominators: ciDenominators } : {}),
+            ...(cycle === "primary" && draft.track === "arabic" && primaryDenominators
+              ? { primarySubjectDenominators: primaryDenominators } : {}),
+          });
+          return { label: event.label, average: row?.status === "ready" ? row.generalAverage : null };
+        }) : [];
+        const annualComplete = passageMode && annualOrdinary.length > 0 &&
+          annualOrdinary.every(item => item.average !== null) && draft.status === "ready";
+        const annualAverage = annualComplete ? primaryPassageAverage(
+          annualOrdinary.map(item => item.average as number), draft.generalAverage) : null;
+        const annualDecision = annualAverage === null ? null :
+          (annualAverage >= (draft.maximumScore || 10) / 2 ? "ADMIS" : "AVIS DU CONSEIL DES MAÎTRES REQUIS");
         const program: BulletinProgram = { track: draft.track, cycle: SCHOOL_CYCLE_OPTIONS.find(option => option.id === cycle)?.label || cycle, level, className: schoolClass.label || level,
           ciPrimaryFrench: isCiPrimaryFrench,
           primarySubjectScores: isCiPrimaryFrench || (cycle === "primary" && draft.track === "arabic" && primaryDenominators !== undefined),
@@ -320,15 +392,23 @@ export async function loadSpecializedBulletin(input: {
           year, period: period.label || period.code || "", denominator: draft.maximumScore || 0,
           subjects: bulletinSubjectRows,
           generalAverage: draft.generalAverage, rank, classSize: students.size,
+          ...(passageMode ? { primaryAnnual: { ordinary: annualOrdinary,
+            ordinaryAverage: annualComplete ? Math.round((annualOrdinary.reduce((sum, item) => sum + (item.average as number), 0) / annualOrdinary.length) * 100) / 100 : null,
+            passageAverage: draft.generalAverage, annualAverage, decision: annualDecision } } : {}),
           appreciation: draft.status === "ready" ? null : "Résultats incomplets — configuration ou notes à vérifier.",
           directorName: signatories[draft.track]?.name || (!isBilingualSchool(school) ? input.institutionHeadName : null) || null,
         };
         document[draft.track] = program;
       }
       const readiness: Partial<Record<TeachingTrack, boolean>> =
-        Object.fromEntries(drafts.map(draft => [draft.track, draft.status === "ready"]));
+        Object.fromEntries(drafts.map(draft => {
+          const program = document[draft.track];
+          const annualReady = !passageMode || (program?.primaryAnnual?.annualAverage != null);
+          return [draft.track, draft.status === "ready" && annualReady];
+        }));
       if (useHistoricalFrench) readiness.french = historicalFrench != null;
       const errors = [...drafts.flatMap(row => row.problems)];
+      if (passageMode && !programs.every(track => readiness[track])) errors.push("PRIMARY_ANNUAL_INCOMPLETE");
       if (useHistoricalFrench && !historicalFrench) errors.push("SECONDARY_FRENCH_STUDENT_MISSING_IN_HISTORICAL_RESULT");
       // Valid historical NC is preserved, never silently converted to 0.
       return { studentId: student.id, document,
