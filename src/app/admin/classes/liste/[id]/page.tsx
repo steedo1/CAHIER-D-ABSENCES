@@ -1432,7 +1432,7 @@ export default function ClassListPrintPage() {
           {printedPages.map(({ students: pageStudents, startIndex }, pageIndex) => (
           <article
             className={`class-list-sheet ${primaryList
-              ? pageStudents.length > primaryComfortableRows ? "class-list-sheet-medium" : ""
+              ? pageStudents.length > 20 ? "class-list-sheet-medium" : ""
               : pageStudents.length > 36 ? "class-list-sheet-dense" : ""}`}
             key={pageIndex}
           >
