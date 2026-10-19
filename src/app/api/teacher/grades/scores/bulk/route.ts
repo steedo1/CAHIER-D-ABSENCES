@@ -517,7 +517,7 @@ export async function POST(req: NextRequest) {
     // Official snapshots and notifications must be refreshed after each
     // saved correction. Only changed pupils are notified on republication.
     let publication: Awaited<ReturnType<typeof publishEvaluationOfficially>> | null = null;
-    if (directPrimaryTeacher && (upserted > 0 || deleted > 0)) {
+    if (directPrimaryTeacher && wasPublished && (upserted > 0 || deleted > 0)) {
       publication = await publishEvaluationOfficially({
         evaluationId: evaluation_id,
         actorProfileId: auth.user.id,
