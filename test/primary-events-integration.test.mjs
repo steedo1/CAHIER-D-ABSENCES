@@ -228,3 +228,53 @@ test("actual production scale CHECK: /50 keeps raw points, displayed scales and 
   const result=await reader.filterPrimaryOfficialNotifications(db.service,[legacy,secondary,canonical]);
   assert.deepEqual(result.map(row=>row.id),["secondary","canonical"],"a worker that picked legacy primary rows during publication still cannot deliver them");
 });
+
+
+test("EPC CP1 class-device shares configured compositions and publishes each grade save", async () => {
+  const db = setup("CP1", true);
+  const classDevice = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  db.users.set(classDevice, { user: db.user(classDevice, "class-cp1@example.invalid") });
+  db.tables.profiles.push({ id: classDevice, institution_id: db.legacyId, display_name: "CP1 français" });
+  db.tables.user_roles.push({ profile_id: classDevice, institution_id: db.legacyId, role: "class_device" });
+  db.tables.classes[0].class_device_auth_user_id = classDevice;
+  const classRoute = db.teacher; // teacher path remains unchanged
+  const classLogin = createFixtureRouteLoader(db, classDevice);
+  const evalRoute = classLogin(evaluationPath);
+  const listed = await evalRoute.GET(req(`/api/teacher/grades/evaluations?class_id=${cls}&subject_id=${math}&teaching_track=french`));
+  assert.equal(listed.status, 200, JSON.stringify(await listed.clone().json()));
+  const catalog = await listed.json();
+  assert.equal(catalog.primary_event_catalog_enabled, true);
+  assert.ok(catalog.primary_events.some(event => event.code === "DEC" && event.date === "2026-12-10"));
+
+  const created = await evalRoute.POST(req("/api/teacher/grades/evaluations", {
+    class_id: cls, subject_id: math, eval_kind: "composition", scale: db.scale("french"),
+    coeff: 1, primary_event_code: "DEC", teaching_track: "french", eval_date: "2026-10-01",
+  }));
+  assert.equal(created.status, 200, JSON.stringify(await created.clone().json()));
+  const evaluation = (await created.json()).item;
+  assert.equal(evaluation.teacher_id, teacher, "the real teacher owns the evaluation");
+  assert.equal(evaluation.eval_date, "2026-12-10");
+
+  const gradeApi = classLogin("src/app/api/grades/scores/bulk/route.ts");
+  const first = await gradeApi.POST(req("/api/grades/scores/bulk", {
+    evaluation_id: evaluation.id, items: [{ student_id: pupil0, score: 7 }],
+  }));
+  assert.equal(first.status, 200, JSON.stringify(await first.clone().json()));
+  const firstPayload = await first.json();
+  assert.equal(firstPayload.publication?.is_published, true);
+  assert.equal(db.tables.grade_evaluations[0].publication_status, "published");
+
+  const second = await gradeApi.POST(req("/api/grades/scores/bulk", {
+    evaluation_id: evaluation.id, items: [{ student_id: pupil1, score: 9 }],
+  }));
+  assert.equal(second.status, 200, JSON.stringify(await second.clone().json()));
+  const secondPayload = await second.json();
+  assert.equal(secondPayload.publication?.is_published, true);
+  assert.ok(secondPayload.publication.publication_version > firstPayload.publication.publication_version);
+  assert.equal(db.tables.student_grades.filter(g => g.evaluation_id === evaluation.id).length, 2);
+  const after = await evalRoute.GET(req(`/api/teacher/grades/evaluations?class_id=${cls}&subject_id=${math}&teaching_track=french`));
+  assert.ok((await after.json()).items.some(ev => ev.id === evaluation.id));
+
+  const outOfScope = await evalRoute.GET(req(`/api/teacher/grades/evaluations?class_id=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb&subject_id=${math}&teaching_track=french`));
+  assert.equal(outOfScope.status, 403);
+});
