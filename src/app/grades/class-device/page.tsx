@@ -2622,7 +2622,7 @@ export default function ClassDeviceNotesPage() {
   }, [evaluations, currentActiveEvalId]);
 
   const isCurrentEvalPublicationLocked =
-    isEvaluationLockedByPublication(currentActiveEval);
+    currentActiveEval ? !editableForSelectedClass(currentActiveEval) : false;
 
   // Recharge / précharge l’état de verrouillage (mobile: éval active, desktop: toutes visibles)
   useEffect(() => {
@@ -2950,7 +2950,7 @@ export default function ClassDeviceNotesPage() {
                   logInfo("UI -> ouverture panneau publication");
                   setShowPublishPanel(true);
                 }}
-                disabled={!evaluations.length || !isOnline}
+                disabled={!evaluations.length || !isOnline || (isPrimaryProgram && primaryCatalogEnabled)}
               >
                 Gérer la publication
               </GhostButton>
@@ -3219,7 +3219,7 @@ export default function ClassDeviceNotesPage() {
                                 disabled={
                                   loading ||
                                   gradeWritesBlocked ||
-                                  isEvaluationLockedByPublication(ev) ||
+                                  !editableForSelectedClass(ev) ||
                                   (!!lockByEvalId[ev.id]?.locked && locksSupported)
                                 }
                                 aria-label={`Note ${st.full_name}`}
@@ -3313,7 +3313,7 @@ export default function ClassDeviceNotesPage() {
                             loading ||
                             gradeWritesBlocked ||
                             selectedPeriodClosed ||
-                            isEvaluationLockedByPublication(ev) ||
+                            !editableForSelectedClass(ev) ||
                             (!!lockByEvalId[ev.id]?.locked && locksSupported)
                           }
                           aria-label={`Note ${st.full_name}`}
