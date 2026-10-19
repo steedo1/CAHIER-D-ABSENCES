@@ -1463,10 +1463,8 @@ export default function ClassDeviceNotesPage() {
   }
 
   async function deleteEvaluation(ev: Evaluation) {
-    if (isPrimaryProgram && primaryCatalogEnabled) {
-      setMsg("La suppression d’une évaluation du primaire doit passer par la procédure de correction officielle.");
-      return;
-    }
+    // Primary evaluation columns may be removed while still draft.
+    // Published official grades remain protected by the existing workflow.
     logInfo("deleteEvaluation -> demande de suppression", ev);
 
     if (!isOnline) {
