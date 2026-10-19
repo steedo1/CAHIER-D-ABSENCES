@@ -11,6 +11,50 @@ try { playwright = require("playwright"); }
 catch { playwright = require(join(process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES, "playwright")); }
 const { PDFParse } = require("pdf-parse");
 const output = process.env.CLASS_LIST_PRINT_OUTPUT;
+test("listes provisoires et définitives : nom et titre de chaque enseignement visibles sur chaque page PDF", async () => {
+  const { server, url } = await startClassListFixture();
+  const browser = await playwright.chromium.launch({ headless: true,
+    executablePath: process.env.CLASS_LIST_CHROMIUM_EXECUTABLE || undefined,
+    args: ["--no-sandbox", "--no-zygote", "--disable-gpu"] }).catch(async error => {
+    await new Promise(resolve => server.close(resolve)); throw error;
+  });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+    for (const track of ["french", "arabic", "mixed"]) {
+      const name = track === "french" ? "Responsable Français Démonstration"
+        : track === "arabic" ? "Responsable Arabe Démonstration" : "Administration Générale Démonstration";
+      const title = track === "mixed" ? "Titre général configuré" : "Directeur des études";
+      await page.emulateMedia({ media: "screen" });
+      await page.goto(`${url}?teaching=${track}&count=31${track === "arabic" ? "" : "&primary=1&level=CM1"}`);
+      await page.getByRole("button", { name: "Liste de classe", exact: true }).waitFor();
+      for (const mode of ["Liste provisoire", "Liste de classe"]) {
+        await page.emulateMedia({ media: "screen" });
+        const calls = await page.evaluate(() => window.__printCalls);
+        await page.getByRole("button", { name: mode, exact: true }).click();
+        await page.waitForFunction(expected => window.__printCalls === expected, calls + 1);
+        await page.emulateMedia({ media: "print" });
+        const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
+        const parser = new PDFParse({ data: pdf });
+        const { pages } = await parser.getText(); await parser.destroy();
+        assert.equal(pages.length, 2, "31 élèves sans page supplémentaire");
+        for (const sheet of pages) {
+          const text = sheet.text.replace(/\s+/g, " ");
+          assert.ok(text.includes(title), text);
+          assert.ok(text.includes(name), text);
+          assert.doesNotMatch(text, /Nom du directeur non renseigné|KESSIE DÉSIRÉ OLIVIER/);
+          if (track !== "mixed") assert.doesNotMatch(text, /Administration Générale Démonstration/);
+          if (track !== "french") assert.doesNotMatch(text, /Responsable Français Démonstration/);
+          if (track !== "arabic") assert.doesNotMatch(text, /Responsable Arabe Démonstration/);
+        }
+        if (output) {
+          await mkdir(output, { recursive: true });
+          await writeFile(join(output, `direction-${track}-${mode === "Liste provisoire" ? "provisional" : "class"}.pdf`), pdf);
+        }
+        await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+      }
+    }
+  } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
+});
 test("Class list: four notes, readable cells, watermark and no blank pages", async (t) => {
   const { server, url } = await startClassListFixture();
   const browser = await playwright.chromium.launch({ headless: true,

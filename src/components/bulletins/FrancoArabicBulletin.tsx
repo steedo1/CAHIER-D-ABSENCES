@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import styles from "./FrancoArabicBulletin.module.css";
 import { selectPrintablePrograms } from "@/lib/franco-arabic-print-layout";
+import { SCHOOL_TEACHING_DIRECTOR_TITLE } from "@/lib/school-teaching-signatories";
 
 /**
  * Pure A4 document views. Only render already-authorized data from server.
@@ -13,7 +14,7 @@ export type BulletinVariant = BulletinTrack | "combined" | "ordinary";
 export type BulletinSchool = {
   name: string;
   code?: string | null;
-  /** Provenance serveur : seul un établissement franco-arabe adopte « Directeur ». */
+  /** Provenance serveur : seul un établissement franco-arabe adopte le titre de sa direction d’enseignement. */
   isFrancoArabic?: boolean;
   generalDirectorName?: string | null;
   generalDirectorTitle?: string | null;
@@ -322,7 +323,7 @@ function Footer({ model, programs, ordinary }: {
       /> : programs.map(p => <Signature
         key={p.track}
         name={p.directorName}
-        title={model.school.isFrancoArabic ? "Directeur" : ordinary ? "Direction de l’établissement" : (p.track === "french" ? "Directeur de l’enseignement français" : "Directeur de l’enseignement arabe")}
+        title={model.school.isFrancoArabic ? SCHOOL_TEACHING_DIRECTOR_TITLE : ordinary ? "Direction de l’établissement" : (p.track === "french" ? "Directeur de l’enseignement français" : "Directeur de l’enseignement arabe")}
       />)}
       <div className={styles.stampBox}>
         <span>Cachet de l’établissement</span><div className={styles.stampSpace}/>

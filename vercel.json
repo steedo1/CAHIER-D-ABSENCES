@@ -2,6 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": {
+      "fix/directions-listes-titre-20261018": false,
       "fix/bulletins-primaire-listes-20261018": false,
       "fix/franco-arabe-sous-matieres-20261018": false,
       "fix/epc-primaire-baremes-par-matiere-20261018": false

@@ -131,11 +131,11 @@ test("bulletins : un directeur par enseignement séparé, un seul administrateur
   assert.doesNotMatch(combined, /Directeur français|Directeur arabe/);
   assert.doesNotMatch(combined, /Directeur de l’enseignement français|Directeur de l’enseignement arabe|Direction de l’établissement/);
   const frenchOnly = renderToStaticMarkup(React.createElement(component, { model: document, variant: "ordinary" }));
-  assert.match(frenchOnly, />Directeur<\/span>/);
+  assert.match(frenchOnly, />Directeur des études<\/span>/);
   assert.match(frenchOnly, /Directeur français/);
   assert.doesNotMatch(frenchOnly, /Directeur arabe|Administrateur authentique|Titre général configuré/);
   const arabicOnly = renderToStaticMarkup(React.createElement(component, { model: document, variant: "arabic" }));
-  assert.match(arabicOnly, />Directeur<\/span>/);
+  assert.match(arabicOnly, />Directeur des études<\/span>/);
   assert.match(arabicOnly, /Directeur arabe/);
   assert.doesNotMatch(arabicOnly, /Directeur français|Administrateur authentique|Titre général configuré/);
   const ordinary = renderToStaticMarkup(React.createElement(component, {
@@ -167,9 +167,9 @@ test("listes : changer de classe/année/enseignement sélectionne le bon directe
   const json = documentSettings();
   const resolve = context => resolveTeachingDocumentSignatories(json, { ...generalContext, ...context });
   assert.deepEqual(resolve({ classIds: [frClass] }), [{ track: "french",
-    name: "Responsable de l'enseignement français", title: "Directeur" }]);
+    name: "Responsable de l'enseignement français", title: "Directeur des études" }]);
   assert.deepEqual(resolve({ classIds: [arClass] }), [{ track: "arabic",
-    name: "Responsable de l'enseignement arabe", title: "Directeur" }]);
+    name: "Responsable de l'enseignement arabe", title: "Directeur des études" }]);
   assert.equal(resolve({ academicYear: "2025-2026", classIds: [frClass] })[0].track, "arabic");
   assert.deepEqual(resolve({ classIds: [mixedClass] }), [generalDirection]);
   assert.deepEqual(resolve({ classIds: [frClass, arClass] }), [generalDirection]);
@@ -227,7 +227,7 @@ test("API bulletin authentifiée → document rendu : le combiné prend uniqueme
   assert.doesNotMatch(combined, /Responsable de l&#x27;enseignement|FAUX/);
   for (const track of ["french", "arabic"]) {
     const html = renderToStaticMarkup(React.createElement(Component, { model: document, variant: track }));
-    assert.match(html, />Directeur<\/span>/);
+    assert.match(html, />Directeur des études<\/span>/);
     assert.ok(html.includes(track === "french" ? "Responsable de l&#x27;enseignement français" : "Responsable de l&#x27;enseignement arabe"));
     assert.doesNotMatch(html, /Vrai responsable général|Administrateur général/);
   }
@@ -250,7 +250,17 @@ test("API liste de classe : noms isolés par classe, titre DG paramétré sur la
     const signatories = (await response.json()).institution.document_signatories;
     assert.equal(signatories.length, 1);
     assert.equal(signatories[0].track, expected);
-    assert.equal(signatories[0].title, expected === "general" ? "Administrateur général" : "Directeur");
+    assert.equal(signatories[0].title, expected === "general" ? "Administrateur général" : "Directeur des études");
+    const name = expected === "general" ? generalContext.institutionHeadName
+      : settings.school_teaching_signatories_v1[expected].name;
+    assert.equal(signatories[0].name, name);
+    const Signature = load("src/components/DocumentDirectionSignatures.tsx").default;
+    for (const html of [teachingDocumentSignaturesHtml(signatories),
+      renderToStaticMarkup(React.createElement(Signature, { inline: true, signatories }))]) {
+      assert.ok(html.includes(name.replace(/'/g, html.includes("&#x27;") ? "&#x27;" : "&#39;")), html);
+      assert.match(html, expected === "general" ? /Administrateur général/ : /Directeur des études/);
+      assert.doesNotMatch(html, /Nom du directeur non renseigné/);
+    }
   }
 });
 
@@ -282,7 +292,7 @@ test("API livrets préscolaires : les trois modèles appliquent la même règle 
       assert.equal((html.match(/Vrai responsable général/g) || []).length, 1);
       assert.doesNotMatch(html, /Responsable de l&#x27;enseignement/);
     } else {
-      assert.match(html, /<strong>Directeur<\/strong>/);
+      assert.match(html, /<strong>Directeur des études<\/strong>/);
       assert.ok(html.includes(variant === "french" ? "Responsable de l&#x27;enseignement français" : "Responsable de l&#x27;enseignement arabe"));
       assert.doesNotMatch(html, /Vrai responsable général|Administrateur général/);
     }

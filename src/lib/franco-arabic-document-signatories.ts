@@ -1,6 +1,6 @@
 import { isSchoolCycle, parseSchoolCyclesSettings, type SchoolCycle, type TeachingTrack } from "./school-cycles";
 import { isBilingualSchool, readStudentProgramSettings } from "./school-student-programs";
-import { readSchoolTeachingSignatories } from "./school-teaching-signatories";
+import { readSchoolTeachingSignatories, SCHOOL_TEACHING_DIRECTOR_TITLE } from "./school-teaching-signatories";
 
 /** The attendance certificate always belongs to the institution. */
 export function resolveAttestationSignatory(settings: {
@@ -62,7 +62,7 @@ export function resolveTeachingDocumentSignatories(
   }
   const names = readSchoolTeachingSignatories(settingsJson);
   return selected.map(track => ({ track,
-    name: names[track]?.name || "Nom du directeur non renseigné", title: "Directeur" }));
+    name: names[track]?.name || "Nom du directeur non renseigné", title: SCHOOL_TEACHING_DIRECTOR_TITLE }));
 }
 
 const escapeSignatory = (value: string) => value.replace(/&/g, "&amp;")
@@ -71,7 +71,7 @@ const escapeSignatory = (value: string) => value.replace(/&/g, "&amp;")
 /** Same policy for the existing HTML → print/PDF templates. */
 export function teachingDocumentSignaturesHtml(signatories: TeachingDocumentSignatory[] | null): string {
   if (signatories === null) return "";
-  const rows = signatories.length ? signatories : [{ title: "Directeur", name: "Nom du directeur non renseigné" }];
+  const rows = signatories.length ? signatories : [{ title: SCHOOL_TEACHING_DIRECTOR_TITLE, name: "Nom du directeur non renseigné" }];
   return `<div data-document-directions style="display:flex;justify-content:flex-end;gap:24px;margin-top:12px;break-inside:avoid">${rows.map(row =>
     `<div style="min-width:140px;text-align:center;font-size:11px"><strong>${escapeSignatory(row.title)}</strong><div style="margin-top:12px">${escapeSignatory(row.name)}</div></div>`).join("")}</div>`;
 }
