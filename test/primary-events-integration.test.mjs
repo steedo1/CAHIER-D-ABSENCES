@@ -277,3 +277,50 @@ test("EPC CP1 class-device shares configured compositions and publishes each gra
   const outOfScope = await evalRoute.GET(req(`/api/teacher/grades/evaluations?class_id=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb&subject_id=${math}&teaching_track=french`));
   assert.equal(outOfScope.status, 403);
 });
+
+
+test("EPC class-device can remove an unused opened primary note, but cannot erase marks or official history", async () => {
+  const db = setup("CP1", true);
+  const classDevice = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  db.users.set(classDevice, { user: db.user(classDevice, "cp1-delete@example.invalid") });
+  db.tables.profiles.push({ id: classDevice, institution_id: db.legacyId });
+  db.tables.user_roles.push({ profile_id: classDevice, institution_id: db.legacyId, role: "class_device" });
+  db.tables.classes[0].class_device_auth_user_id = classDevice;
+  const route = createFixtureRouteLoader(db, classDevice)("src/app/api/grades/evaluations/route.ts");
+  const remove = id => route.DELETE(req("/api/grades/evaluations", { evaluation_id: id }, "DELETE"));
+
+  const opened = await create(db, "DEC", "french");
+  assert.equal(db.tables.grade_evaluations.length, 1);
+  const deleted = await remove(opened.id);
+  assert.equal(deleted.status, 200, JSON.stringify(await deleted.clone().json()));
+  assert.equal(db.tables.grade_evaluations.length, 0, "only the opened draft grade column is removed");
+  assert.equal(db.events.length, 6, "school evaluation calendar is not modified");
+
+  const entered = await create(db, "NIV1", "french");
+  db.tables.student_grades = [{ evaluation_id: entered.id, student_id: pupil0, score: 8 }];
+  const protectedWithScore = await remove(entered.id);
+  assert.equal(protectedWithScore.status, 423);
+  assert.equal((await protectedWithScore.json()).error, "primary_evaluation_has_scores");
+  assert.equal(db.tables.grade_evaluations.length, 1);
+  assert.equal(db.tables.student_grades.length, 1, "entered pupil grade remains untouched");
+
+  db.tables.student_grades = [];
+  db.tables.grade_published_scores = [{
+    id: "historical-primary-grade", evaluation_id: entered.id,
+    student_id: pupil0, score: 8, is_current: false,
+  }];
+  const protectedHistory = await remove(entered.id);
+  assert.equal(protectedHistory.status, 423);
+  assert.equal((await protectedHistory.json()).error, "primary_evaluation_has_official_history");
+  assert.equal(db.tables.grade_published_scores.length, 1, "historical official score remains untouched");
+
+  db.tables.grade_published_scores = [];
+  const otherDevice = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+  db.users.set(otherDevice, { user: db.user(otherDevice, "foreign-device@example.invalid") });
+  db.tables.profiles.push({ id: otherDevice, institution_id: db.legacyId });
+  db.tables.user_roles.push({ profile_id: otherDevice, institution_id: db.legacyId, role: "class_device" });
+  const otherRoute = createFixtureRouteLoader(db, otherDevice)("src/app/api/grades/evaluations/route.ts");
+  const forbidden = await otherRoute.DELETE(req("/api/grades/evaluations", { evaluation_id: entered.id }, "DELETE"));
+  assert.equal(forbidden.status, 403, JSON.stringify(await forbidden.clone().json()));
+  assert.equal(db.tables.grade_evaluations.length, 1);
+});

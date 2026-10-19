@@ -40,6 +40,7 @@ class Query {
   insert(value) { this.op = "insert"; this.value = value; return this; }
   upsert(value, options = {}) { this.op = "upsert"; this.value = value; this.conflict = options.onConflict || "id"; return this; }
   update(value) { this.op = "update"; this.value = value; return this; }
+  delete() { this.op = "delete"; return this; }
   or(expression) {
     const clauses = expression.split(",").map(term => term.split("."));
     this.filters.push(row => clauses.some(([key, op, ...value]) => op === "ilike"
@@ -80,6 +81,7 @@ class Query {
       }
       Object.assign(row, copy(this.value));
     }
+    if (this.op === "delete") this.db.tables[this.table] = table.filter(row => !rows.includes(row));
     const count = rows.length;
     rows = rows.slice().sort((a, b) => {
       for (const [key, ascending] of this.sort) {
