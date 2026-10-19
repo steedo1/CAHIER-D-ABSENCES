@@ -61,7 +61,8 @@ export function validatePrimaryEvents(input: unknown, year: string): PrimaryEval
       throw Error("primary_passage_not_for_cm2");
     if (kind === "examen_blanc" && levels.some(level => level !== "CM2"))
       throw Error("primary_exam_only_cm2");
-    if (typeof item.bulletin !== "boolean") throw Error("primary_event_invalid_bulletin");
+    if (typeof item.bulletin !== "boolean" || (kind !== "interne" && !item.bulletin))
+      throw Error("primary_event_invalid_bulletin");
     return { id, label, kind, date: item.date, levels, bulletin: item.bulletin };
   });
 }
