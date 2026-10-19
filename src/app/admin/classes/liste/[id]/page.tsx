@@ -521,9 +521,18 @@ export default function ClassListPrintPage() {
   const primaryList = data?.school_cycle === "primary";
   const noteColumns = primaryList ? data?.mark_subjects || [] :
     [1, 2, 3, 4].map(index => ({ id: String(index), name: `Note ${index}`, shortName: `Note ${index}`, denominator: null }));
-  const studentsPerSheet = primaryList ? 16 : classEducationType === "general_secondary" ? 30 : 25;
+  // 40 élèves du primaire tiennent sur une feuille A4 paysage ; deux feuilles
+  // recto verso suffisent jusqu'à 80 élèves sans supprimer de lignes.
+  // Dans le secondaire (A4 portrait), la hauteur disponible est plus grande.
+  const maxStudentsPerSheet = primaryList ? 40 : 45;
+  const studentsPerSheet =
+    printedStudents.length > maxStudentsPerSheet &&
+    printedStudents.length <= maxStudentsPerSheet * 2
+      ? Math.ceil(printedStudents.length / 2)
+      : maxStudentsPerSheet;
 
-  // Each page repeats the header and places its watermark behind its own names.
+  // La numérotation continue d'une feuille à l'autre ; l'en-tête institutionnel
+  // est réservé à la première feuille seulement.
   const printedPages = useMemo(() => Array.from(
     { length: Math.max(1, Math.ceil(printedStudents.length / studentsPerSheet)) },
     (_, pageIndex) => ({
@@ -1413,8 +1422,13 @@ export default function ClassListPrintPage() {
       ) : data ? (
         <section className={`class-list-print-root ${primaryList ? "primary-class-list" : ""}`}>
           {printedPages.map(({ students: pageStudents, startIndex }, pageIndex) => (
-          <article className="class-list-sheet" key={pageIndex}>
-            <header className="official-header">
+          <article
+            className={`class-list-sheet ${primaryList
+              ? pageStudents.length > 32 ? "class-list-sheet-dense" : pageStudents.length > 24 ? "class-list-sheet-medium" : ""
+              : pageStudents.length > 36 ? "class-list-sheet-dense" : ""}`}
+            key={pageIndex}
+          >
+            {pageIndex === 0 && <header className="official-header">
               <div className="school-block">
                 {data.institution.logo_url ? (
                   <img
@@ -1463,9 +1477,9 @@ export default function ClassListPrintPage() {
                   Classe&nbsp;: {data.class.label}
                 </span>
               </div>
-            </header>
+            </header>}
 
-            {classEducationType !== "general_secondary" ? (
+            {pageIndex === 0 && classEducationType !== "general_secondary" ? (
               <div className="mb-3 grid grid-cols-1 gap-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs sm:grid-cols-3 print:grid-cols-3 print:bg-white">
                 <div>
                   <strong>Type d’enseignement :</strong> {classEducationTypeLabel}
@@ -1479,7 +1493,7 @@ export default function ClassListPrintPage() {
               </div>
             ) : null}
 
-            <div className="staff-line">
+            {pageIndex === 0 && <div className="staff-line">
               <div>
                 <strong>{primaryList ? "Instituteur :" : "Professeur principal :"}</strong> {headTeacherLabel}
               </div>
@@ -1492,7 +1506,7 @@ export default function ClassListPrintPage() {
                   : <><strong>{classListHeadRoleLabel(data.institution)} :</strong>{" "}
                     {data.institution.head_name || "À renseigner"}</>}
               </div>
-            </div>
+            </div>}
 
             <div className="class-list-roster-region">
               {data.institution.logo_url ? (
