@@ -1,3 +1,4 @@
+import { primaryScaleTitle, primaryStorageScale, withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { createHash } from "node:crypto";
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
 import { selectProgramComponents } from "@/lib/school-subject-components";
@@ -746,7 +747,7 @@ export async function GET(req: NextRequest) {
     const items = ((data ?? []) as unknown as EvalRow[]).filter(item => {
       const marker = parsePrimaryEventTitle(item.title);
       return !schoolCtx.isPrimary || !marker?.track || marker.track === subjectTrack;
-    }).map(item =>
+    }).map(withPrimaryDisplayScale).map(item =>
       schoolCtx.isPrimary && isPrimaryComposition(item)
         ? { ...item, eval_kind: "composition" as const } : item
     );
@@ -905,7 +906,8 @@ export async function POST(req: NextRequest) {
       }
       const encoded = encodePrimaryEvaluation(primaryKind);
       storedKind = encoded.eval_kind;
-      storedTitle = chosenEvent ? primaryEventTitle(chosenEvent, track) : eventCatalogEnabled ? primaryHomeworkTitle(track) : encoded.title;
+      if (scale >= 10000) return NextResponse.json({ok:false,error:"primary_scale_exceeds_existing_storage"},{status:409});
+      storedTitle = primaryScaleTitle(chosenEvent ? primaryEventTitle(chosenEvent, track) : eventCatalogEnabled ? primaryHomeworkTitle(track) : encoded.title, scale);
     } else {
       if (eval_kind !== "devoir" && eval_kind !== "interro_ecrite" && eval_kind !== "interro_orale") {
         return NextResponse.json({ ok: false, error: "invalid_eval_kind" }, { status: 400 });
@@ -1034,17 +1036,24 @@ export async function POST(req: NextRequest) {
     }
 
     const eventEvaluationId = chosenEvent ? (() => {
-      const hex = createHash("sha256").update(JSON.stringify([institutionId, academic_year, class_id, globalId, storedTitle])).digest("hex").slice(0, 32);
+      const eventTrack = parsePrimaryEventTitle(storedTitle)?.track;
+      const hex = createHash("sha256").update(JSON.stringify([institutionId, academic_year, class_id, globalId, primaryEventTitle(chosenEvent, eventTrack)])).digest("hex").slice(0, 32);
       return `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20)}`;
     })() : null;
-    const visibleItem = (item: EvalRow) => schoolCtx.isPrimary && isPrimaryComposition(item)
-      ? { ...item, eval_kind: "composition" as const } : item;
+    const visibleItem = (rawItem: EvalRow) => {
+      const item = withPrimaryDisplayScale(rawItem);
+      return schoolCtx.isPrimary && isPrimaryComposition(item) ? { ...item, eval_kind: "composition" as const } : item;
+    };
     if (eventEvaluationId && chosenEvent) {
       const existing = await srv.from("grade_evaluations").select(EVALUATION_SELECT)
         .eq("class_id", class_id).eq("subject_id", globalId as string)
-        .in("title", [storedTitle as string, primaryEventTitle(chosenEvent)]);
+        .eq("academic_year", academic_year).like("title", "MCPE:%").limit(2001);
       if (existing.error) return NextResponse.json({ ok: false, error: "primary_event_lookup_failed" }, { status: 503 });
-      const items = (existing.data || []) as unknown as EvalRow[];
+      const items = ((existing.data || []) as unknown as EvalRow[]).filter(item => {
+        const marker = parsePrimaryEventTitle(item.title), expected = parsePrimaryEventTitle(storedTitle);
+        return marker?.code === chosenEvent.code && marker.kind === chosenEvent.kind &&
+          (!marker.track || marker.track === expected?.track);
+      });
       if (items.length > 1) return NextResponse.json({ ok: false, error: "primary_event_duplicate_subject" }, { status: 409 });
       if (items[0]) {
         if (items[0].teacher_id !== profileId && !isPrivileged(roles)) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
@@ -1064,7 +1073,7 @@ export async function POST(req: NextRequest) {
         eval_date,
         eval_kind: storedKind,
         title: storedTitle,
-        scale,
+        scale: schoolCtx.isPrimary ? primaryStorageScale(scale) : scale,
         coeff: schoolCtx.isPrimary ? 1 : (typeof coeff === "number" ? coeff : 1),
         is_published: false,
         published_at: null,
@@ -1089,7 +1098,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const item = data as unknown as EvalRow;
+    const item = withPrimaryDisplayScale(data as unknown as EvalRow);
     const visible = schoolCtx.isPrimary && isPrimaryComposition(item)
       ? { ...item, eval_kind: "composition" as const } : item;
 
@@ -1255,7 +1264,7 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    const item = data as unknown as EvalRow;
+    const item = withPrimaryDisplayScale(data as unknown as EvalRow);
 
     return NextResponse.json(
       {

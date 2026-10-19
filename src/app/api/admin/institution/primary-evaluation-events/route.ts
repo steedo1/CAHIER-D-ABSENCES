@@ -10,7 +10,7 @@ import {
   PRIMARY_EVENTS_SETTINGS_KEY,
   primarySchoolYearIsValid,
   readPrimaryEventsCatalog,
-  validatePrimaryEvents, parsePrimaryEventTitle, primaryEventTitle,
+  validatePrimaryEvents, parsePrimaryEventTitle,
   primaryEventsForClass,
 } from "@/lib/grades/primary-evaluation-events";
 
@@ -84,9 +84,8 @@ export async function PUT(request: NextRequest) {
       .eq("institution_id", access.institutionId).eq("academic_year", year).limit(501);
     if (classes.error || !classes.data || classes.data.length >= 501) return json({ ok: false, error: "primary_event_links_unavailable" }, 503);
     if (classes.data.length) {
-      const titles = previous.flatMap(event => [primaryEventTitle(event), primaryEventTitle(event, "french"), primaryEventTitle(event, "arabic")]);
       const evaluations = await access.service.from("grade_evaluations").select("title")
-        .in("class_id", classes.data.map(row => row.id)).in("title", titles).limit(20001);
+        .in("class_id", classes.data.map(row => row.id)).like("title", "MCPE:%").limit(20001);
       if (evaluations.error || !evaluations.data || evaluations.data.length >= 20001) return json({ ok: false, error: "primary_event_links_unavailable" }, 503);
       const used = new Set(evaluations.data.map(row => parsePrimaryEventTitle(row.title)?.code));
       const identity = (event: typeof previous[number]) => JSON.stringify([event.kind, event.date, [...event.levels].sort(), [...event.tracks].sort()]);

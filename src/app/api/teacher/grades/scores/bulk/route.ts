@@ -1,3 +1,4 @@
+import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 // src/app/api/teacher/grades/scores/bulk/route.ts
@@ -256,7 +257,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const ge = geRaw as unknown as EvaluationRow;
+    const ge = withPrimaryDisplayScale(geRaw as unknown as EvaluationRow);
     const srv = getSupabaseServiceClient();
 
     // ✅ CHECK CLÔTURE PAR FIN DE PÉRIODE

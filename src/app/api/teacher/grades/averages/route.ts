@@ -1,3 +1,4 @@
+import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { primarySubjectEventAverages } from "@/lib/server/primary-subject-event-averages";
 import { classComponentContext, selectProgramComponents, isProgramComponentLevel } from "@/lib/school-subject-components";
 // src/app/api/teacher/grades/averages/route.ts
@@ -313,7 +314,7 @@ export async function GET(req: NextRequest) {
     const { data: evals, error: eErr } = await qEvals;
     if (eErr) return bad(eErr.message || "EVALS_FETCH_FAILED", 400);
 
-    const evaluations = ((evals ?? []) as unknown as EvaluationRow[]).filter(e =>
+    const evaluations = ((evals ?? []) as unknown as EvaluationRow[]).map(withPrimaryDisplayScale).filter(e =>
       !primaryFrancoArabic || (e.grading_period_id === grading_period_id && isPrimaryComposition(e)));
     const evaluationIds = evaluations.map((e) => e.id);
 

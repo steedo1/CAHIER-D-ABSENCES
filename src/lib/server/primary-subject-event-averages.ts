@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { primaryEventsForClass, primaryEventTitle, parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
+import { primaryEventsForClass, parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { primarySubjectTeachingTrack } from "@/lib/grades/primary-subject-scale";
 import { buildPedagogicalRanks } from "@/lib/pedagogical-ranking";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
@@ -43,10 +43,13 @@ export async function primarySubjectEventAverages(input: {
   const { data: evaluations, error } = await service.from("grade_evaluations")
     .select("id,title,publication_version,publication_status,is_published,scale").eq("class_id", classroom.id)
     .eq("subject_id", subjectId).eq("eval_date", event.date)
-    .in("title", [primaryEventTitle(event), primaryEventTitle(event, track)]).limit(3);
+    .like("title", "MCPE:%").limit(2001);
   if (error || !evaluations) return fail("Résultats indisponibles.", 503);
-  const selected = evaluations.filter(row => primarySubjectTeachingTrack(settings, year, classroom.id, subjectId,
-    parsePrimaryEventTitle(row.title)?.track) === track);
+  const selected = evaluations.filter(row => {
+    const marker = parsePrimaryEventTitle(row.title);
+    return marker?.code === event.code && marker.kind === event.kind && primarySubjectTeachingTrack(settings, year, classroom.id, subjectId,
+    marker.track) === track;
+  });
   if (selected.length > 1) return fail("Cette évaluation contient plusieurs colonnes pour la même matière.", 409);
   const evaluation = selected[0];
   let items: Array<{ student_id: string; average: number; average_raw: number; average_rounded: number; bonus: number; rank: number | null; count_evals: number; total_evals: number; has_average: boolean; is_complete: boolean; status: string }> = [];

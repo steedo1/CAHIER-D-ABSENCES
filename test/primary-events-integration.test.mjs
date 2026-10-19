@@ -139,14 +139,14 @@ test("Franco-Arabic teacher publication queues only the official parent snapshot
   const published = await load(evaluationPath).PATCH(req("/api/teacher/grades/evaluations", { evaluation_id: ev.id, is_published: true }, "PATCH"));
   assert.equal(published.status, 200, JSON.stringify(await published.clone().json()));
   assert.equal(db.tables.grade_evaluations[0].publication_status, "published", "no admin approval despite legacy validation=true");
-  assert.equal(db.tables.notifications_queue.length, 1);
-  const notification = db.tables.notifications_queue[0];
+  assert.equal(db.tables.notifications_queue.filter(row => row.status === "pending").length, 1);
+  const notification = db.tables.notifications_queue.find(row => row.status === "pending");
   assert.equal(notification.profile_id, "parent");
   assert.equal(notification.payload.score, 0);
   assert.equal(notification.payload.evaluation.label, "Composition de décembre");
   assert.equal(notification.payload.evaluation.teaching_track, "arabic");
   await load("src/lib/push/grades.ts").queueGradeNotificationsForEvaluation(ev.id);
-  assert.equal(db.tables.notifications_queue.length, 1, "an official snapshot already queued is not duplicated");
+  assert.equal(db.tables.notifications_queue.filter(row => row.status === "pending").length, 1, "an official snapshot already queued is not duplicated");
 });
 
 
@@ -163,4 +163,37 @@ test("French-only primary retains its existing administrator validation policy",
   assert.equal(result.status,200,JSON.stringify(await result.clone().json()));
   assert.equal(db.tables.grade_evaluations[0].publication_status,"submitted");
   assert.equal(db.tables.grade_published_scores.length,0);
+});
+
+test("actual production scale CHECK: /50 keeps raw points, displayed scales and official snapshots without DDL", async () => {
+  const db = setup("CM1"), ev = await create(db,"DEC","french");
+  assert.equal(ev.scale,50);
+  const stored = db.tables.grade_evaluations[0];
+  assert.equal(stored.scale,60,"a value allowed by the existing production constraint");
+  assert.match(stored.title,/:S50$/);
+  const saved = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts").POST(req("/api/teacher/grades/scores/bulk",{evaluation_id:ev.id,items:[{student_id:pupil0,score:37.25}]}));
+  assert.equal(saved.status,200);
+  assert.equal(db.tables.student_grades[0].score,37.25,"raw marks are not rescaled or rounded away");
+  const loader = createFixtureRouteLoader(db,teacher,new Map([["src/lib/push-dispatch.ts","export async function triggerPushDispatch(){return true;}"]]));
+  stored.class = {...db.tables.classes[0]};stored.subject={id:math,name:"Mathématiques"};
+  db.tables.students=[db.tables.class_enrollments[0].students];
+  const published=await loader(evaluationPath).PATCH(req("/api/teacher/grades/evaluations",{evaluation_id:ev.id,is_published:true},"PATCH"));
+  assert.equal(published.status,200,JSON.stringify(await published.clone().json()));
+  assert.equal(db.tables.grade_published_scores[0].scale,50);
+  assert.equal(db.tables.grade_published_scores[0].score,37.25);
+  assert.equal((await report(db,"DEC")).specialized.documents[0].document.french.generalAverage,7.45);
+  const active=db.tables.notifications_queue.filter(row=>row.status==="pending");
+  assert.equal(active.length,1,"only the official graded pupil, without the SQL trigger's false missed mark");
+  assert.equal(active[0].profile_id,null,"matricule-linked student devices remain eligible without a guardian account");
+  assert.equal(active[0].payload.evaluation.scale,50);
+  assert.equal(active[0].payload.score,37.25);
+  assert.ok(db.tables.notifications_queue.filter(row=>row.status==="error").length>=2,"legacy trigger rows retained, not deleted");
+  const listed=await (await db.teacher(evaluationPath).GET(req(`/api/teacher/grades/evaluations?class_id=${cls}&subject_id=${math}&teaching_track=french`))).json();
+  assert.equal(listed.items[0].scale,50);
+  const reader=db.teacher("src/lib/grades/primary-notification-policy.ts");
+  const legacy={id:"trigger-race",payload:{kind:"grade_missing",evaluation:{id:ev.id}}};
+  const secondary={id:"secondary",payload:{kind:"grade",evaluation:{id:"secondary-eval"}}};
+  const canonical={id:"canonical",payload:{kind:"grade",evaluation:{id:ev.id},publication:{source:"grade_published_scores"}}};
+  const result=await reader.filterPrimaryOfficialNotifications(db.service,[legacy,secondary,canonical]);
+  assert.deepEqual(result.map(row=>row.id),["secondary","canonical"],"a worker that picked legacy primary rows during publication still cannot deliver them");
 });

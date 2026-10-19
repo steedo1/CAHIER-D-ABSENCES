@@ -1,3 +1,5 @@
+import { withPrimaryDisplayScale, primaryTitleScale } from "@/lib/grades/primary-storage-scale";
+import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 // src/lib/grades/publication.ts
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { queueGradeNotificationsForEvaluation } from "@/lib/push/grades";
@@ -46,6 +48,7 @@ export type GradePublicationResult =
     };
 
 type GradeEvaluationRow = {
+  title: string | null;
   id: string;
   class_id: string;
   subject_id: string | null;
@@ -195,6 +198,7 @@ async function loadEvaluationContext(evaluationId: string): Promise<
       teacher_id,
       eval_date,
       eval_kind,
+      title,
       scale,
       coeff,
       is_published,
@@ -223,7 +227,7 @@ async function loadEvaluationContext(evaluationId: string): Promise<
     };
   }
 
-  const ev = evaluation as GradeEvaluationRow;
+  const ev = withPrimaryDisplayScale(evaluation as GradeEvaluationRow);
 
   const { data: classRow, error: classErr } = await srv
     .from("classes")
@@ -648,6 +652,15 @@ export async function publishEvaluationOfficially(params: {
 
   if (updateErr) {
     return err("PUBLISH_EVALUATION_UPDATE_ERROR", 500, updateErr);
+  }
+
+  // The historic SQL trigger emits messages for the whole administrative class.
+  // Retain them for audit, but only official primary snapshots may be delivered.
+  if (parsePrimaryEventTitle(evaluation.title) || primaryTitleScale(evaluation.title) !== null) {
+    const retired = await srv.from("notifications_queue").update({ status: "error", last_error: "PRIMARY_OFFICIAL_SNAPSHOT_ONLY" })
+      .eq("payload->evaluation->>id", evaluation.id).eq("status", "pending")
+      .is("profile_id", null).is("parent_id", null);
+    if (retired.error) return err("PRIMARY_NOTIFICATION_RETIRE_FAILED", 503, retired.error);
   }
 
   await logGradePublicationEvent({

@@ -1,3 +1,4 @@
+import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 // src/app/api/grades/scores/bulk/route.ts
@@ -323,7 +324,7 @@ export async function POST(req: NextRequest) {
       return bad(geErr?.message || "EVALUATION_NOT_FOUND_OR_FORBIDDEN", 404);
     }
 
-    const ge = geRaw as unknown as EvaluationRow;
+    const ge = withPrimaryDisplayScale(geRaw as unknown as EvaluationRow);
 
     // Vérifier que la classe de cette évaluation appartient bien à l'établissement.
     const allowed = await ensureClassAccess(

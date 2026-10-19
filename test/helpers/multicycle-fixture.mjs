@@ -14,7 +14,8 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 class Query {
   constructor(db, table) { this.db = db; this.table = table; this.filters = []; this.sort = []; this.op = "read"; }
   select(_columns, options = {}) { this.head = options.head; return this; }
-  eq(key, value) { this.filters.push(row => key === "settings_json" && typeof value === "string" ? same(row[key], JSON.parse(value)) : row[key] === value); return this; }
+  eq(key, value) { this.filters.push(row => key === "settings_json" && typeof value === "string" ? same(row[key], JSON.parse(value)) : key.includes("->") ? key.split(/->>?/).reduce((part, segment) => part?.[segment], row) === value : row[key] === value); return this; }
+  like(key, pattern) { const prefix = pattern.replace(/%$/, ""); this.filters.push(row => String(row[key] || "").startsWith(prefix)); return this; }
   neq(key, value) { this.filters.push(row => row[key] !== value); return this; }
   gte(key, value) { this.filters.push(row => row[key] >= value); return this; }
   lte(key, value) { this.filters.push(row => row[key] <= value); return this; }
@@ -40,6 +41,9 @@ class Query {
     const table = this.db.tables[this.table] ||= [];
     this.db.calls.push({ table: this.table, op: this.op });
     let rows = table.filter(row => this.filters.every(check => check(row)));
+    if (this.table === "grade_evaluations" && this.op === "insert" &&
+      (Array.isArray(this.value) ? this.value : [this.value]).some(row => ![5,10,20,40,60].includes(row.scale)))
+      return { data: null, error: { code: "23514", message: "grade_evaluations_scale_check" } };
     if (this.op === "insert" && (Array.isArray(this.value) ? this.value : [this.value]).some(row =>
       row.id && table.some(existing => existing.id === row.id))) return { data: null, error: { code: "23505", message: "Duplicate fixture primary key" } };
     if (this.op === "insert" || this.op === "upsert") {
@@ -50,7 +54,19 @@ class Query {
         const row = { id: crypto.randomUUID(), created_at: new Date().toISOString(), ...copy(value) };
         table.push(row); return row;
       });
-    } else if (this.op === "update") for (const row of rows) Object.assign(row, copy(this.value));
+    } else if (this.op === "update") for (const row of rows) {
+      if (this.db.simulatePrimaryLegacyNotificationTrigger && this.table === "grade_evaluations" &&
+          this.value.is_published === true && row.is_published !== true) {
+        const queue = this.db.tables.notifications_queue ||= [];
+        for (const enrollment of this.db.tables.class_enrollments.filter(e => e.class_id === row.class_id)) {
+          const grade = (this.db.tables.student_grades || []).find(g => g.evaluation_id === row.id && g.student_id === enrollment.student_id);
+          queue.push({ id: crypto.randomUUID(), institution_id: this.db.legacyId, student_id: enrollment.student_id,
+            profile_id: null, parent_id: null, status: "pending", payload: { kind: grade?.score == null ? "grade_missing" : "grade",
+              score: grade?.score ?? null, scale: row.scale, evaluation: { id: row.id } } });
+        }
+      }
+      Object.assign(row, copy(this.value));
+    }
     const count = rows.length;
     rows = rows.slice().sort((a, b) => {
       for (const [key, ascending] of this.sort) {

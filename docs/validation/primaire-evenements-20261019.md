@@ -40,3 +40,9 @@ npm run build
 - Régression : calculs et rendu secondaire historique, CSCA, périodes, droits, matières/sous-matières, préscolaire et autres parcours couverts par `test:multicycle`.
 
 La recette utilise des identités et notes fictives en mémoire. Elle ne constitue pas une saisie réelle dans l'EPC. L'établissement doit enregistrer ses dates et les barèmes de ses matières avant les premières compositions ; aucune note ou date réelle n'est inventée pour la mise en service.
+
+## Compatibilité vérifiée sur le schéma réel
+
+Lecture seule de Supabase : `grading_period_id` est nullable ; `grade_evaluations.scale` est limité historiquement à 5, 10, 20, 40 ou 60. Pour un barème primaire de 50, le titre primaire existant porte le barème réel et la colonne contrainte reçoit une valeur compatible. Les points restent stockés tels que saisis, y compris 37,25/50 ; les APIs, les snapshots officiels, les moyennes et l'espace parent utilisent 50. Aucun coefficient ni aucune note n'est détourné pour stocker le barème.
+
+Le déclencheur SQL historique produit aussi des notifications à l'échelle de toute la classe. Pour les événements primaires, ces messages sont conservés avec un statut d'erreur technique et remplacés par les messages des seuls snapshots officiels. Un garde au dispatch couvre la lecture concurrente du déclencheur, sans modifier son SQL. Les appareils Parent Connect liés au matricule restent notifiés même sans compte tuteur séparé. Les messages des autres modules et du secondaire suivent leur parcours existant.

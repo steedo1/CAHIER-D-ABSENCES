@@ -1,3 +1,4 @@
+import { primaryBaseTitle } from "./primary-storage-scale";
 /**
  * Catalogue des évaluations ponctuelles du primaire.
  * Stockage dans institutions.settings_json : aucune nouvelle table ni enum.
@@ -134,6 +135,7 @@ export function primaryEventTitle(event: PrimaryEvent, track?: PrimaryTrack | nu
 }
 
 export function parsePrimaryEventTitle(title: unknown): { kind: PrimaryEventKind | "homework"; code: string; track?: PrimaryTrack } | null {
+  title = primaryBaseTitle(title);
   if (typeof title !== "string") return null;
   const match = /^MCPE:([OPIMD]):([A-Z][A-Z0-9_-]{0,19})(?::(french|arabic))?$/.exec(title);
   if (!match) return null;

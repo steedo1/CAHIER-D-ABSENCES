@@ -1,3 +1,4 @@
+import { primaryTitleScale, primaryBaseTitle } from "@/lib/grades/primary-storage-scale";
 import { parsePrimaryEventTitle, readPrimaryEventsCatalog } from "@/lib/grades/primary-evaluation-events";
 // src/lib/push/grades.ts
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -189,7 +190,7 @@ export async function queueGradeNotificationsForEvaluation(
     subject_component_id: ev.subject_component_id,
     eval_date: ev.eval_date,
     eval_kind: ev.eval_kind,
-    scale: toFiniteNumber(ev.scale, 20),
+    scale: primaryTitleScale(ev.title) || toFiniteNumber(ev.scale, 20),
     coeff: toFiniteNumber(ev.coeff, 1),
     class: {
       id: klass.id,
@@ -205,7 +206,8 @@ export async function queueGradeNotificationsForEvaluation(
   const subjectName = evalRow.subject?.name || "Note";
   const evalDateFr = formatDateFr(evalRow.eval_date);
   const marker = parsePrimaryEventTitle(ev.title);
-  let primaryLabel: string | null = marker?.kind === "homework" ? "Devoir" : null;
+  const primaryEvaluation = !!marker || primaryTitleScale(ev.title) !== null;
+  let primaryLabel: string | null = marker?.kind === "homework" ? "Devoir" : !marker && primaryEvaluation ? String(primaryBaseTitle(ev.title)) : null;
   if (marker && marker.kind !== "homework" && klass.academic_year) {
     const school = await srv.from("institutions").select("settings_json").eq("id", institutionId).maybeSingle();
     primaryLabel = readPrimaryEventsCatalog(school.data?.settings_json).years[klass.academic_year]?.events
@@ -348,7 +350,7 @@ export async function queueGradeNotificationsForEvaluation(
     (g) => g.notifications_enabled && g.guardian_profile_id
   );
 
-  if (!effectiveGuardians.length) {
+  if (!effectiveGuardians.length && !primaryEvaluation) {
     console.log("[push/grades] aucun responsable avec notifications activées", {
       evaluationId: cleanEvaluationId,
     });
@@ -359,7 +361,7 @@ export async function queueGradeNotificationsForEvaluation(
   type QueueInsert = {
     institution_id: string;
     student_id: string;
-    target_profile_id: string;
+    target_profile_id: string | null;
     channels: string[];
     payload: any;
     status: string;
@@ -376,7 +378,11 @@ export async function queueGradeNotificationsForEvaluation(
       (g) => g.student_id === official.student_id
     );
 
-    if (!guardiansForStudent.length) continue;
+    const targets: Array<string | null> = guardiansForStudent.map(guardian => guardian.guardian_profile_id as string);
+    // Parent Connect also supports matricule-linked student devices without
+    // a separately created guardian account. Preserve that primary delivery.
+    if (!targets.length && primaryEvaluation) targets.push(null);
+    if (!targets.length) continue;
 
     const student =
       studentById.get(official.student_id) ||
@@ -443,8 +449,7 @@ export async function queueGradeNotificationsForEvaluation(
       missed: isMissed,
     };
 
-    for (const guardian of guardiansForStudent) {
-      const profileId = guardian.guardian_profile_id as string;
+    for (const profileId of targets) {
 
       rowsToInsert.push({
         institution_id: institutionId,
@@ -469,7 +474,7 @@ export async function queueGradeNotificationsForEvaluation(
   }
 
   const filteredRows = rowsToInsert.filter(
-    (row) => !!row.target_profile_id && !!row.student_id && !!row.official_score_id
+    (row) => (!!row.target_profile_id || primaryEvaluation) && !!row.student_id && !!row.official_score_id
   );
 
   if (!filteredRows.length) {

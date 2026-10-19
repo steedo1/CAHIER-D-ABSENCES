@@ -14,6 +14,7 @@ const req = (path, body, method = "POST") => new NextRequest("https://fixture.in
 });
 function setup(level = "CP1", bilingual = true) {
   const db = createPedagogicalFixture({ bilingual });
+  db.simulatePrimaryLegacyNotificationTrigger = true;
   db.tables.class_enrollments.forEach((row, i) => { row.student_id = i ? pupil1 : pupil0; row.students.id = row.student_id; });
   const settings = db.tables.institutions[0].settings_json;
   const tracks = bilingual ? ["french", "arabic"] : ["french"];

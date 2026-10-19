@@ -1,3 +1,4 @@
+import { primaryBaseTitle } from "./primary-storage-scale";
 /**
  * Compatibility adapter for PRIMARY Franco-Arabic compositions.
  *
@@ -20,7 +21,7 @@ export function isPrimaryComposition(row: {
 }): boolean {
   const marker = parsePrimaryEventTitle(row.title);
   return row.eval_kind === "interro_ecrite" &&
-    (row.title === PRIMARY_COMPOSITION_TITLE ||
+    (primaryBaseTitle(row.title) === PRIMARY_COMPOSITION_TITLE ||
      marker?.kind === "official" || marker?.kind === "passage");
 }
 
