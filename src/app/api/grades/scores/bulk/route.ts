@@ -347,8 +347,9 @@ export async function POST(req: NextRequest) {
       return bad("FORBIDDEN", 403);
     }
 
-    // A class-device is authorized for its own linked class and assigned
-    // subject only. The primary direct-publication rule is opt-in by school.
+    // Keep historical class-device rules unchanged for classic/secondary
+    // schools. Only primary Franco-Arabic evaluations opt in to the tighter
+    // school+class+subject scope and immediate official publication.
     const { data: roleRows, error: roleError } = await srv.from("user_roles")
       .select("role").eq("profile_id", profile.id).eq("institution_id", profile.institution_id);
     if (roleError) return bad("CLASS_ROLE_LOOKUP_FAILED", 503);
@@ -357,14 +358,6 @@ export async function POST(req: NextRequest) {
       !ownRoles.has("admin") && !ownRoles.has("super_admin") && !ownRoles.has("educator");
     let autoPublishPrimary = false;
     if (classDeviceOnly) {
-      if (!await classDeviceMayAccessClass({ service: srv, userId: profile.id,
-        classId: ge.class_id })) return bad("CLASS_DEVICE_CLASS_FORBIDDEN", 403);
-      if (!ge.subject_id) return bad("CLASS_DEVICE_SUBJECT_REQUIRED", 403);
-      const { data: assigned, error: assignErr } = await srv.from("class_teachers")
-        .select("id").eq("institution_id", profile.institution_id)
-        .eq("class_id", ge.class_id).eq("subject_id", ge.subject_id)
-        .is("end_date", null).limit(1);
-      if (assignErr || !assigned?.length) return bad("CLASS_DEVICE_SUBJECT_FORBIDDEN", 403);
       const { data: inst, error: instErr } = await srv.from("institutions")
         .select("settings_json").eq("id", profile.institution_id).maybeSingle();
       const { data: cls, error: clsErr } = await srv.from("classes")
@@ -373,6 +366,16 @@ export async function POST(req: NextRequest) {
       const school = parseSchoolCyclesSettings(inst.settings_json);
       autoPublishPrimary = school.enabled && usesDirectGradePublication(inst.settings_json) &&
         resolveSchoolCycleForClass(cls, school) === "primary";
+      if (autoPublishPrimary) {
+        if (!await classDeviceMayAccessClass({ service: srv, userId: profile.id,
+          classId: ge.class_id })) return bad("CLASS_DEVICE_CLASS_FORBIDDEN", 403);
+        if (!ge.subject_id) return bad("CLASS_DEVICE_SUBJECT_REQUIRED", 403);
+        const { data: assigned, error: assignErr } = await srv.from("class_teachers")
+          .select("id").eq("institution_id", profile.institution_id)
+          .eq("class_id", ge.class_id).eq("subject_id", ge.subject_id)
+          .is("end_date", null).limit(1);
+        if (assignErr || !assigned?.length) return bad("CLASS_DEVICE_SUBJECT_FORBIDDEN", 403);
+      }
     }
 
     // ✅ Verrou période avant toute écriture.
