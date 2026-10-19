@@ -224,8 +224,8 @@ export async function queueGradeNotificationsForEvaluation(
   });
 
   // 2️⃣ Récupérer les notes OFFICIELLES publiées de cette évaluation
-  const studentIds = options?.studentIds ? [...new Set(options.studentIds.filter(Boolean))] : null;
-  if (studentIds && studentIds.length === 0) return;
+  const scopedStudentIds = options?.studentIds ? [...new Set(options.studentIds.filter(Boolean))] : null;
+  if (scopedStudentIds && scopedStudentIds.length === 0) return;
   let officialQuery = srv
     .from("grade_published_scores")
     .select(
@@ -242,7 +242,7 @@ export async function queueGradeNotificationsForEvaluation(
     )
     .eq("evaluation_id", cleanEvaluationId)
     .eq("is_current", true);
-  if (studentIds) officialQuery = officialQuery.in("student_id", studentIds);
+  if (scopedStudentIds) officialQuery = officialQuery.in("student_id", scopedStudentIds);
   const { data: officialRowsRaw, error: officialErr } = await officialQuery;
 
   if (officialErr) {
