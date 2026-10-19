@@ -1,6 +1,7 @@
+import type { TeachingTrack } from "@/lib/school-cycles";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
-import { expandPedagogicalEnrollments, readStudentProgramSettings } from "@/lib/school-student-programs";
+import { expandPedagogicalEnrollments, readStudentProgramSettings, programsForStudent } from "@/lib/school-student-programs";
 
 export type SchoolRosterClass = { id: string; level?: string | null; academic_year?: string | null };
 /** Reverify the persisted teaching links without creating duplicate enrollments. */
@@ -38,7 +39,7 @@ export async function loadLinkedClassEnrollments(service: SupabaseClient, instit
 /** Add a bounded membership check only for explicitly configured schools.
  * The existing route remains responsible for evaluation ownership and locks. */
 export async function specializedGradeStudentsAllowed(service: SupabaseClient, actorId: string,
-  classId: string, studentIds: readonly string[], ownerProfileId?: string | null): Promise<boolean> {
+  classId: string, studentIds: readonly string[], ownerProfileId?: string | null, track?: TeachingTrack | null): Promise<boolean> {
   const [profile, classroom] = await Promise.all([
     service.from("profiles").select("institution_id").eq("id", actorId).maybeSingle(),
     service.from("classes").select("id,institution_id,level,academic_year").eq("id", classId).maybeSingle(),
@@ -61,6 +62,11 @@ export async function specializedGradeStudentsAllowed(service: SupabaseClient, a
     loadLinkedClassEnrollments(service, institutionId, classroom.data, institution.settings_json),
   ]);
   if (enrolled.error || !enrolled.data || enrolled.data.length >= 1501) return false;
-  const allowed = new Set([...enrolled.data, ...linked].map(row => row.student_id));
+  const school = parseSchoolCyclesSettings(institution.settings_json);
+  const cycle = resolveSchoolCycleForClass(classroom.data, school);
+  const policy = readStudentProgramSettings(institution.settings_json).years[classroom.data.academic_year || ""]?.classes[classId];
+  if (track && (cycle !== "primary" || !(policy?.tracks || school.teachingTracksByCycle.primary || []).includes(track))) return false;
+  const allowed = new Set([...enrolled.data, ...linked].filter(row => !track ||
+    (policy ? programsForStudent(policy, row.student_id, school.teachingTracksByCycle.primary || []) : school.teachingTracksByCycle.primary || []).includes(track)).map(row => row.student_id));
   return studentIds.every(id => allowed.has(id));
 }

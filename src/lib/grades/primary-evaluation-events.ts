@@ -41,6 +41,7 @@ export function readPrimaryEventsCatalog(settings: unknown): PrimaryEventsCatalo
   }
   const root = (settings as Record<string, unknown>)[PRIMARY_EVENTS_SETTINGS_KEY];
   if (!root || typeof root !== "object" || Array.isArray(root)) return { version: 1, years: {} };
+  if ((root as Record<string, unknown>).version !== 1) return { version: 1, years: {} };
   const rawYears = (root as Record<string, unknown>).years;
   const years: Record<string, CatalogYear> = {};
   if (rawYears && typeof rawYears === "object" && !Array.isArray(rawYears)) {
@@ -70,13 +71,15 @@ export function normalizePrimaryEvent(raw: unknown, year: string): PrimaryEvent 
   const label = String(input.label || "").trim();
   const kind = input.kind as PrimaryEventKind;
   const date = String(input.date || "").trim();
-  if (!CODE.test(code) || !label || label.length > 100 || !KINDS.has(kind)) return null;
+  if (code === "DEVOIR" || !CODE.test(code) || !label || label.length > 100 || !KINDS.has(kind)) return null;
   const yr = Number(year.slice(0, 4));
   const from = String(yr) + "-09-01";
   const to = String(yr + 1) + "-08-31";
   if (!DATE.test(date) || Number.isNaN(Date.parse(date + "T12:00:00Z")) ||
       new Date(date + "T12:00:00Z").toISOString().slice(0, 10) !== date ||
       date < from || date > to) return null;
+  if (!Array.isArray(input.tracks) || !input.tracks.every(track => TRACKS.has(track as PrimaryTrack)) ||
+      !Array.isArray(input.levels) || !input.levels.every(level => LEVELS.has(String(level)))) return null;
   const tracks = Array.isArray(input.tracks)
     ? [...new Set(input.tracks.filter((track): track is PrimaryTrack => TRACKS.has(track as PrimaryTrack)))]
     : [];
@@ -106,6 +109,13 @@ export function validatePrimaryEvents(raw: unknown, year: string):
     codes.add(normalized.code);
     result.push(normalized);
   }
+  for (const passage of result.filter(event => event.kind === "passage")) {
+    if (result.some(event => event.code !== passage.code && event.levels.some(level => passage.levels.includes(level)) &&
+        event.tracks.some(track => passage.tracks.includes(track)) &&
+        (event.kind === "passage" || (event.kind === "official" && event.date >= passage.date)))) {
+      return { ok: false, error: "invalid_primary_passage_calendar" };
+    }
+  }
   result.sort((a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label, "fr"));
   return { ok: true, events: result };
 }
@@ -118,20 +128,20 @@ export function primaryEventsForClass(settings: unknown, year: string, level: st
 }
 
 /** Marker keeps the existing enum and distinguishes each dated official/internal event. */
-export function primaryEventTitle(event: PrimaryEvent): string {
+export function primaryEventTitle(event: PrimaryEvent, track?: PrimaryTrack | null): string {
   const prefix = { official: "O", passage: "P", internal: "I", mock: "M" }[event.kind];
-  return "MCPE:" + prefix + ":" + event.code;
+  return "MCPE:" + prefix + ":" + event.code + (track ? ":" + track : "");
 }
 
-export function parsePrimaryEventTitle(title: unknown): { kind: PrimaryEventKind; code: string } | null {
+export function parsePrimaryEventTitle(title: unknown): { kind: PrimaryEventKind | "homework"; code: string; track?: PrimaryTrack } | null {
   if (typeof title !== "string") return null;
-  const match = /^MCPE:([OPIM]):([A-Z][A-Z0-9_-]{0,19})$/.exec(title);
+  const match = /^MCPE:([OPIMD]):([A-Z][A-Z0-9_-]{0,19})(?::(french|arabic))?$/.exec(title);
   if (!match) return null;
-  const kinds: Record<"O" | "P" | "I" | "M", PrimaryEventKind> = {
-    O: "official", P: "passage", I: "internal", M: "mock",
+  const kinds: Record<"O" | "P" | "I" | "M" | "D", PrimaryEventKind | "homework"> = {
+    O: "official", P: "passage", I: "internal", M: "mock", D: "homework",
   };
-  const kind = kinds[match[1] as "O" | "P" | "I" | "M"];
-  return { kind, code: match[2] };
+  const kind = kinds[match[1] as "O" | "P" | "I" | "M" | "D"];
+  return { kind, code: match[2], ...(match[3] ? { track: match[3] as PrimaryTrack } : {}) };
 }
 
 /** Annual passage formula, all inputs must be on the same scale. */
@@ -147,3 +157,5 @@ export function primaryPassageAverage(
     ordinaryCompositionAverages.length;
   return Math.round(((ordinary + 2 * passageAverage) / 3 + Number.EPSILON) * 100) / 100;
 }
+
+export const primaryHomeworkTitle = (track: PrimaryTrack): string => "MCPE:D:DEVOIR:" + track;

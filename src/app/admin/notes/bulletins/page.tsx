@@ -19,9 +19,9 @@ import {
 } from "@/lib/education-organization";
 import { proposeEndOfYearDecision } from "@/lib/end-of-year-decisions.mjs";
 import dynamic from "next/dynamic";
-import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
-import type { PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import { usePrimaryBulletinCalendar } from "@/hooks/usePrimaryBulletinCalendar";
+import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
 const SpecializedBulletinPanel = dynamic(() => import("@/components/bulletins/SpecializedBulletinPanel"));
 
 /* ───────── Types ───────── */
@@ -2435,6 +2435,7 @@ function StudentBulletinCard({
 
 export default function BulletinsPage() {
   const schoolNavigation = useSchoolNavigation();
+
   const schoolCycle = schoolNavigation?.selection.cycle;
   const schoolTrack = schoolNavigation?.selection.track;
   const schoolLevel = schoolNavigation?.selection.level;
@@ -2454,31 +2455,9 @@ export default function BulletinsPage() {
   const [periodsLoading, setPeriodsLoading] = useState(false);
   const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
-  const [primaryEvents, setPrimaryEvents] = useState<PrimaryEvent[]>([]);
-  const [selectedPrimaryEventCode, setSelectedPrimaryEventCode] = useState("");
-  const selectedPrimaryClassRow = classes.find(row => row.id === selectedClassId);
-  const primaryClassLevel = String(selectedPrimaryClassRow?.level || "").replace(/[\s.-]/g, "").toUpperCase();
-  const primaryCalendarClass = Boolean(schoolNavigation && /^(CP[12]|CE[12]|CM[12])$/.test(primaryClassLevel));
-  const primaryBulletinEvents = primaryCalendarClass ? primaryEvents.filter(event =>
-    event.levels.includes(primaryClassLevel as any) && event.printBulletin) : [];
-  const usesPrimaryEventBulletins = primaryCalendarClass && primaryEvents.length > 0;
-
-  useEffect(() => {
-    setPrimaryEvents([]);
-    setSelectedPrimaryEventCode("");
-    if (!primaryCalendarClass || !selectedAcademicYear) return;
-    const controller = new AbortController();
-    fetch("/api/admin/institution/primary-evaluation-events?academic_year=" +
-      encodeURIComponent(selectedAcademicYear), { signal: controller.signal, cache: "no-store" })
-      .then(async response => {
-        const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || "Calendrier indisponible");
-        if (!controller.signal.aborted) setPrimaryEvents(data.events || []);
-      })
-      .catch(error => { if (!controller.signal.aborted) setErrorMsg(
-        error instanceof Error ? error.message : "Calendrier indisponible"); });
-    return () => controller.abort();
-  }, [selectedClassId, selectedAcademicYear, primaryCalendarClass]);
+  const { primaryBulletinEvents, selectedPrimaryEventCode, setSelectedPrimaryEventCode,
+    usesPrimaryEventBulletins, primaryCalendarLoading, primaryCalendarError } = usePrimaryBulletinCalendar(
+      classes.find(row => row.id === selectedClassId), selectedAcademicYear);
 
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
@@ -2646,6 +2625,9 @@ export default function BulletinsPage() {
       setErrorMsg("Veuillez sélectionner une classe.");
       return;
     }
+    if (primaryCalendarLoading || primaryCalendarError) {
+      setErrorMsg(primaryCalendarError || "Chargement du calendrier…"); return;
+    }
     if (usesPrimaryEventBulletins && !selectedPrimaryEventCode) {
       setErrorMsg("Veuillez choisir une composition ou une évaluation interne.");
       return;
@@ -2663,7 +2645,7 @@ export default function BulletinsPage() {
 
       const params = new URLSearchParams();
       params.set("class_id", selectedClassId);
-      const selectedEvent = primaryBulletinEvents.find(event => event.code === selectedPrimaryEventCode);
+      const selectedEvent = !usesPrimaryEventBulletins ? null : primaryBulletinEvents.find(event => event.code === selectedPrimaryEventCode);
       params.set("from", selectedEvent?.date || dateFrom);
       params.set("to", selectedEvent?.date || dateTo);
       if (usesPrimaryEventBulletins && selectedEvent) params.set("primary_event_code", selectedEvent.code);
@@ -3781,6 +3763,8 @@ export default function BulletinsPage() {
             ) : null}
           </div>
 
+          {primaryCalendarLoading && <p role="status">Chargement du calendrier primaire…</p>}
+          {primaryCalendarError && <p role="alert" className="text-red-700">{primaryCalendarError}</p>}
           {errorMsg && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 print:hidden">
               {errorMsg}

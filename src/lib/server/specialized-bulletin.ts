@@ -3,11 +3,11 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import { isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
-import { readPrimaryEventsCatalog, primaryEventTitle, parsePrimaryEventTitle, primaryPassageAverage, type PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
+import { readPrimaryEventsCatalog, parsePrimaryEventTitle, primaryPassageAverage, type PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import { buildProgramBulletinDraft, type OfficialEvaluationScore } from "@/lib/franco-arabic-bulletin-calculation";
 import { normalizePedagogicalLevel, resolveEvaluationTeachingTrack, resolvePedagogicalEngine, resolveProgramCoefficients, type InstitutionCoefficient } from "@/lib/pedagogical-engine";
 import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
-import { primarySubjectScale } from "@/lib/grades/primary-subject-scale";
+import { primarySubjectScale, primarySubjectTeachingTrack } from "@/lib/grades/primary-subject-scale";
 import type { BulletinSchool, BulletinDocument, BulletinProgram } from "@/components/bulletins/FrancoArabicBulletin";
 import { SCHOOL_CYCLE_OPTIONS, type SchoolCycle, type TeachingTrack } from "@/lib/school-cycles";
 import { buildPedagogicalRanks } from "@/lib/pedagogical-ranking";
@@ -31,7 +31,7 @@ export type SpecializedBulletinPayload = {
 type SchoolClass = { id: string; institution_id?: string | null; level?: string | null; label?: string | null; academic_year?: string | null; education_type?: string | null; formation_code?: string | null; head_teacher_id?: string | null };
 type Student = { id: string; institution_id: string; full_name: string | null; first_name: string | null; last_name: string | null; matricule: string | null; birthdate: string | null; birth_place?: string | null; gender?: string | null; photo_path?: string | null; photo_updated_at?: string | null };
 type PublishedScore = { id: string; student_id: string; evaluation_id: string; subject_id: string | null; score: number | null; scale: number; coeff: number; publication_version: number };
-type Evaluation = { subject_component_id: string | null; id: string; subject_id: string | null; eval_kind: string; title: string | null; is_published: boolean; publication_status: string | null; publication_version: number | null; grading_period_id: string | null };
+type Evaluation = { eval_date: string; subject_component_id: string | null; id: string; subject_id: string | null; eval_kind: string; title: string | null; is_published: boolean; publication_status: string | null; publication_version: number | null; grading_period_id: string | null };
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
 
@@ -87,7 +87,7 @@ export async function loadSpecializedBulletin(input: {
   try {
     const primaryCatalog = cycle === "primary"
       ? readPrimaryEventsCatalog(input.settingsJson).years[year]?.events || [] : [];
-    const eventsMode = cycle === "primary" && primaryCatalog.length > 0;
+    const eventsMode = cycle === "primary" && searchParams.has("primary_event_code");
     const eventCode = searchParams.get("primary_event_code");
     const primaryEvent = eventsMode ? primaryCatalog.find(event =>
       event.code === eventCode && event.levels.includes(level.replace(/[\s.-]/g, "").toUpperCase() as any)) : null;
@@ -119,7 +119,7 @@ export async function loadSpecializedBulletin(input: {
           return query.order("id").range(from, to);
         }),
       pages<Evaluation>((from, to) => service.from("grade_evaluations")
-        .select("id,subject_id,subject_component_id,eval_kind,title,is_published,publication_status,publication_version,grading_period_id")
+        .select("id,subject_id,subject_component_id,eval_kind,title,is_published,publication_status,publication_version,grading_period_id,eval_date")
         .eq("class_id", schoolClass.id).gte("eval_date", period.start_date).lte("eval_date", period.end_date).order("id").range(from, to)),
       pages<PublishedScore>((from, to) => service.from("grade_published_scores")
         .select("id,student_id,evaluation_id,subject_id,score,scale,coeff,publication_version")
@@ -181,28 +181,67 @@ export async function loadSpecializedBulletin(input: {
     const evaluationById = new Map(evaluations.map(row => [row.id, row]));
     const trackBySubject = new Map(activeSubjects.map(row => [row.subject_id,
       resolveEvaluationTeachingTrack(input.settingsJson, cycle, row.subject_id)]));
+    const evaluationTrack = (evaluation: Evaluation): TeachingTrack | null => {
+      if (!evaluation.subject_id) return null;
+      if (cycle === "primary") return primarySubjectTeachingTrack(input.settingsJson, year, schoolClass.id,
+        evaluation.subject_id, parsePrimaryEventTitle(evaluation.title)?.track);
+      return classPolicy?.tracks.length === 1 &&
+        school.subjectTracksByCycle[cycle]?.[evaluation.subject_id]?.includes(classPolicy.tracks[0])
+        ? classPolicy.tracks[0] : trackBySubject.get(evaluation.subject_id) ?? null;
+    };
+    const studentTracks = (id: string) => classPolicy ? programsForStudent(classPolicy, id, school.teachingTracksByCycle[cycle] || []) : school.teachingTracksByCycle[cycle] || [];
+    const snapshotIndex = (snapshots: PublishedScore[]) => {
+      const index = new Map<string, PublishedScore[]>();
+      for (const snapshot of snapshots) {
+        const rows = index.get(snapshot.evaluation_id) || [];
+        rows.push(snapshot); index.set(snapshot.evaluation_id, rows);
+      }
+      return index;
+    };
+    const currentSnapshotIndex = snapshotIndex(published);
+    const eventProblems = (event: PrimaryEvent, rows: Evaluation[], track: TeachingTrack, snapshots = currentSnapshotIndex): string[] => {
+      const problems: string[] = [];
+      const subjects = new Set<string>();
+      for (const row of rows) {
+        const marker = parsePrimaryEventTitle(row.title);
+        if (marker?.code !== event.code || marker.kind !== event.kind || evaluationTrack(row) !== track) continue;
+        if (row.eval_date !== event.date) { problems.push("primary_event_date_mismatch"); continue; }
+        if (!row.is_published || (row.publication_status && row.publication_status !== "published"))
+          problems.push("primary_event_unpublished_evaluation");
+        if ((snapshots.get(row.id) || []).some(snapshot =>
+            snapshot.publication_version !== row.publication_version || snapshot.subject_id !== row.subject_id))
+          problems.push("official_publication_version_mismatch");
+        if (row.subject_id && subjects.has(row.subject_id)) problems.push("primary_event_duplicate_subject");
+        if (row.subject_id) subjects.add(row.subject_id);
+      }
+      return problems;
+    };
     const officialScores: OfficialEvaluationScore[] = [];
     const publicationProblems: string[] = [];
     for (const row of published) {
       if (!students.has(row.student_id)) continue;
       const evaluation = evaluationById.get(row.evaluation_id);
       if (!evaluation || !evaluation.is_published || (evaluation.publication_status && evaluation.publication_status !== "published")) continue;
-      if (evaluation.grading_period_id && evaluation.grading_period_id !== period.id) continue;
+      if (!primaryEvent && evaluation.grading_period_id && evaluation.grading_period_id !== period.id) continue;
       // Primaire avec calendrier : sélection exacte de l’événement, jamais un devoir
       // ni une évaluation interne dans un bulletin de composition officielle.
       if (cycle === "primary") {
         if (primaryEvent) {
-          if (evaluation.title !== primaryEventTitle(primaryEvent)) continue;
+          const marker = parsePrimaryEventTitle(evaluation.title);
+          if (marker?.code !== primaryEvent.code || marker.kind !== primaryEvent.kind || evaluation.eval_date !== primaryEvent.date) continue;
         } else if (evaluation.grading_period_id !== period.id || !isPrimaryComposition(evaluation)) continue;
       }
       if (evaluation.subject_id !== row.subject_id || row.publication_version !== evaluation.publication_version) {
-        publicationProblems.push("official_publication_version_mismatch"); continue;
+        if (!primaryEvent) publicationProblems.push("official_publication_version_mismatch");
+        continue;
       }
       // Null means absent, never a numerical zero.
       if (row.score === null || !row.subject_id) continue;
-      const teachingTrack = classPolicy?.tracks.length === 1 &&
-          school.subjectTracksByCycle[cycle]?.[row.subject_id]?.includes(classPolicy.tracks[0])
-          ? classPolicy.tracks[0] : trackBySubject.get(row.subject_id) ?? null;
+      const teachingTrack = evaluationTrack(evaluation);
+      if (primaryEvent && (!teachingTrack || !primaryEvent.tracks.includes(teachingTrack))) {
+        publicationProblems.push("shared_subject_requires_program_specific_evaluations"); continue;
+      }
+      if (cycle === "primary" && teachingTrack && !studentTracks(row.student_id).includes(teachingTrack)) continue;
       if (cycle === "secondary" && evaluation.subject_component_id && teachingTrack) {
         const allowed = selectProgramComponents(componentRows.filter(component => component.subject_id === row.subject_id),
           { cycle, track: teachingTrack, level, storageLevel: componentStorageLevel(cycle, teachingTrack, level) });
@@ -282,13 +321,13 @@ export async function loadSpecializedBulletin(input: {
     }
     // Récupération de la série officielle uniquement pour le bulletin de passage.
     // Aucun devoir, examen blanc ni évaluation interne ne peut alimenter la MGA.
-    const passageMode = cycle === "primary" && primaryEvent?.kind === "passage";
+    const passageMode = cycle === "primary" && level.replace(/[\s.-]/g, "").toUpperCase() !== "CM2" && primaryEvent?.kind === "passage";
     const applicableOrdinaryEvents = passageMode ? primaryCatalog.filter(event =>
       event.kind === "official" && event.levels.includes(level.replace(/[\s.-]/g, "").toUpperCase() as any)) : [];
     const [annualEvaluations, annualPublished] = passageMode
       ? await Promise.all([
         pages<Evaluation>((from, to) => service.from("grade_evaluations")
-          .select("id,subject_id,subject_component_id,eval_kind,title,is_published,publication_status,publication_version,grading_period_id")
+          .select("id,subject_id,subject_component_id,eval_kind,title,is_published,publication_status,publication_version,grading_period_id,eval_date")
           .eq("class_id", schoolClass.id).gte("eval_date", year.slice(0,4) + "-09-01")
           .lte("eval_date", year.slice(5) + "-08-31").order("id").range(from,to)),
         pages<PublishedScore>((from,to) => service.from("grade_published_scores")
@@ -307,8 +346,10 @@ export async function loadSpecializedBulletin(input: {
           score.publication_version !== evalRow.publication_version || !score.subject_id ||
           evalRow.subject_id !== score.subject_id || score.score === null || !students.has(score.student_id)) continue;
       const configured = primaryCatalog.find(event => event.code === marker.code && event.kind === marker.kind);
-      if (!configured || !configured.levels.includes(level.replace(/[\s.-]/g, "").toUpperCase() as any)) continue;
-      const eventTrack = trackBySubject.get(score.subject_id) ?? null;
+      if (!configured || evalRow.eval_date !== configured.date ||
+          !configured.levels.includes(level.replace(/[\s.-]/g, "").toUpperCase() as any)) continue;
+      const eventTrack = evaluationTrack(evalRow);
+      if (!eventTrack || !configured.tracks.includes(eventTrack) || !studentTracks(score.student_id).includes(eventTrack)) continue;
       const entry: OfficialEvaluationScore = {
         studentId: score.student_id, evaluationId: score.evaluation_id,
         subjectId: score.subject_id, score: score.score, scale: score.scale,
@@ -318,17 +359,26 @@ export async function loadSpecializedBulletin(input: {
       const list = annualScoresByEvent.get(configured.code) || [];
       list.push(entry); annualScoresByEvent.set(configured.code, list);
     }
-    const results = [...students.values()].map(student => ({ student, drafts: resolved.map(policy => buildProgramBulletinDraft({
+    const primaryProblemsByTrack = new Map(programs.map(track => [track,
+      primaryEvent ? eventProblems(primaryEvent, evaluations, track) : []]));
+    const annualSnapshotIndex = snapshotIndex(annualPublished);
+    const annualProblemsByEventTrack = new Map(applicableOrdinaryEvents.flatMap(event =>
+      programs.map(track => [`${event.code}:${track}`, eventProblems(event, annualEvaluations, track, annualSnapshotIndex)] as const)));
+    const eventDenominatorsByTrack = new Map((primaryEvent ? programs : []).map(track => [track, Object.fromEntries(activeSubjects.map(subject => [subject.subject_id,
+      primarySubjectScale(input.settingsJson, { year, classId: schoolClass.id, level, track,
+        subjectId: subject.subject_id, subjectName: subjectNames.get(subject.subject_id) || "" })]))]));
+    const results = [...students.values()].map(student => ({ student, drafts: resolved.filter(policy => cycle !== "primary" || studentTracks(student.id).includes(policy.track)).map(policy => buildProgramBulletinDraft({
       studentId: student.id, cycle, level, track: policy.track, school, reports, officialScores: scoresByStudent.get(student.id) || [],
       subjectComponents: cycle !== "secondary" ? undefined : policy.policies.flatMap(subject => selectProgramComponents(
         componentRows.filter(component => component.subject_id === subject.subjectId),
         { cycle, track: policy.track, level, storageLevel: componentStorageLevel(cycle, policy.track, level) })),
-      resolvedPolicies: policy.policies, configurationProblems: [...policy.problems, ...publicationProblems],
+      resolvedPolicies: policy.policies, configurationProblems: [...policy.problems, ...publicationProblems, ...(primaryProblemsByTrack.get(policy.track) || [])],
       ...(ciPrimaryFrench && policy.track === "french" ? { primaryCiDenominators: ciDenominators } : {}),
-      ...(cycle === "primary" && policy.track === "arabic" && primaryDenominators
-        ? { primarySubjectDenominators: primaryDenominators } : {}),
+      ...(primaryEvent ? { primarySubjectDenominators: eventDenominatorsByTrack.get(policy.track) }
+        : cycle === "primary" && policy.track === "arabic" && primaryDenominators
+          ? { primarySubjectDenominators: primaryDenominators } : {}),
     })) }));
-    const ranksByProgram = new Map(programs.map(track => [track, buildPedagogicalRanks(results.map(row => {
+    const ranksByProgram = new Map(programs.map(track => [track, buildPedagogicalRanks(results.filter(row => cycle !== "primary" || studentTracks(row.student.id).includes(track)).map(row => {
       const draft = row.drafts.find(item => item.track === track);
       return { studentId: row.student.id, average: draft?.generalAverage ?? null, complete: draft?.status === "ready" };
     }))]));
@@ -341,7 +391,7 @@ export async function loadSpecializedBulletin(input: {
         tally.total += subject.average; tally.count += 1; subjectTotals.set(key, tally);
       }
     }
-    const documents: SpecializedBulletinPayload["documents"] = results.map(({ student, drafts }) => {
+    const documents: SpecializedBulletinPayload["documents"] = results.filter(row => cycle !== "primary" || row.drafts.length > 0).map(({ student, drafts }) => {
       const document: BulletinDocument = {
         school: { name: input.institutionName || "", code: input.institutionCode, isFrancoArabic: isBilingualSchool(school),
           generalDirectorName: input.institutionHeadName, generalDirectorTitle: input.institutionHeadTitle },
@@ -372,10 +422,9 @@ export async function loadSpecializedBulletin(input: {
           const row = policy && buildProgramBulletinDraft({
             studentId: student.id, cycle, level, track: draft.track, school, reports,
             officialScores: annualScoresByEvent.get(event.code) || [],
-            resolvedPolicies: policy.policies, configurationProblems: policy.problems,
+            resolvedPolicies: policy.policies, configurationProblems: [...policy.problems, ...(annualProblemsByEventTrack.get(`${event.code}:${draft.track}`) || [])],
             ...(ciPrimaryFrench && draft.track === "french" ? { primaryCiDenominators: ciDenominators } : {}),
-            ...(cycle === "primary" && draft.track === "arabic" && primaryDenominators
-              ? { primarySubjectDenominators: primaryDenominators } : {}),
+            primarySubjectDenominators: eventDenominatorsByTrack.get(draft.track),
           });
           return { label: event.label, average: row?.status === "ready" ? row.generalAverage : null };
         }) : [];
@@ -387,11 +436,11 @@ export async function loadSpecializedBulletin(input: {
           (annualAverage >= (draft.maximumScore || 10) / 2 ? "ADMIS" : "AVIS DU CONSEIL DES MAÎTRES REQUIS");
         const program: BulletinProgram = { track: draft.track, cycle: SCHOOL_CYCLE_OPTIONS.find(option => option.id === cycle)?.label || cycle, level, className: schoolClass.label || level,
           ciPrimaryFrench: isCiPrimaryFrench,
-          primarySubjectScores: isCiPrimaryFrench || (cycle === "primary" && draft.track === "arabic" && primaryDenominators !== undefined),
+          primarySubjectScores: !!primaryEvent || isCiPrimaryFrench || (cycle === "primary" && draft.track === "arabic" && primaryDenominators !== undefined),
           teacherName: cycle === "primary" ? primaryTeacher?.display_name || null : null,
           year, period: period.label || period.code || "", denominator: draft.maximumScore || 0,
           subjects: bulletinSubjectRows,
-          generalAverage: draft.generalAverage, rank, classSize: students.size,
+          generalAverage: draft.generalAverage, rank, classSize: cycle === "primary" ? [...students.keys()].filter(id => studentTracks(id).includes(draft.track)).length : students.size,
           ...(passageMode ? { primaryAnnual: { ordinary: annualOrdinary,
             ordinaryAverage: annualComplete ? Math.round((annualOrdinary.reduce((sum, item) => sum + (item.average as number), 0) / annualOrdinary.length) * 100) / 100 : null,
             passageAverage: draft.generalAverage, annualAverage, decision: annualDecision } } : {}),
@@ -408,11 +457,11 @@ export async function loadSpecializedBulletin(input: {
         }));
       if (useHistoricalFrench) readiness.french = historicalFrench != null;
       const errors = [...drafts.flatMap(row => row.problems)];
-      if (passageMode && !programs.every(track => readiness[track])) errors.push("PRIMARY_ANNUAL_INCOMPLETE");
+      if (passageMode && !drafts.every(draft => readiness[draft.track])) errors.push("PRIMARY_ANNUAL_INCOMPLETE");
       if (useHistoricalFrench && !historicalFrench) errors.push("SECONDARY_FRENCH_STUDENT_MISSING_IN_HISTORICAL_RESULT");
       // Valid historical NC is preserved, never silently converted to 0.
       return { studentId: student.id, document,
-        ready: programs.every(track => readiness[track] === true),
+        ready: (cycle === "primary" ? drafts.map(draft => draft.track) : programs).every(track => readiness[track] === true),
         programReadiness: readiness, problems: [...new Set(errors)] };
     });
     return json({ ok: true, class: { ...schoolClass, label: schoolClass.label || level, head_teacher: historicalHeadTeacher },

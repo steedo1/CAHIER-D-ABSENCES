@@ -1,3 +1,4 @@
+import { primarySubjectEventAverages } from "@/lib/server/primary-subject-event-averages";
 import { classComponentContext, selectProgramComponents, isProgramComponentLevel } from "@/lib/school-subject-components";
 // src/app/api/teacher/grades/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -244,6 +245,10 @@ export async function GET(req: NextRequest) {
       const school = parseSchoolCyclesSettings(institution.settings_json);
       primaryFrancoArabic = school.enabled &&
         resolveSchoolCycleForClass(cls, school) === "primary";
+    }
+    if (primaryFrancoArabic && searchParams.has("primary_event_code") && cls) {
+      return primarySubjectEventAverages({ service: svc, actorId: auth.user.id,
+        settings: componentSettings, classroom: cls, params: searchParams });
     }
     if (primaryFrancoArabic) {
       // On the teacher's primary screen, report exactly the official

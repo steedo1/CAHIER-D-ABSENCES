@@ -40,6 +40,8 @@ class Query {
     const table = this.db.tables[this.table] ||= [];
     this.db.calls.push({ table: this.table, op: this.op });
     let rows = table.filter(row => this.filters.every(check => check(row)));
+    if (this.op === "insert" && (Array.isArray(this.value) ? this.value : [this.value]).some(row =>
+      row.id && table.some(existing => existing.id === row.id))) return { data: null, error: { code: "23505", message: "Duplicate fixture primary key" } };
     if (this.op === "insert" || this.op === "upsert") {
       rows = (Array.isArray(this.value) ? this.value : [this.value]).map(value => {
         const keys = this.conflict?.split(",") || [];
@@ -62,7 +64,7 @@ class Query {
   }
   then(resolve, reject) { return this.execute().then(resolve, reject); }
   async maybeSingle() { const result = await this.execute(); return { ...result, data: result.data?.[0] ?? null }; }
-  async single() { const result = await this.execute(); return result.data?.length === 1
+  async single() { const result = await this.execute(); if (result.error) return result; return result.data?.length === 1
     ? { ...result, data: result.data[0] } : { data: null, error: { message: "Expected one row" } }; }
 }
 

@@ -746,6 +746,7 @@ export default function AdminSettingsPage() {
   const { relayEnabled } = useRelayCapability();
   const schoolNavigation = useSchoolNavigation();
   const hasSpecializedSettings = Boolean(schoolNavigation);
+  const hasPrimaryPrograms = schoolNavigation?.settings.enabledCycles.includes("primary") === true;
   const hasBilingualPrograms = Boolean(
     schoolNavigation && isBilingualSchool(schoolNavigation.settings),
   );
@@ -3791,8 +3792,8 @@ export default function AdminSettingsPage() {
           <>
             {hasSpecializedSettings ? (
               <div className="space-y-6">
-                {hasBilingualPrograms && <PrimaryEvaluationEventsEditor academicYear={selectedAcademicYear} />}
-                <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} hidePrimary={hasBilingualPrograms} />
+                {hasPrimaryPrograms && <PrimaryEvaluationEventsEditor key={selectedAcademicYear} academicYear={selectedAcademicYear} />}
+                <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} hidePrimary={hasPrimaryPrograms} />
               </div>
             ) : (
               <>

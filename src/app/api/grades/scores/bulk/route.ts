@@ -1,3 +1,4 @@
+import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 // src/app/api/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -38,6 +39,7 @@ type GradePeriodRow = {
 };
 
 type EvaluationRow = {
+  title: string | null;
   id: string;
   scale: number | null;
   class_id: string;
@@ -294,6 +296,7 @@ export async function POST(req: NextRequest) {
       .select(
         [
           "id",
+          "title",
           "scale",
           "class_id",
           "subject_id",
@@ -419,7 +422,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!await specializedGradeStudentsAllowed(srv, profile.id, ge.class_id,
-      items.map(item => String(item?.student_id || "").trim()).filter(Boolean))) {
+      items.map(item => String(item?.student_id || "").trim()).filter(Boolean), undefined, parsePrimaryEventTitle(ge.title)?.track)) {
       return bad("STUDENT_OUTSIDE_AUTHORIZED_CLASS", 403);
     }
 

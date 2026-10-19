@@ -1,0 +1,166 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createFixtureRouteLoader } from "./helpers/multicycle-fixture.mjs";
+
+import { setup, create, publish, report, req, calendarPath, year, cls, math, teacher, pupil0, pupil1, evaluationPath } from "./helpers/primary-event-fixture.mjs";
+
+for (const level of ["CP1", "CP2", "CE1", "CE2", "CM1", "CM2"]) test(`${level}: dated creation → scores → official publication → independent French/Arabic event reports`, async () => {
+  const db = setup(level);
+  const options = await (await db.teacher("src/app/api/grades/classes/route.ts").GET(req("/api/grades/classes"))).json();
+  assert.deepEqual(options.items.filter(s => s.subject_id === math).map(s => [s.teaching_track, s.configured_scale]).sort(), [["arabic",20],["french",db.scale("french")]]);
+  for (const track of ["french", "arabic"]) {
+    await publish(db, "DEC", track, track === "french" ? 0.8 : 0.4);
+    await publish(db, "NIV1", track, 1);
+    await publish(db, "NIV2", track, 0);
+    await publish(db, "DEVOIR", track, 1);
+  }
+  const result = await report(db, "DEC");
+  const student = result.specialized.documents.find(d => d.studentId === pupil0);
+  assert.equal(student.document.french.generalAverage, 8);
+  assert.equal(student.document.arabic.generalAverage, 4);
+  assert.equal(student.document.arabic.classSize, 1);
+  assert.equal(student.document.french.classSize, 2);
+  assert.equal(student.document.french.rank, 1); assert.equal(student.document.arabic.rank, 1);
+  assert.equal(student.document.arabic.subjects.length, 1, "ungraded subjects omitted");
+  assert.equal(student.document.french.primaryAnnual, undefined);
+  assert.equal(result.specialized.documents.find(d => d.studentId === pupil1).document.arabic, undefined);
+  assert.equal((await report(db, "NIV2")).specialized.documents[0].document.arabic.generalAverage, 0, "a real zero remains graded");
+  if (level === "CM2") {
+    await publish(db, "BLANC", "french", 0.9);
+    const mock = await report(db, "BLANC");
+    assert.equal(mock.specialized.documents[0].document.french.primaryAnnual, undefined);
+    return;
+  }
+  for (const track of ["french", "arabic"]) {
+    await publish(db, "FEV", track, track === "french" ? 0.6 : 0.2);
+    await publish(db, "AVR", track, track === "french" ? 0.7 : 0.3);
+    await publish(db, "PASS", track, track === "french" ? 0.8 : 0.4);
+  }
+  const annual = (await report(db, "PASS")).specialized.documents[0];
+  assert.deepEqual(annual.document.french.primaryAnnual.ordinary.map(e => e.average), [8,6,7]);
+  assert.equal(annual.document.french.primaryAnnual.annualAverage, 7.67);
+  assert.equal(annual.document.arabic.primaryAnnual.annualAverage, 3.67);
+  assert.equal(annual.document.french.primaryAnnual.decision, "ADMIS");
+  assert.equal(annual.document.arabic.primaryAnnual.decision, "AVIS DU CONSEIL DES MAÎTRES REQUIS");
+  assert.equal(annual.ready, true);
+});
+
+test("French-only primary calendar, homework without a period and concurrent settings writes", async () => {
+  const db = setup("CP1", false), api = db.admin(calendarPath);
+  const loaded = await (await api.GET(req(`/api/admin/institution/primary-evaluation-events?academic_year=${year}`))).json();
+  assert.deepEqual(loaded.tracks, ["french"]);
+  const payload = { academic_year: year, events: db.events, revision: loaded.revision };
+  db.tables.institutions[0].settings_json.finance = { preserved: true };
+  assert.equal((await api.PUT(req("/api/admin/institution/primary-evaluation-events", payload, "PUT"))).status, 409);
+  payload.revision = (await (await api.GET(req(`/api/admin/institution/primary-evaluation-events?academic_year=${year}`))).json()).revision;
+  const saved = await api.PUT(req("/api/admin/institution/primary-evaluation-events", payload, "PUT"));
+  assert.equal(saved.status, 200, JSON.stringify(await saved.clone().json()));
+  assert.deepEqual(db.tables.institutions[0].settings_json.finance, { preserved: true });
+  db.tables.institutions[0].settings_json.primary_evaluation_events_v1.years[year].events = [];
+  await create(db, "DEVOIR", "french", { eval_date: "2026-11-17" });
+  const rows = await (await db.teacher(evaluationPath).GET(req(`/api/teacher/grades/evaluations?class_id=${cls}&subject_id=${math}&teaching_track=french`))).json();
+  assert.equal(rows.primary_event_catalog_enabled, true); assert.deepEqual(rows.primary_events, []);
+});
+
+test("server dates, publication identity, repeated event selection and used calendar protection", async () => {
+  const db = setup(), ev = await create(db, "DEC");
+  assert.equal((await create(db, "DEC", "french", { eval_date: "2030-01-01" })).id, ev.id);
+  assert.equal(db.tables.grade_evaluations.length, 1, "no duplicate column or double-counting");
+  const foreign = await db.teacher(evaluationPath).POST(req("/api/teacher/grades/evaluations", { class_id: "foreign", eval_kind: "devoir", scale: 10, primary_event_code: "DEC", teaching_track: "french" }));
+  assert.equal(foreign.status, 403);
+  for (const changes of [{ scale: 20 }, { coeff: 2 }, { primary_event_code: "UNKNOWN" }, { teaching_track: "bogus" }]) {
+    const response = await db.teacher(evaluationPath).POST(req("/api/teacher/grades/evaluations", { class_id: cls, subject_id: math, eval_kind: "devoir", scale: 10, coeff: 1, primary_event_code: "DEC", teaching_track: "french", ...changes }));
+    assert.ok(response.status >= 400);
+  }
+  const api = db.admin(calendarPath), rev = (await (await api.GET(req(`/api/admin/institution/primary-evaluation-events?academic_year=${year}`))).json()).revision;
+  const events = db.events.map(e => e.code === "DEC" ? { ...e, date: "2026-12-11" } : e);
+  assert.equal((await api.PUT(req("/api/admin/institution/primary-evaluation-events", { academic_year: year, revision: rev, events }, "PUT"))).status, 409);
+  const unauthorized = createFixtureRouteLoader(db, teacher)(calendarPath);
+  assert.equal((await unauthorized.PUT(req("/api/admin/institution/primary-evaluation-events", { academic_year: year, revision: rev, events: db.events }, "PUT"))).status, 403);
+  assert.equal((await api.GET(req(`/api/admin/institution/primary-evaluation-events?academic_year=${year}&class_id=foreign`))).status, 404);
+});
+
+test("missing, unpublished, duplicate or stale compositions never invent an annual result", async () => {
+  const db = setup();
+  for (const code of ["DEC","FEV","PASS"]) await publish(db, code, "french", 0.8);
+  let row = (await report(db, "PASS")).specialized.documents[0];
+  assert.equal(row.document.french.primaryAnnual.annualAverage, null);
+  await publish(db, "AVR", "french", 0.8);
+  assert.equal((await report(db, "PASS")).specialized.documents[0].document.french.primaryAnnual.annualAverage, 8);
+  const evaluation = db.tables.grade_evaluations.find(e => e.title.includes(":DEC:"));
+  evaluation.publication_status = "draft"; evaluation.is_published = false;
+  assert.equal((await report(db, "PASS")).specialized.documents[0].document.french.primaryAnnual.annualAverage, null);
+  evaluation.publication_status = "published"; evaluation.is_published = true;
+  db.tables.grade_evaluations.push({ ...evaluation, id: "duplicate" });
+  assert.equal((await report(db, "PASS")).specialized.documents[0].document.french.primaryAnnual.annualAverage, null);
+  db.tables.grade_evaluations.pop(); evaluation.eval_date = "2026-12-11";
+  assert.equal((await report(db, "PASS")).specialized.documents[0].document.french.primaryAnnual.annualAverage, null);
+});
+
+test("a French-only pupil cannot receive Arabic marks; changing teaching filters the actual roster and columns", async () => {
+  const db = setup();
+  const fr = await create(db, "DEC", "french"), ar = await create(db, "DEC", "arabic");
+  assert.notEqual(fr.id, ar.id);
+  const roster = await db.teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cls}&teaching_track=arabic`));
+  assert.deepEqual((await roster.json()).items.map(s => s.id), [pupil0]);
+  const forbidden = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts").POST(req("/api/teacher/grades/scores/bulk", { evaluation_id: ar.id, items: [{ student_id: pupil1, score: 10 }] }));
+  assert.equal(forbidden.status, 403);
+  for (const [track, expected] of [["french",fr.id],["arabic",ar.id]]) {
+    const data = await (await db.teacher(evaluationPath).GET(req(`/api/teacher/grades/evaluations?class_id=${cls}&subject_id=${math}&teaching_track=${track}`))).json();
+    assert.deepEqual(data.items.map(e => e.id), [expected]);
+  }
+});
+
+
+test("dated subject averages read only the selected official snapshot and teaching, without a period", async () => {
+  const db = setup("CM1");
+  for (const [code,track,ratio] of [["DEC","french",0.8],["DEC","arabic",0.3],["NIV1","french",1]]) await publish(db, code, track, ratio);
+  const api = db.teacher("src/app/api/teacher/grades/averages/route.ts");
+  const response = await api.GET(req(`/api/teacher/grades/averages?class_id=${cls}&subject_id=${math}&primary_event_code=DEC&teaching_track=french&academic_year=${year}`));
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  const data = await response.json();
+  assert.equal(data.items.find(row => row.student_id === pupil0).average, 16, "existing /20 display = 40/50, unrelated internal marks ignored");
+  assert.equal(data.meta.grades_source, "grade_published_scores");
+  assert.equal(data.meta.evaluations, 1);
+});
+
+test("Franco-Arabic teacher publication queues only the official parent snapshot once", async () => {
+  const db = setup();
+  const ev = await create(db, "DEC", "arabic");
+  const saved = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts").POST(req("/api/teacher/grades/scores/bulk", { evaluation_id: ev.id, items: [{ student_id: pupil0, score: 0 }] }));
+  assert.equal(saved.status, 200);
+  // Only dispatch transport is isolated; real publication and queue code run.
+  const overrides = new Map([["src/lib/push-dispatch.ts", "export async function triggerPushDispatch(){ return true; }"]]);
+  const load = createFixtureRouteLoader(db, teacher, overrides);
+  const stored = db.tables.grade_evaluations.find(row => row.id === ev.id);
+  stored.class = { ...db.tables.classes[0] }; stored.subject = { id: math, name: "Mathématiques" };
+  db.tables.students = [db.tables.class_enrollments[0].students];
+  db.tables.student_guardians = [{ id: "guardian", student_id: pupil0, guardian_profile_id: "parent", notifications_enabled: true }];
+  const published = await load(evaluationPath).PATCH(req("/api/teacher/grades/evaluations", { evaluation_id: ev.id, is_published: true }, "PATCH"));
+  assert.equal(published.status, 200, JSON.stringify(await published.clone().json()));
+  assert.equal(db.tables.grade_evaluations[0].publication_status, "published", "no admin approval despite legacy validation=true");
+  assert.equal(db.tables.notifications_queue.length, 1);
+  const notification = db.tables.notifications_queue[0];
+  assert.equal(notification.profile_id, "parent");
+  assert.equal(notification.payload.score, 0);
+  assert.equal(notification.payload.evaluation.label, "Composition de décembre");
+  assert.equal(notification.payload.evaluation.teaching_track, "arabic");
+  await load("src/lib/push/grades.ts").queueGradeNotificationsForEvaluation(ev.id);
+  assert.equal(db.tables.notifications_queue.length, 1, "an official snapshot already queued is not duplicated");
+});
+
+
+test("concurrent creation cannot duplicate the same event/subject/teaching", async () => {
+  const db = setup();
+  const [first,second] = await Promise.all([create(db,"DEC"),create(db,"DEC")]);
+  assert.equal(first.id,second.id);
+  assert.equal(db.tables.grade_evaluations.length,1);
+});
+
+test("French-only primary retains its existing administrator validation policy", async () => {
+  const db = setup("CP1",false), ev = await create(db,"DEC");
+  const result = await db.teacher(evaluationPath).PATCH(req("/api/teacher/grades/evaluations",{evaluation_id:ev.id,is_published:true},"PATCH"));
+  assert.equal(result.status,200,JSON.stringify(await result.clone().json()));
+  assert.equal(db.tables.grade_evaluations[0].publication_status,"submitted");
+  assert.equal(db.tables.grade_published_scores.length,0);
+});

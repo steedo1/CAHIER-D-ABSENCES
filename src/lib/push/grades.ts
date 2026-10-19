@@ -1,3 +1,4 @@
+import { parsePrimaryEventTitle, readPrimaryEventsCatalog } from "@/lib/grades/primary-evaluation-events";
 // src/lib/push/grades.ts
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { triggerPushDispatch } from "@/lib/push-dispatch";
@@ -128,6 +129,7 @@ export async function queueGradeNotificationsForEvaluation(
       subject_component_id,
       eval_date,
       eval_kind,
+      title,
       scale,
       coeff,
       is_published,
@@ -137,6 +139,7 @@ export async function queueGradeNotificationsForEvaluation(
         id,
         label,
         level,
+        academic_year,
         institution_id
       ),
       subject:subjects!grade_evaluations_subject_id_fkey (
@@ -201,7 +204,14 @@ export async function queueGradeNotificationsForEvaluation(
   const classLabel = evalRow.class.label || "Classe";
   const subjectName = evalRow.subject?.name || "Note";
   const evalDateFr = formatDateFr(evalRow.eval_date);
-  const evalKindText = evalKindLabel(evalRow.eval_kind);
+  const marker = parsePrimaryEventTitle(ev.title);
+  let primaryLabel: string | null = marker?.kind === "homework" ? "Devoir" : null;
+  if (marker && marker.kind !== "homework" && klass.academic_year) {
+    const school = await srv.from("institutions").select("settings_json").eq("id", institutionId).maybeSingle();
+    primaryLabel = readPrimaryEventsCatalog(school.data?.settings_json).years[klass.academic_year]?.events
+      .find(event => event.code === marker.code && event.kind === marker.kind)?.label || null;
+  }
+  const evalKindText = primaryLabel || evalKindLabel(evalRow.eval_kind);
 
   console.log("[push/grades] queue depuis snapshot officiel", {
     evaluationId: cleanEvaluationId,
@@ -395,7 +405,7 @@ export async function queueGradeNotificationsForEvaluation(
       body = `${subjectName} • ${classLabel} • ${evalKindText} du ${evalDateFr} manqué`;
     } else {
       title = `Nouvelle note — ${studentName}`;
-      body = `${subjectName} • ${classLabel} • ${score}/${scale}`;
+      body = `${subjectName} • ${classLabel} • ${score}/${scale}${primaryLabel ? ` • ${primaryLabel} du ${evalDateFr}` : ""}`;
     }
 
     const payloadBase = {
@@ -420,6 +430,7 @@ export async function queueGradeNotificationsForEvaluation(
         id: evalRow.id,
         date: evalRow.eval_date,
         kind: evalRow.eval_kind,
+        ...(primaryLabel ? { label: primaryLabel, teaching_track: marker?.track || null } : {}),
         scale,
         coeff,
       },

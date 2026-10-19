@@ -19,15 +19,13 @@ const KIND_LABELS: Record<PrimaryEventKind, string> = {
 const TRACK_LABELS: Record<PrimaryTrack, string> = {
   french: "Français", arabic: "Arabe",
 };
-let newId = 0;
-function blank(kind: PrimaryEventKind): PrimaryEvent {
-  newId += 1;
+function blank(kind: PrimaryEventKind, tracks: PrimaryTrack[]): PrimaryEvent {
   return {
-    code: "EVAL_" + newId,
+    code: "E_" + crypto.randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase(),
     label: kind === "passage" ? "Composition de passage" :
-      kind === "official" ? "Composition de décembre" :
+      kind === "official" ? "Composition officielle" :
       kind === "mock" ? "Examen blanc" : "Évaluation de niveau",
-    kind, date: "", tracks: ["french", "arabic"],
+    kind, date: "", tracks,
     levels: kind === "mock" ? ["CM2"] : kind === "passage" ?
       ["CP1", "CP2", "CE1", "CE2", "CM1"] : [...PRIMARY_LEVELS],
     printBulletin: true,
@@ -35,6 +33,8 @@ function blank(kind: PrimaryEventKind): PrimaryEvent {
 }
 export default function PrimaryEvaluationEventsEditor({ academicYear }: { academicYear: string }) {
   const [events, setEvents] = useState<PrimaryEvent[]>([]);
+  const [revision, setRevision] = useState("");
+  const [tracks, setTracks] = useState<PrimaryTrack[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -42,13 +42,15 @@ export default function PrimaryEvaluationEventsEditor({ academicYear }: { academ
     if (!academicYear) { setEvents([]); return; }
     const controller = new AbortController();
     setLoading(true);
+    setEvents([]);
+    setRevision("");
     setMessage("");
     fetch("/api/admin/institution/primary-evaluation-events?academic_year=" +
       encodeURIComponent(academicYear), { signal: controller.signal, cache: "no-store" })
       .then(async response => {
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || "Chargement impossible");
-        if (!controller.signal.aborted) setEvents(data.events || []);
+        if (!controller.signal.aborted) { setEvents(data.events || []); setTracks(data.tracks || []); setRevision(data.revision || ""); }
       })
       .catch(error => {
         if (!controller.signal.aborted) setMessage(error.message || "Chargement impossible");
@@ -79,11 +81,12 @@ export default function PrimaryEvaluationEventsEditor({ academicYear }: { academ
     try {
       const response = await fetch("/api/admin/institution/primary-evaluation-events", {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ academic_year: academicYear, events: result.events }),
+        body: JSON.stringify({ academic_year: academicYear, revision, events: result.events }),
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "Enregistrement impossible");
       setEvents(data.events);
+      setRevision(data.revision);
       setMessage("Calendrier des évaluations enregistré. Les devoirs ordinaires gardent une date libre.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Enregistrement impossible");
@@ -99,12 +102,8 @@ export default function PrimaryEvaluationEventsEditor({ academicYear }: { academ
       </p>
     </div>
     {loading ? <p>Chargement…</p> : <div className="space-y-3">
-      {events.map((event, index) => <div key={index} className="space-y-3 rounded-xl border p-3">
-        <div className="grid gap-3 md:grid-cols-4">
-          <label className="text-xs font-medium">Code unique
-            <input className="mt-1 w-full rounded border p-2" value={event.code}
-              onChange={e => change(event.code, { code: e.target.value.toUpperCase() })}/>
-          </label>
+      {events.map((event, index) => <div key={event.code} className="space-y-3 rounded-xl border p-3">
+        <div className="grid gap-3 md:grid-cols-3">
           <label className="text-xs font-medium md:col-span-1">Libellé
             <input className="mt-1 w-full rounded border p-2" value={event.label}
               onChange={e => change(event.code, { label: e.target.value })}/>
@@ -127,7 +126,7 @@ export default function PrimaryEvaluationEventsEditor({ academicYear }: { academ
         </div>
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <span className="font-medium">Enseignement :</span>
-          {(["french", "arabic"] as PrimaryTrack[]).map(track =>
+          {tracks.map(track =>
             <label key={track} className="inline-flex items-center gap-1">
               <input type="checkbox" checked={event.tracks.includes(track)}
                 onChange={() => toggleTrack(event.code, track)}/>{TRACK_LABELS[track]}
@@ -161,20 +160,19 @@ export default function PrimaryEvaluationEventsEditor({ academicYear }: { academ
         <button key={kind} type="button" disabled={saving || loading || events.length >= 32}
           className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
           onClick={() => setEvents(rows => {
-            let candidate = blank(kind);
-            while (rows.some(row => row.code === candidate.code)) candidate = blank(kind);
+            let candidate = blank(kind, tracks);
+            while (rows.some(row => row.code === candidate.code)) candidate = blank(kind, tracks);
             return [...rows, candidate];
           })}>+ {KIND_LABELS[kind]}</button>)}
     </div>
-    <button type="button" disabled={!academicYear || loading || saving}
+    <button type="button" disabled={!academicYear || !revision || loading || saving}
       className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
       onClick={save}>{saving ? "Enregistrement…" : "Enregistrer les évaluations"}</button>
     {message && <p role="status" className="text-sm text-slate-700">{message}</p>}
     <p className="text-xs text-slate-500">
       Les compositions officielles seules entrent dans la moyenne annuelle ;
       la composition de passage compte double au CP1–CM1. Les évaluations internes
-      et examens blancs ne comptent pas dans ce calcul. La formule doit être
-      confirmée avec les textes 2026–2027 avant la mise en production.
+      et examens blancs ne comptent pas dans ce calcul. La composition de passage est réservée aux classes du CP1 au CM1.
     </p>
   </section>;
 }

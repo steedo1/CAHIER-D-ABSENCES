@@ -10,9 +10,11 @@ const require = createRequire(import.meta.url), { chromium } = require("playwrig
 const logo = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#06564c"/><text x="50" y="58" text-anchor="middle" fill="white" font-size="28">EPC</text></svg>');
 const names = ["Coran (récitation et mémorisation)","Langue arabe","Écriture et dictée","Expression orale","Expression écrite","Mathématiques","Lecture","Histoire","Géographie","Éducation islamique","Sciences","Poème"];
 const css = readFileSync("src/components/bulletins/FrancoArabicBulletin.module.css", "utf8") + readFileSync("src/app/admin/bulletins/modeles/print.css", "utf8");
-function model(index) {
+function model(index, annual = false) {
   const common = { cycle: "Primaire", level: "CM1", className: "CM1", year: "2026-2027", period: "Évaluation de novembre",
     denominator: 10, primarySubjectScores: true, generalAverage: 8, rank: index+1, classSize: 48,
+    ...(annual ? { primaryAnnual: { ordinary: ["Composition de décembre", "Composition de février", "Composition d’avril"].map(label => ({ label, average: 7 })),
+      ordinaryAverage: 7, passageAverage: 8, annualAverage: 7.67, decision: "ADMIS" } } : {}),
     teacherName: "INSTITUTEUR DE DÉMONSTRATION", directorName: "DIRECTEUR DE DÉMONSTRATION" };
   return { school: { name: "EPC CENTRE D’ÉTUDE ISLAMIQUE DE DIMBOKRO", code: "E020684", logoUrl: logo, isFrancoArabic: true,
     phone: "07 00 00 00 00", email: "ecole@example.invalid", address: "Quartier de démonstration, Dimbokro",
@@ -35,8 +37,8 @@ test("primary bulletins print the school logo and real metadata on one A4 per pu
   const browser = await chromium.launch({ headless: true, executablePath: process.env.CLASS_LIST_CHROMIUM_EXECUTABLE || undefined,
     args: ["--no-sandbox", "--disable-gpu", "--no-zygote"] });
   try {
-    for (const variant of ["french","arabic","combined"]) await t.test(variant, async () => {
-      const html = [0,1].map(index => renderToStaticMarkup(React.createElement(Component, { model: model(index), variant }))).join("");
+    for (const annual of [false, true]) for (const variant of ["french","arabic","combined"]) await t.test(`${variant}${annual ? "-passage" : ""}`, async () => {
+      const html = [0,1].map(index => renderToStaticMarkup(React.createElement(Component, { model: model(index, annual), variant }))).join("");
       const page = await browser.newPage();
       await page.setContent(`<!doctype html><html><meta charset="utf-8"><style>${css}</style><body><div class="fa-report-print-root specialized-print-root">${html}</div></body></html>`);
       await page.waitForFunction(() => [...document.images].every(img => img.complete && img.naturalWidth>0));
@@ -48,10 +50,18 @@ test("primary bulletins print the school logo and real metadata on one A4 per pu
       assert.match(result.text, /Instituteur/); assert.match(result.text, /8,00/);
       assert.equal((result.text.match(/ÉLÈVE\d/g)||[]).length, 2);
       assert.doesNotMatch(result.text, /Coef\./);
+      if (annual) {
+        assert.match(result.text, /Moyenne générale annuelle/);
+        assert.match(result.text, /7,67/);
+        assert.match(result.text, /Composition de février/);
+        assert.match(result.text, /ADMIS/);
+      }
+      const overflow = await page.evaluate(() => { const pages = [...document.querySelectorAll('article.page')]; return pages.length !== 2 || pages.some(node => node.getBoundingClientRect().height > 1124); });
+      assert.equal(overflow, false, "content stays inside the A4 page");
       assert.equal(result.text.includes("Directeur général"), variant === "combined");
       if (process.env.PRIMARY_PRINT_OUTPUT) {
         mkdirSync(process.env.PRIMARY_PRINT_OUTPUT, { recursive: true });
-        writeFileSync(`${process.env.PRIMARY_PRINT_OUTPUT}/bulletin-${variant}.pdf`, pdf);
+        writeFileSync(`${process.env.PRIMARY_PRINT_OUTPUT}/bulletin-${variant}${annual ? "-passage" : ""}.pdf`, pdf);
       }
       await page.close();
     });

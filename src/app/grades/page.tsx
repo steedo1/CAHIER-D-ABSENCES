@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Users,
   Plus,
@@ -501,7 +501,7 @@ export default function TeacherNotesPage() {
   const classOptions = useMemo(
     () =>
       teachClasses.map((tc) => ({
-        key: `${tc.class_id}|${tc.subject_id ?? ""}`,
+        key: `${tc.class_id}|${tc.subject_id ?? ""}|${tc.teaching_track ?? ""}`,
         label: `${tc.class_label}${
           tc.subject_name ? ` — ${tc.subject_name}` : ""
         }`,
@@ -529,6 +529,8 @@ export default function TeacherNotesPage() {
     return Array.from(groups.entries());
   }, [classOptions]);
   const [selKey, setSelKey] = useState<string>("");
+  const selectionKeyRef = useRef(selKey);
+  selectionKeyRef.current = selKey;
   const selected = useMemo(
     () => classOptions.find((o) => o.key === selKey)?.value || null,
     [classOptions, selKey]
@@ -545,6 +547,7 @@ export default function TeacherNotesPage() {
 
 
   const [primaryEvents, setPrimaryEvents] = useState<PrimaryEvent[]>([]);
+  const [publicationRequiresValidation, setPublicationRequiresValidation] = useState(false);
   const [primaryCatalogEnabled, setPrimaryCatalogEnabled] = useState(false);
   const [newPrimaryEventCode, setNewPrimaryEventCode] = useState("DEVOIR");
   const [gradePeriods, setGradePeriods] = useState<GradePeriod[]>([]);
@@ -598,6 +601,7 @@ export default function TeacherNotesPage() {
   }, [components]);
 
   function appendSelectedPeriod(params: URLSearchParams) {
+    if (isPrimaryProgram && selected?.teaching_track) params.set("teaching_track", selected.teaching_track);
     if (selectedPeriodId && !(isPrimaryProgram && primaryCatalogEnabled)) {
       params.set("grading_period_id", selectedPeriodId);
     }
@@ -623,6 +627,7 @@ export default function TeacherNotesPage() {
     }
 
     appendSelectedPeriod(params);
+    if (isPrimaryProgram && primaryCatalogEnabled) params.set("primary_event_code", newPrimaryEventCode);
 
     // Dès qu'une évaluation est publiée, l'affichage des moyennes doit être
     // aligné sur le bulletin et le compte-classe : on lit donc la source officielle.
@@ -663,11 +668,12 @@ export default function TeacherNotesPage() {
   const [newScale, setNewScale] = useState<number>(20);
   const [newCoeff, setNewCoeff] = useState<number>(1);
   useEffect(() => {
+    setMode("saisie");
     setNewType("devoir");
     setNewPrimaryEventCode("DEVOIR");
     setPrimaryEvents([]);
-    setPrimaryCatalogEnabled(false);
-  }, [selected?.class_id, selected?.school_cycle]);
+    setPrimaryCatalogEnabled(isPrimaryProgram);
+  }, [selected?.class_id, selected?.subject_id, selected?.teaching_track, selected?.school_cycle]);
   const selectedPrimaryEvent = primaryEvents.find(event => event.code === newPrimaryEventCode) || null;
 
   // Primary evaluation scales are set by the school for each level and teaching.
@@ -697,7 +703,7 @@ export default function TeacherNotesPage() {
         setTeachClasses(arr);
         if (!selKey && arr.length) {
           const first = arr[0];
-          setSelKey(`${first.class_id}|${first.subject_id ?? ""}`);
+          setSelKey(`${first.class_id}|${first.subject_id ?? ""}|${first.teaching_track ?? ""}`);
         }
       } catch {
         setTeachClasses([]);
@@ -811,6 +817,8 @@ export default function TeacherNotesPage() {
       setActiveEvalId(null);
       return;
     }
+    let cancelled = false;
+    setRoster([]); setEvaluations([]); setGrades({}); setChanged({}); setActiveEvalId(null);
     (async () => {
       try {
         setLoading(true);
@@ -819,11 +827,12 @@ export default function TeacherNotesPage() {
         // 1) Roster
         const rosterUrl = `/api/teacher/roster?class_id=${encodeURIComponent(
           selected.class_id
-        )}`;
+        )}` + (isPrimaryProgram ? `&teaching_track=${selected.teaching_track || ""}` : "");
         const jRoster: any = await gradesGetJson(
           rosterUrl,
-          gradesRosterKey("teacher", selected.class_id)
+          gradesRosterKey("teacher", selected.class_id) + (isPrimaryProgram ? ":" + selected.teaching_track : "")
         );
+        if (cancelled) return;
         const ros = (jRoster.items || []) as RosterItem[];
         setRoster(ros);
 
@@ -843,10 +852,12 @@ export default function TeacherNotesPage() {
             "teacher",
             selected.class_id,
             selected.subject_id,
-            selectedPeriodId || null
+            (isPrimaryProgram ? "primary:" + selected.teaching_track : selectedPeriodId) || null
           )
         );
+        if (cancelled) return;
         setDirectGradePublication(jEvals.direct_publication === true);
+        setPublicationRequiresValidation(jEvals.publication_requires_admin_validation === true);
         setPrimaryEvents(Array.isArray(jEvals.primary_events) ? jEvals.primary_events : []);
         setPrimaryCatalogEnabled(jEvals.primary_event_catalog_enabled === true);
         const evals = (jEvals.items || []) as Evaluation[];
@@ -873,9 +884,11 @@ export default function TeacherNotesPage() {
             for (const it of items) g[ev.id][it.student_id] = it.score;
           })
         );
+        if (cancelled) return;
         setGrades(g);
         setChanged({});
       } catch (e: any) {
+        if (cancelled) return;
         setMsg(e?.message || "Échec de chargement.");
         setRoster([]);
         setEvaluations([]);
@@ -883,10 +896,11 @@ export default function TeacherNotesPage() {
         setChanged({});
         setActiveEvalId(null);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, [selected?.class_id, selected?.subject_id, selectedPeriodId, primaryCatalogEnabled]);
+    return () => { cancelled = true; };
+  }, [selected?.class_id, selected?.subject_id, selected?.teaching_track, selectedPeriodId, primaryCatalogEnabled]);
 
   /* ==========================================
      Verrouillage (lecture statut)
@@ -1262,6 +1276,7 @@ export default function TeacherNotesPage() {
       return;
     }
 
+    const creationSelection = selKey;
     setCreating(true);
     setMsg(null);
     try {
@@ -1274,7 +1289,7 @@ export default function TeacherNotesPage() {
         eval_kind: isPrimaryProgram && primaryCatalogEnabled
           ? (selectedPrimaryEvent?.kind === "official" || selectedPrimaryEvent?.kind === "passage" ? "composition" : "devoir")
           : newType,
-        ...(isPrimaryProgram && primaryCatalogEnabled ? { primary_event_code: newPrimaryEventCode } : {}),
+        ...(isPrimaryProgram && primaryCatalogEnabled ? { primary_event_code: newPrimaryEventCode, teaching_track: selected.teaching_track } : {}),
         scale: newScale,
         // The subject coefficient is configured by the school. In primary
         // classes, evaluations have equal weight, not a teacher-picked coefficient.
@@ -1289,13 +1304,19 @@ export default function TeacherNotesPage() {
       if (!r.ok || !j?.ok)
         throw new Error(j?.error || "Échec de création de l’évaluation.");
 
+      if (selectionKeyRef.current !== creationSelection) return;
       const created = j?.item as Evaluation;
+      if (evaluations.some(item => item.id === created.id)) {
+        setActiveEvalId(created.id); setMsg("Cette évaluation est déjà présente dans le cahier."); return;
+      }
       setEvaluations((prev) => {
         const next = [...prev, created];
         next.sort((a, b) => a.eval_date.localeCompare(b.eval_date));
         return next;
       });
-      setGrades((prev) => ({ ...prev, [created.id]: {} }));
+      const existingScores = j.reused ? await gradesGetJson(`/api/teacher/grades/scores?evaluation_id=${encodeURIComponent(created.id)}`, gradesScoresKey("teacher", created.id)) : null;
+      if (selectionKeyRef.current !== creationSelection) return;
+      setGrades((prev) => ({ ...prev, [created.id]: Object.fromEntries((existingScores?.items || []).map((row: { student_id: string; score: number | null }) => [row.student_id, row.score])) }));
 
       // Sur mobile, on se place tout de suite sur cette nouvelle note
       setActiveEvalId(created.id);
@@ -1650,6 +1671,9 @@ export default function TeacherNotesPage() {
 
   async function openAverages() {
     if (!selected) return;
+    if (isPrimaryProgram && primaryCatalogEnabled && newPrimaryEventCode === "DEVOIR") {
+      setMsg("Choisissez une évaluation programmée pour consulter ses résultats."); return;
+    }
     if (!isOnline) {
       setMsg("Le calcul officiel des moyennes nécessite une connexion Internet.");
       return;
@@ -2357,7 +2381,8 @@ export default function TeacherNotesPage() {
     for (const ev of evaluations) {
       const eventMarker = parsePrimaryEventTitle(ev.title);
       if (eventMarker) {
-        map[ev.id] = primaryEvents.find(event => event.code === eventMarker.code)?.label || eventMarker.code;
+        map[ev.id] = eventMarker.kind === "homework" ? "DEVOIR " + ev.eval_date.split("-").reverse().join("/")
+          : primaryEvents.find(event => event.code === eventMarker.code)?.label || eventMarker.code;
         continue;
       }
       counters[ev.eval_kind] += 1;
@@ -2542,9 +2567,10 @@ export default function TeacherNotesPage() {
               <div>
                 <Select
                   value={isPrimaryProgram && primaryCatalogEnabled ? newPrimaryEventCode : newType}
-                  onChange={(e) => isPrimaryProgram && primaryCatalogEnabled
-                    ? setNewPrimaryEventCode(e.target.value)
-                    : setNewType(e.target.value as EvalKind)}
+                  onChange={(e) => {
+                    if (isPrimaryProgram && primaryCatalogEnabled) { setNewPrimaryEventCode(e.target.value); setMode("saisie"); }
+                    else setNewType(e.target.value as EvalKind);
+                  }}
                   aria-label="Type d’évaluation"
                   disabled={selectedPeriodClosed}
                 >
@@ -2738,21 +2764,18 @@ export default function TeacherNotesPage() {
             <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-3">
               <h2 className="text-sm font-semibold text-emerald-950">Publication des évaluations</h2>
               <p className="mt-1 text-xs text-emerald-900">
-                Enregistrez les notes, puis publiez directement chaque évaluation. Aucune validation de l’administration n’est nécessaire.
+                {directGradePublication ? "Enregistrez les notes, puis publiez directement chaque évaluation. Aucune validation de l’administration n’est nécessaire."
+                  : publicationRequiresValidation ? "Enregistrez les notes, puis soumettez chaque évaluation à la direction selon la politique de votre établissement."
+                  : "Enregistrez les notes, puis publiez chaque évaluation pour les bulletins et les parents."}
               </p>
-              {!directGradePublication && (
-                <p role="alert" className="mt-2 text-xs font-semibold text-amber-800">
-                  La publication directe n’est pas confirmée par le serveur. Vérifiez la configuration de cet établissement.
-                </p>
-              )}
-              {directGradePublication && evaluations.length > 0 && (
+              {evaluations.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {evaluations.map((ev) => (
                     <button
                       type="button"
                       key={ev.id}
                       onClick={() => togglePublish(ev)}
-                      disabled={isEvaluationPublished(ev) || !!publishBusy[ev.id] || !isOnline ||
+                      disabled={isEvaluationPublished(ev) || (!directGradePublication && isEvaluationSubmitted(ev)) || !!publishBusy[ev.id] || !isOnline ||
                         selectedPeriodClosed || !!Object.keys(changed[ev.id] || {}).length}
                       className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 disabled:cursor-not-allowed disabled:opacity-50"
                       title={Object.keys(changed[ev.id] || {}).length
@@ -2760,7 +2783,7 @@ export default function TeacherNotesPage() {
                         : undefined}
                     >
                       {labelByEvalId[ev.id] || "Évaluation"} : {isEvaluationPublished(ev)
-                        ? "Publiée" : publishBusy[ev.id] ? "Publication…" : "Publier"}
+                        ? "Publiée" : isEvaluationSubmitted(ev) && !directGradePublication ? "Soumise" : publishBusy[ev.id] ? "Publication…" : publicationRequiresValidation ? "Soumettre" : "Publier"}
                     </button>
                   ))}
                 </div>
@@ -3203,13 +3226,13 @@ export default function TeacherNotesPage() {
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div className="text-sm text-slate-700">
-              Moyennes de la classe (pondérées par coeff et sous-matières) •{" "}
+              {isPrimaryProgram ? `Résultats de ${selectedPrimaryEvent?.label || "l’évaluation"} — équivalence /20` : "Moyennes de la classe (pondérées par coeff et sous-matières)"} •{" "}
               {roster.length} élèves
             </div>
             <div className="flex items-center gap-2">
               <Button
                 onClick={saveBonuses}
-                disabled={loadingAvg || selectedPeriodClosed || !isOnline}
+                disabled={isPrimaryProgram || loadingAvg || selectedPeriodClosed || !isOnline}
               >
                 <Save className="h-4 w-4" /> Enregistrer bonus
               </Button>
@@ -3328,7 +3351,7 @@ export default function TeacherNotesPage() {
                                 }));
                               }}
                               aria-label={`Bonus ${row.student.full_name}`}
-                              disabled={selectedPeriodClosed || !isOnline}
+                              disabled={isPrimaryProgram || selectedPeriodClosed || !isOnline}
                               title={
                                 !isOnline
                                   ? CLOUD_ONLY_GRADE_WRITE_MESSAGE
@@ -3460,7 +3483,7 @@ export default function TeacherNotesPage() {
                             }));
                           }}
                           aria-label={`Bonus ${row.student.full_name}`}
-                          disabled={selectedPeriodClosed || !isOnline}
+                          disabled={isPrimaryProgram || selectedPeriodClosed || !isOnline}
                           title={
                             !isOnline
                               ? CLOUD_ONLY_GRADE_WRITE_MESSAGE
@@ -3523,7 +3546,7 @@ export default function TeacherNotesPage() {
                     {evaluations.map((ev) => {
                       const eventMarker = parsePrimaryEventTitle(ev.title);
                       const typeLabel = eventMarker
-                        ? eventMarker.kind === "internal" ? "Évaluation interne" : eventMarker.kind === "mock" ? "Examen blanc" : eventMarker.kind === "passage" ? "Composition de passage" : "Composition officielle"
+                        ? eventMarker.kind === "homework" ? "Devoir" : eventMarker.kind === "internal" ? "Évaluation interne" : eventMarker.kind === "mock" ? "Examen blanc" : eventMarker.kind === "passage" ? "Composition de passage" : "Composition officielle"
                         : ev.eval_kind === "composition"
                           ? "Composition"
                           : ev.eval_kind === "devoir"
