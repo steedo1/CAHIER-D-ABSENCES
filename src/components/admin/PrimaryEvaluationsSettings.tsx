@@ -48,7 +48,7 @@ export default function PrimaryEvaluationsSettings({ academicYear }: { academicY
   function add(kind: PrimaryEventKind) {
     setEvents(prev => [...prev, {
       id: crypto.randomUUID(), kind, label:LABELS[kind], date:"",
-      levels:initialLevels(kind), bulletin:kind !== "composition" ? true : true,
+      levels:initialLevels(kind), bulletin:true,
     }]);
   }
   function edit(id: string, patch: Partial<PrimaryEvaluationEvent>) {
@@ -117,7 +117,7 @@ export default function PrimaryEvaluationsSettings({ academicYear }: { academicY
                     className="mt-1 block rounded-lg border p-2 text-sm" />
                 </label>
                 <label className="flex items-center gap-2 self-end pb-2 text-sm">
-                  <input type="checkbox" checked={item.bulletin}
+                  <input type="checkbox" checked={item.bulletin} disabled={item.kind !== "interne"}
                     onChange={e => edit(item.id,{ bulletin:e.target.checked })} />
                   Bulletin
                 </label>
