@@ -127,7 +127,10 @@ export function parsePrimaryEventTitle(title: unknown): { kind: PrimaryEventKind
   if (typeof title !== "string") return null;
   const match = /^MCPE:([OPIM]):([A-Z][A-Z0-9_-]{0,19})$/.exec(title);
   if (!match) return null;
-  const kind: PrimaryEventKind = { O: "official", P: "passage", I: "internal", M: "mock" }[match[1] as "O"|"P"|"I"|"M"];
+  const kinds: Record<"O" | "P" | "I" | "M", PrimaryEventKind> = {
+    O: "official", P: "passage", I: "internal", M: "mock",
+  };
+  const kind = kinds[match[1] as "O" | "P" | "I" | "M"];
   return { kind, code: match[2] };
 }
 
