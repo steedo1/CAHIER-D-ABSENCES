@@ -21,6 +21,7 @@ import SchoolCoefficientsClassicWorkflow from "@/components/admin/SchoolCoeffici
 import SchoolBulletinModelPicker from "@/components/admin/SchoolBulletinModelPicker";
 import SchoolGradingPeriodsEditor from "@/components/admin/SchoolGradingPeriodsEditor";
 import PrimaryEvaluationEventsEditor from "@/components/admin/PrimaryEvaluationEventsEditor";
+import { getEvaluationSettingsScope } from "@/lib/grades/evaluation-settings-scope";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
 } from "@/components/admin/EducationScopeSwitcher";
@@ -747,6 +748,11 @@ export default function AdminSettingsPage() {
   const schoolNavigation = useSchoolNavigation();
   const hasSpecializedSettings = Boolean(schoolNavigation);
   const hasPrimaryPrograms = schoolNavigation?.settings.enabledCycles.includes("primary") === true;
+  const selectedSchoolCycle = schoolNavigation?.selection.cycle ?? "all";
+  const evaluationSettingsScope = getEvaluationSettingsScope(
+    selectedSchoolCycle,
+    schoolNavigation?.settings.enabledCycles ?? [],
+  );
   const hasBilingualPrograms = Boolean(
     schoolNavigation && isBilingualSchool(schoolNavigation.settings),
   );
@@ -3792,8 +3798,15 @@ export default function AdminSettingsPage() {
           <>
             {hasSpecializedSettings ? (
               <div className="space-y-6">
-                {hasPrimaryPrograms && <PrimaryEvaluationEventsEditor key={selectedAcademicYear} academicYear={selectedAcademicYear} />}
-                <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} hidePrimary={hasPrimaryPrograms} />
+                {evaluationSettingsScope.showPrimaryEvents && <PrimaryEvaluationEventsEditor key={selectedAcademicYear} academicYear={selectedAcademicYear} />}
+                {evaluationSettingsScope.showGradingPeriods && (
+                  <SchoolGradingPeriodsEditor
+                    key={selectedSchoolCycle}
+                    academicYear={selectedAcademicYear}
+                    hidePrimary={hasPrimaryPrograms}
+                    cycleScope={selectedSchoolCycle}
+                  />
+                )}
               </div>
             ) : (
               <>
