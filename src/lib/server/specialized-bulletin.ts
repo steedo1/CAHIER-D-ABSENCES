@@ -90,7 +90,7 @@ export async function loadSpecializedBulletin(input: {
     const eventsMode = cycle === "primary" && primaryCatalog.length > 0;
     const eventCode = searchParams.get("primary_event_code");
     const primaryEvent = eventsMode ? primaryCatalog.find(event =>
-      event.code === eventCode && event.levels.includes(level.replace(/[\\s.-]/g, "").toUpperCase() as any)) : null;
+      event.code === eventCode && event.levels.includes(level.replace(/[\s.-]/g, "").toUpperCase() as any)) : null;
     if (eventsMode && (!primaryEvent || (primaryEvent.kind === "internal" && !primaryEvent.printBulletin))) {
       return json({ ok: false, error: "PRIMARY_EVENT_NOT_APPLICABLE_TO_CLASS" }, 400);
     }
@@ -284,7 +284,7 @@ export async function loadSpecializedBulletin(input: {
     // Aucun devoir, examen blanc ni évaluation interne ne peut alimenter la MGA.
     const passageMode = cycle === "primary" && primaryEvent?.kind === "passage";
     const applicableOrdinaryEvents = passageMode ? primaryCatalog.filter(event =>
-      event.kind === "official" && event.levels.includes(level.replace(/[\\s.-]/g, "").toUpperCase() as any)) : [];
+      event.kind === "official" && event.levels.includes(level.replace(/[\s.-]/g, "").toUpperCase() as any)) : [];
     const [annualEvaluations, annualPublished] = passageMode
       ? await Promise.all([
         pages<Evaluation>((from, to) => service.from("grade_evaluations")
@@ -307,7 +307,7 @@ export async function loadSpecializedBulletin(input: {
           score.publication_version !== evalRow.publication_version || !score.subject_id ||
           evalRow.subject_id !== score.subject_id || score.score === null || !students.has(score.student_id)) continue;
       const configured = primaryCatalog.find(event => event.code === marker.code && event.kind === marker.kind);
-      if (!configured || !configured.levels.includes(level.replace(/[\\s.-]/g, "").toUpperCase() as any)) continue;
+      if (!configured || !configured.levels.includes(level.replace(/[\s.-]/g, "").toUpperCase() as any)) continue;
       const eventTrack = trackBySubject.get(score.subject_id) ?? null;
       const entry: OfficialEvaluationScore = {
         studentId: score.student_id, evaluationId: score.evaluation_id,
