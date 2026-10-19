@@ -15,6 +15,7 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/sch
 import { primarySubjectScale, primarySubjectTeachingTrack } from "@/lib/grades/primary-subject-scale";
 
 import { encodePrimaryEvaluation, isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
+import { primaryEventForClass, primaryEventIdFromTitle, primaryEventTitle, readPrimaryEvents } from "@/lib/grades/primary-evaluation-events";
 import { classSubjectIds } from "@/lib/school-class-subjects";
 
 import {
@@ -25,7 +26,7 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type EvalKind = "devoir" | "composition" | "interro_ecrite" | "interro_orale";
+type EvalKind = "devoir" | "composition" | "evaluation_interne" | "interro_ecrite" | "interro_orale";
 type Role =
   | "super_admin"
   | "admin"
@@ -53,6 +54,7 @@ type EvalRow = {
   eval_date: string;
   eval_kind: EvalKind;
   title?: string | null;
+  primary_event_id?: string | null;
   scale: number;
   coeff: number;
   is_published: boolean;
@@ -733,10 +735,15 @@ export async function GET(req: NextRequest) {
     }
 
     const schoolCtx = await primarySchoolContext(srv, institutionId, classId);
-    const items = ((data ?? []) as unknown as EvalRow[]).map(item =>
-      schoolCtx.isPrimary && isPrimaryComposition(item)
-        ? { ...item, eval_kind: "composition" as const } : item
-    );
+    const configuredEvents = schoolCtx.isPrimary ? readPrimaryEvents(schoolCtx.settings, schoolCtx.year) : [];
+    const items = ((data ?? []) as unknown as EvalRow[]).map(item => {
+      if (!schoolCtx.isPrimary) return item;
+      const id = primaryEventIdFromTitle(item.title);
+      const event = id ? primaryEventForClass(configuredEvents, id, schoolCtx.level) : null;
+      if (event) return { ...item, primary_event_id:id, title:event.label,
+        eval_kind: event.kind === "interne" ? "evaluation_interne" as const : "composition" as const };
+      return isPrimaryComposition(item) ? { ...item, eval_kind: "composition" as const } : item;
+    });
 
     const direct_publication = await requiresDirectGradePublication(srv, institutionId);
     return NextResponse.json({ items, direct_publication }, { status: 200 });
@@ -768,6 +775,7 @@ export async function POST(req: NextRequest) {
       eval_kind,
       scale,
       coeff,
+      primary_event_id,
     } = body as {
       class_id: string;
       subject_id?: string | null;
@@ -777,6 +785,7 @@ export async function POST(req: NextRequest) {
       gradingPeriodId?: string | null;
       eval_date: string;
       eval_kind: EvalKind;
+      primary_event_id?: string;
       scale: number;
       coeff: number;
     };
@@ -828,8 +837,8 @@ export async function POST(req: NextRequest) {
     let storedTitle: string | null = null;
     let primaryScale: number | null = null;
     if (schoolCtx.isPrimary) {
-      if (eval_kind !== "devoir" && eval_kind !== "composition") {
-        return NextResponse.json({ ok: false, error: "primary_eval_kind_not_allowed" }, { status: 400 });
+      if (!primary_event_id && eval_kind !== "devoir") {
+        return NextResponse.json({ ok: false, error: "primary_event_required" }, { status: 400 });
       }
       const track = globalId
         ? primarySubjectTeachingTrack(schoolCtx.settings, schoolCtx.year, class_id, globalId) : null;
@@ -858,9 +867,23 @@ export async function POST(req: NextRequest) {
       if (!Number.isFinite(scale) || scale !== primaryScale || coeff !== 1) {
         return NextResponse.json({ ok: false, error: "primary_scale_or_weight_mismatch" }, { status: 400 });
       }
-      const encoded = encodePrimaryEvaluation(eval_kind);
-      storedKind = encoded.eval_kind;
-      storedTitle = encoded.title;
+      if (primary_event_id) {
+        const event = primaryEventForClass(
+          readPrimaryEvents(schoolCtx.settings, schoolCtx.year),
+          primary_event_id, schoolCtx.level
+        );
+        if (!event) return NextResponse.json({ ok:false,error:"primary_event_not_configured_for_class" },{ status:400 });
+        if (event.date !== eval_date) return NextResponse.json({ ok:false,error:"primary_event_date_mismatch" },{ status:400 });
+        if (event.kind === "interne" && eval_kind !== "evaluation_interne" ||
+          event.kind !== "interne" && eval_kind !== "composition")
+          return NextResponse.json({ ok:false,error:"primary_event_kind_mismatch" },{ status:400 });
+        storedKind = "interro_ecrite";
+        storedTitle = primaryEventTitle(event.id);
+      } else {
+        const encoded = encodePrimaryEvaluation("devoir");
+        storedKind = encoded.eval_kind;
+        storedTitle = encoded.title;
+      }
     } else {
       if (eval_kind !== "devoir" && eval_kind !== "interro_ecrite" && eval_kind !== "interro_orale") {
         return NextResponse.json({ ok: false, error: "invalid_eval_kind" }, { status: 400 });
@@ -929,8 +952,8 @@ export async function POST(req: NextRequest) {
     const explicitGradingPeriodId =
       normalizeUuidLike(gradingPeriodId) ??
       normalizeUuidLike(grading_period_id_raw);
-    if (schoolCtx.isPrimary && !explicitGradingPeriodId) {
-      return NextResponse.json({ ok: false, error: "primary_grading_period_required" }, { status: 400 });
+    if (schoolCtx.isPrimary && explicitGradingPeriodId) {
+      return NextResponse.json({ ok:false,error:"primary_has_no_grading_period" },{ status:400 });
     }
 
     let academic_year: string;
@@ -966,7 +989,7 @@ export async function POST(req: NextRequest) {
 
       grading_period_id = validated.period.id;
       resolvedPeriod = validated.period;
-    } else {
+    } else if (!schoolCtx.isPrimary) {
       grading_period_id = await autoDetectGradePeriodId(
         srv,
         institutionId,
@@ -1020,7 +1043,14 @@ export async function POST(req: NextRequest) {
     }
 
     const item = data as unknown as EvalRow;
-    const visible = schoolCtx.isPrimary && isPrimaryComposition(item)
+    const savedEventId = schoolCtx.isPrimary ? primaryEventIdFromTitle(item.title) : null;
+    const savedEvent = savedEventId ? primaryEventForClass(
+      readPrimaryEvents(schoolCtx.settings, schoolCtx.year), savedEventId, schoolCtx.level
+    ) : null;
+    const visible = savedEvent
+      ? { ...item, primary_event_id:savedEventId, title:savedEvent.label,
+          eval_kind: savedEvent.kind === "interne" ? "evaluation_interne" as const : "composition" as const }
+      : schoolCtx.isPrimary && isPrimaryComposition(item)
       ? { ...item, eval_kind: "composition" as const } : item;
 
     return NextResponse.json({ ok: true, item: visible }, { status: 200 });
