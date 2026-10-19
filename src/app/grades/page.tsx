@@ -1207,7 +1207,7 @@ export default function TeacherNotesPage() {
 
       const savedEvalIds = new Set(perEval.map(([evaluation_id]) => evaluation_id));
       if (isPrimaryProgram && directGradePublication) {
-        setEvaluations(prev => prev.map(ev => savedEvalIds.has(ev.id)
+        setEvaluations(prev => prev.map(ev => savedEvalIds.has(ev.id) && isEvaluationPublished(ev)
           ? { ...ev, is_published: true, publication_status: "published" }
           : ev));
       }
@@ -1251,7 +1251,7 @@ export default function TeacherNotesPage() {
         notes.length > 0
           ? `Notes enregistrées ✅ (${notes.join(" ; ")})`
           : isPrimaryProgram && directGradePublication
-            ? "Notes enregistrées et publiées automatiquement ✅"
+            ? "Notes enregistrées ✅ (les corrections de notes publiées sont republiées automatiquement)"
             : "Notes enregistrées ✅"
       );
     } catch (e: any) {
