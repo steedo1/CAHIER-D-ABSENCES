@@ -96,7 +96,7 @@ export async function PUT(request: NextRequest) {
   }
   catalog.years[year] = { events: validated.events };
   const newSettings = { ...access.settings, [PRIMARY_EVENTS_SETTINGS_KEY]: catalog };
-  const result = await writeSchoolSettings(access.service, access.institutionId, access.rawSettings, newSettings);
+  const result = await writeSchoolSettings(access.service, access.institutionId, access.rawSettings, newSettings, PRIMARY_EVENTS_SETTINGS_KEY);
   if ("error" in result) return json({ ok: false, error: result.error }, result.status);
   return json({ ok: true, academic_year: year, events: validated.events, revision: result.revision });
 }
