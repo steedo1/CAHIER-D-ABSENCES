@@ -2375,19 +2375,20 @@ export default function TeacherNotesPage() {
 
   // Libellés par type : DEVOIR1, DEVOIR2, IE1, IE2, IO1, IO2…
   const labelByEvalId: Record<string, string> = useMemo(() => {
-    const counters: Record<EvalKind, number> = {
-      devoir: 0,
-      composition: 0,
-      interro_ecrite: 0,
-      interro_orale: 0,
-    };
+    const counters: Record<string, number> = {};
     const map: Record<string, string> = {};
     for (const ev of evaluations) {
-      counters[ev.eval_kind] += 1;
-      const idx = counters[ev.eval_kind];
+      const kind = String(ev.eval_kind);
+      counters[kind] = (counters[kind] || 0) + 1;
+      const idx = counters[kind];
+      if (ev.primary_event_id && ev.title) {
+        map[ev.id] = ev.title;
+        continue;
+      }
       let prefix: string;
       if (ev.eval_kind === "devoir") prefix = "DEVOIR";
       else if (ev.eval_kind === "composition") prefix = "COMPOSITION";
+      else if (ev.eval_kind === "evaluation_interne") prefix = "ÉVAL. INTERNE";
       else if (ev.eval_kind === "interro_ecrite") prefix = "IE";
       else prefix = "IO";
       map[ev.id] = `${prefix}${idx}`;
