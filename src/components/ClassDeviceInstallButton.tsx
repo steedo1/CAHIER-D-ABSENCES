@@ -21,7 +21,7 @@ function isInstalled() {
 export default function ClassDeviceInstallButton() {
   const [installed, setInstalled] = React.useState(false);
   const [promptEvent, setPromptEvent] = React.useState<InstallPromptEvent | null>(null);
-  const [isIos, setIsIos] = React.useState(false);
+  const [platform, setPlatform] = React.useState<"ios" | "android" | "desktop">("desktop");
   const [showHelp, setShowHelp] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
 
@@ -29,7 +29,11 @@ export default function ClassDeviceInstallButton() {
     const mediaQuery = window.matchMedia("(display-mode: standalone)");
     const updateInstalled = () => setInstalled(isInstalled());
     updateInstalled();
-    setIsIos(/iphone|ipad|ipod/i.test(navigator.userAgent));
+    setPlatform(/iphone|ipad|ipod/i.test(navigator.userAgent)
+      ? "ios"
+      : /android/i.test(navigator.userAgent)
+        ? "android"
+        : "desktop");
 
     const onBeforeInstallPrompt = (event: Event) => {
       event.preventDefault();
@@ -102,9 +106,11 @@ export default function ClassDeviceInstallButton() {
             </button>
           </div>
           <p className="mt-2 text-xs leading-relaxed">
-            {isIos
+            {platform === "ios"
               ? "Sur iPhone ou iPad, ouvrez Mon Cahier dans Safari, puis Partager → Sur l’écran d’accueil."
-              : "Sur Android, ouvrez Mon Cahier dans Chrome, puis le menu ⋮ → Installer l’application (ou Ajouter à l’écran d’accueil)."}
+              : platform === "android"
+                ? "Sur Android, ouvrez Mon Cahier dans Chrome, puis le menu ⋮ → Installer l’application (ou Ajouter à l’écran d’accueil)."
+                : "Dans Chrome sur ordinateur, ouvrez le menu ⋮ → Installer Mon Cahier ou utilisez l’icône d’installation dans la barre d’adresse."}
           </p>
           <p className="mt-2 text-xs text-slate-500">
             Si l’option n’apparaît pas, vérifiez que le site est ouvert directement dans le navigateur et que l’application n’est pas déjà installée.
