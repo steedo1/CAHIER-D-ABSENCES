@@ -19,7 +19,7 @@ export type PrimaryEvaluationEvent = {
 export type PrimaryEventsSettings = { version: 1; years: Record<string, PrimaryEvaluationEvent[]> };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const YEAR = /^(\d{4})-(\d{4})$/;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v);
 
