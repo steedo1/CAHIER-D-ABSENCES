@@ -15,6 +15,7 @@ import {
   Unlock,
 } from "lucide-react";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
+import { parsePrimaryEventTitle, type PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import Link from "next/link";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
@@ -142,6 +143,7 @@ type Evaluation = {
   grading_period_id?: string | null;
   eval_date: string; // yyyy-mm-dd
   eval_kind: EvalKind;
+  title?: string | null;
   scale: 5 | 10 | 20 | 40 | 60; // on n’en crée que 5/10/20, mais on affiche tout ce qui existe
   coeff: number; // 0.25, 0.5, 1, 2, 3...
   is_published: boolean;
@@ -542,6 +544,9 @@ export default function TeacherNotesPage() {
       ? "Préscolaire" : "Secondaire";
 
 
+  const [primaryEvents, setPrimaryEvents] = useState<PrimaryEvent[]>([]);
+  const [primaryCatalogEnabled, setPrimaryCatalogEnabled] = useState(false);
+  const [newPrimaryEventCode, setNewPrimaryEventCode] = useState("DEVOIR");
   const [gradePeriods, setGradePeriods] = useState<GradePeriod[]>([]);
   const [loadingPeriods, setLoadingPeriods] = useState(false);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
@@ -561,8 +566,8 @@ export default function TeacherNotesPage() {
   }
 
   const selectedPeriodClosed = useMemo(
-    () => isPeriodClosed(selectedPeriod),
-    [selectedPeriod]
+    () => !(isPrimaryProgram && primaryCatalogEnabled) && isPeriodClosed(selectedPeriod),
+    [selectedPeriod, isPrimaryProgram, primaryCatalogEnabled]
   );
 
   /* -------- Données -------- */
@@ -593,7 +598,7 @@ export default function TeacherNotesPage() {
   }, [components]);
 
   function appendSelectedPeriod(params: URLSearchParams) {
-    if (selectedPeriodId) {
+    if (selectedPeriodId && !(isPrimaryProgram && primaryCatalogEnabled)) {
       params.set("grading_period_id", selectedPeriodId);
     }
     return params;
@@ -657,7 +662,13 @@ export default function TeacherNotesPage() {
   const [newType, setNewType] = useState<EvalKind>("devoir");
   const [newScale, setNewScale] = useState<number>(20);
   const [newCoeff, setNewCoeff] = useState<number>(1);
-  useEffect(() => { setNewType("devoir"); }, [selected?.class_id, selected?.school_cycle]);
+  useEffect(() => {
+    setNewType("devoir");
+    setNewPrimaryEventCode("DEVOIR");
+    setPrimaryEvents([]);
+    setPrimaryCatalogEnabled(false);
+  }, [selected?.class_id, selected?.school_cycle]);
+  const selectedPrimaryEvent = primaryEvents.find(event => event.code === newPrimaryEventCode) || null;
 
   // Primary evaluation scales are set by the school for each level and teaching.
   useEffect(() => {
@@ -836,6 +847,8 @@ export default function TeacherNotesPage() {
           )
         );
         setDirectGradePublication(jEvals.direct_publication === true);
+        setPrimaryEvents(Array.isArray(jEvals.primary_events) ? jEvals.primary_events : []);
+        setPrimaryCatalogEnabled(jEvals.primary_event_catalog_enabled === true);
         const evals = (jEvals.items || []) as Evaluation[];
         // tri par date croissante (stable)
         evals.sort((a, b) => a.eval_date.localeCompare(b.eval_date));
@@ -873,7 +886,7 @@ export default function TeacherNotesPage() {
         setLoading(false);
       }
     })();
-  }, [selected?.class_id, selected?.subject_id, selectedPeriodId]);
+  }, [selected?.class_id, selected?.subject_id, selectedPeriodId, primaryCatalogEnabled]);
 
   /* ==========================================
      Verrouillage (lecture statut)
@@ -1226,7 +1239,7 @@ export default function TeacherNotesPage() {
 
   async function addEvaluation() {
     if (!selected) return;
-    if (isPrimaryProgram && !selectedPeriodId) {
+    if (isPrimaryProgram && !primaryCatalogEnabled && !selectedPeriodId) {
       setMsg("Aucune période d’évaluation sélectionnée : utilisez Paramètres → Périodes d’évaluation.");
       return;
     }
@@ -1256,9 +1269,12 @@ export default function TeacherNotesPage() {
         class_id: selected.class_id,
         subject_id: selected?.subject_id ?? null, // ← important si "" arrive
         subject_component_id: hasComponents ? selectedComponentId : null, // ✅ sous-matière
-        grading_period_id: selectedPeriodId || null,
-        eval_date: newDate,
-        eval_kind: newType,
+        grading_period_id: isPrimaryProgram && primaryCatalogEnabled ? null : selectedPeriodId || null,
+        eval_date: selectedPrimaryEvent && isPrimaryProgram && primaryCatalogEnabled ? selectedPrimaryEvent.date : newDate,
+        eval_kind: isPrimaryProgram && primaryCatalogEnabled
+          ? (selectedPrimaryEvent?.kind === "official" || selectedPrimaryEvent?.kind === "passage" ? "composition" : "devoir")
+          : newType,
+        ...(isPrimaryProgram && primaryCatalogEnabled ? { primary_event_code: newPrimaryEventCode } : {}),
         scale: newScale,
         // The subject coefficient is configured by the school. In primary
         // classes, evaluations have equal weight, not a teacher-picked coefficient.
@@ -2339,6 +2355,11 @@ export default function TeacherNotesPage() {
     };
     const map: Record<string, string> = {};
     for (const ev of evaluations) {
+      const eventMarker = parsePrimaryEventTitle(ev.title);
+      if (eventMarker) {
+        map[ev.id] = primaryEvents.find(event => event.code === eventMarker.code)?.label || eventMarker.code;
+        continue;
+      }
       counters[ev.eval_kind] += 1;
       const idx = counters[ev.eval_kind];
       let prefix: string;
@@ -2349,7 +2370,7 @@ export default function TeacherNotesPage() {
       map[ev.id] = `${prefix}${idx}`;
     }
     return map;
-  }, [evaluations]);
+  }, [evaluations, primaryEvents]);
 
   /* ==========================================
      Colonne active sur mobile
@@ -2469,7 +2490,7 @@ export default function TeacherNotesPage() {
             </div>
           </div>
 
-          <div>
+          {!(isPrimaryProgram && primaryCatalogEnabled) && <div>
             <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
               <FileText className="h-3.5 w-3.5" />
               Période configurée
@@ -2499,7 +2520,7 @@ export default function TeacherNotesPage() {
                   )}`
                 : "Choisissez le trimestre ou la période à afficher."}
             </div>
-          </div>
+          </div>}
 
           {/* Création NOTE */}
           {isOnline && (
@@ -2509,7 +2530,7 @@ export default function TeacherNotesPage() {
                 hasComponents ? "md:grid-cols-6" : "md:grid-cols-5"
               }`}
             >
-              <div>
+              {(!isPrimaryProgram || !primaryCatalogEnabled || newPrimaryEventCode === "DEVOIR") && <div>
                 <Input
                   type="date"
                   value={newDate}
@@ -2517,18 +2538,27 @@ export default function TeacherNotesPage() {
                   aria-label="Date"
                   disabled={selectedPeriodClosed}
                 />
-              </div>
+              </div>}
               <div>
                 <Select
-                  value={newType}
-                  onChange={(e) => setNewType(e.target.value as EvalKind)}
+                  value={isPrimaryProgram && primaryCatalogEnabled ? newPrimaryEventCode : newType}
+                  onChange={(e) => isPrimaryProgram && primaryCatalogEnabled
+                    ? setNewPrimaryEventCode(e.target.value)
+                    : setNewType(e.target.value as EvalKind)}
                   aria-label="Type d’évaluation"
                   disabled={selectedPeriodClosed}
                 >
+                  {isPrimaryProgram && primaryCatalogEnabled ? <>
+                    <option value="DEVOIR">Devoir de classe (date libre)</option>
+                    {primaryEvents.map(event => <option key={event.code} value={event.code}>
+                      {event.label} — {formatDateFr(event.date)}
+                    </option>)}
+                  </> : <>
                   <option value="devoir">Devoir</option>
                   {isPrimaryProgram ? <option value="composition">Composition</option> : <>
                     <option value="interro_ecrite">Interrogation écrite</option>
                     <option value="interro_orale">Interrogation orale</option>
+                  </>}
                   </>}
                 </Select>
               </div>
@@ -2604,7 +2634,7 @@ export default function TeacherNotesPage() {
             <div className="mt-2">
               <Button
                 onClick={addEvaluation}
-                disabled={!selected || creating || selectedPeriodClosed || isPreschoolProgram || (isPrimaryProgram && (!selected.configured_scale || !selectedPeriodId))}
+                disabled={!selected || creating || selectedPeriodClosed || isPreschoolProgram || (isPrimaryProgram && (!selected.configured_scale || (!primaryCatalogEnabled && !selectedPeriodId)))}
               >
                 <Plus className="h-4 w-4" />
                 {creating ? "Ajout…" : "Ajouter une note"}
@@ -3491,8 +3521,10 @@ export default function TeacherNotesPage() {
                   </thead>
                   <tbody className="divide-y">
                     {evaluations.map((ev) => {
-                      const typeLabel =
-                        ev.eval_kind === "composition"
+                      const eventMarker = parsePrimaryEventTitle(ev.title);
+                      const typeLabel = eventMarker
+                        ? eventMarker.kind === "internal" ? "Évaluation interne" : eventMarker.kind === "mock" ? "Examen blanc" : eventMarker.kind === "passage" ? "Composition de passage" : "Composition officielle"
+                        : ev.eval_kind === "composition"
                           ? "Composition"
                           : ev.eval_kind === "devoir"
                             ? "Devoir"

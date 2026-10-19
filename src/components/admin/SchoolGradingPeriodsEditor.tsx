@@ -16,7 +16,7 @@ type GradePeriod = {
 const endpoint = "/api/admin/school-grading-periods";
 let nextTemporaryId = 0;
 
-export default function SchoolGradingPeriodsEditor({ academicYear }: { academicYear: string }) {
+export default function SchoolGradingPeriodsEditor({ academicYear, hidePrimary = false }: { academicYear: string; hidePrimary?: boolean }) {
   const navigation = useSchoolNavigation();
   const [programs, setPrograms] = useState<Program[]>([]);
   const [programKey, setProgramKey] = useState("");
@@ -46,7 +46,7 @@ export default function SchoolGradingPeriodsEditor({ academicYear }: { academicY
           enabledCycles: SchoolCycle[];
           teachingTracksByCycle: Partial<Record<SchoolCycle, TeachingTrack[]>>;
         };
-        const available = config.enabledCycles.flatMap(cycle =>
+        const available = config.enabledCycles.filter(cycle => !hidePrimary || cycle !== "primary").flatMap(cycle =>
           (config.teachingTracksByCycle[cycle] || []).map(track => ({ cycle, track })));
         setPrograms(available);
         const preferred = available.find(p =>
@@ -63,7 +63,7 @@ export default function SchoolGradingPeriodsEditor({ academicYear }: { academicY
     // Program list belongs to this editor. A navigation filter may be changed
     // later using the explicit selector without discarding unsaved rows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hidePrimary]);
 
   useEffect(() => {
     setItems([]);

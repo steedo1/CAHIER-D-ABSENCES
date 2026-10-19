@@ -3792,7 +3792,7 @@ export default function AdminSettingsPage() {
             {hasSpecializedSettings ? (
               <div className="space-y-6">
                 {hasBilingualPrograms && <PrimaryEvaluationEventsEditor academicYear={selectedAcademicYear} />}
-                <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} />
+                <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} hidePrimary={hasBilingualPrograms} />
               </div>
             ) : (
               <>

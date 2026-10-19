@@ -160,7 +160,11 @@ export default function PrimaryEvaluationEventsEditor({ academicYear }: { academ
       {(["official", "passage", "internal", "mock"] as PrimaryEventKind[]).map(kind =>
         <button key={kind} type="button" disabled={saving || loading || events.length >= 32}
           className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
-          onClick={() => setEvents(rows => [...rows, blank(kind)])}>+ {KIND_LABELS[kind]}</button>)}
+          onClick={() => setEvents(rows => {
+            let candidate = blank(kind);
+            while (rows.some(row => row.code === candidate.code)) candidate = blank(kind);
+            return [...rows, candidate];
+          })}>+ {KIND_LABELS[kind]}</button>)}
     </div>
     <button type="button" disabled={!academicYear || loading || saving}
       className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
