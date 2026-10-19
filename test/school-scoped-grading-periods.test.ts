@@ -79,7 +79,10 @@ test("school periods reuse actual grade_periods and teacher evaluation APIs", ()
   assert.match(helper, /fallbackToCommon: true/);
   assert.match(evaluation, /autoDetectApplicableGradePeriod/);
   assert.match(evaluation, /getApplicableGradePeriodById/);
-  assert.match(page, /<SchoolGradingPeriodsEditor academicYear=\{selectedAcademicYear\}/);
+  assert.match(page, /<SchoolGradingPeriodsEditor\s+[\s\S]*?academicYear=\{selectedAcademicYear\}/);
+  assert.match(page, /evaluationSettingsScope\.showPrimaryEvents/);
+  assert.match(page, /evaluationSettingsScope\.showGradingPeriods/);
+  assert.match(editor, /isVisibleGradingPeriodCycle/);
   assert.match(editor, /api\/admin\/school-grading-periods/);
   assert.match(read("src/app/api/parent/grading-periods/route.ts"),
     /schoolPeriodProgramForClass/);
