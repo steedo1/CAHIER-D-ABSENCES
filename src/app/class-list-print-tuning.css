@@ -198,27 +198,30 @@
     padding-top: 0.7mm !important;
     font-size: 8px !important;
   }
-  /* 25-32 élèves : format intermédiaire, plus facile à renseigner à la main. */
-  body .primary-class-list .class-list-sheet-medium .roster-table tbody tr {
-    height: 4.6mm !important;
+  /* Cases réellement inscriptibles : jusqu'à 24 élèves par face.
+     40 élèves sont répartis sur 2 faces de 20, avec 7,2 mm de hauteur.
+     Les colonnes des matières restent suffisamment larges pour écrire une note. */
+  body .primary-class-list .roster-table tbody tr {
+    height: 7.2mm !important;
   }
-  body .primary-class-list .class-list-sheet-medium .roster-table td {
+  body .primary-class-list .roster-table tbody td {
+    padding: 0.55mm 0.5mm !important;
+    font-size: 10.5px !important;
+    line-height: 1.2 !important;
+  }
+  body .primary-class-list .roster-table .col-name {
+    font-size: var(--class-list-name-font-size, 12px) !important;
+  }
+  /* Classe exceptionnellement chargée : 25 à 28 élèves par face.
+     Aucune ligne à 3 mm, ni police comprimée pour les cases de notes. */
+  body .primary-class-list .class-list-sheet-medium .roster-table tbody tr {
+    height: 5.25mm !important;
+  }
+  body .primary-class-list .class-list-sheet-medium .roster-table tbody td {
     padding: 0.35mm 0.45mm !important;
     font-size: 10px !important;
   }
   body .primary-class-list .class-list-sheet-medium .roster-table .col-name {
     font-size: calc(var(--class-list-name-font-size, 12px) * 0.9) !important;
-  }
-  /* 33-40 élèves : toutes les lignes sur une feuille A4 paysage, sans tronquer. */
-  body .primary-class-list .class-list-sheet-dense .roster-table tbody tr {
-    height: 3mm !important;
-  }
-  body .primary-class-list .class-list-sheet-dense .roster-table td {
-    padding: 0.08mm 0.3mm !important;
-    font-size: 9px !important;
-    line-height: 1.05 !important;
-  }
-  body .primary-class-list .class-list-sheet-dense .roster-table .col-name {
-    font-size: calc(var(--class-list-name-font-size, 12px) * 0.76) !important;
   }
 }

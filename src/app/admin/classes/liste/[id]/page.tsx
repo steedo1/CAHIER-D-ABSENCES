@@ -521,15 +521,23 @@ export default function ClassListPrintPage() {
   const primaryList = data?.school_cycle === "primary";
   const noteColumns = primaryList ? data?.mark_subjects || [] :
     [1, 2, 3, 4].map(index => ({ id: String(index), name: `Note ${index}`, shortName: `Note ${index}`, denominator: null }));
-  // 40 élèves du primaire tiennent sur une feuille A4 paysage ; deux feuilles
-  // recto verso suffisent jusqu'à 80 élèves sans supprimer de lignes.
-  // Dans le secondaire (A4 portrait), la hauteur disponible est plus grande.
-  const maxStudentsPerSheet = primaryList ? 40 : 45;
-  const studentsPerSheet =
-    printedStudents.length > maxStudentsPerSheet &&
-    printedStudents.length <= maxStudentsPerSheet * 2
+  // Au primaire, privilégier des cases suffisamment hautes pour écrire
+  // les notes à la main plutôt qu'une feuille compacte illisible.
+  // Exemple : 40 élèves -> 20 au recto + 20 au verso.
+  // Au-delà de 56 élèves, une feuille supplémentaire est préférable à des
+  // lignes trop écrasées. Le secondaire garde sa pagination historique.
+  const primaryComfortableRows = 24;
+  const primaryMaximumRows = 28;
+  const primaryPageCount = Math.max(
+    1,
+    Math.ceil(printedStudents.length / primaryMaximumRows),
+    printedStudents.length > primaryComfortableRows ? 2 : 1,
+  );
+  const studentsPerSheet = primaryList
+    ? Math.max(1, Math.ceil(printedStudents.length / primaryPageCount))
+    : printedStudents.length > 45 && printedStudents.length <= 90
       ? Math.ceil(printedStudents.length / 2)
-      : maxStudentsPerSheet;
+      : 45;
 
   // La numérotation continue d'une feuille à l'autre ; l'en-tête institutionnel
   // est réservé à la première feuille seulement.
@@ -1424,7 +1432,7 @@ export default function ClassListPrintPage() {
           {printedPages.map(({ students: pageStudents, startIndex }, pageIndex) => (
           <article
             className={`class-list-sheet ${primaryList
-              ? pageStudents.length > 32 ? "class-list-sheet-dense" : pageStudents.length > 24 ? "class-list-sheet-medium" : ""
+              ? pageStudents.length > 20 ? "class-list-sheet-medium" : ""
               : pageStudents.length > 36 ? "class-list-sheet-dense" : ""}`}
             key={pageIndex}
           >
