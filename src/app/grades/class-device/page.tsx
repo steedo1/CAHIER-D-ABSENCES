@@ -2163,6 +2163,7 @@ export default function ClassDeviceNotesPage() {
 
   function getTypeLabel(kind: EvalKind): string {
     if (kind === "devoir") return "Devoir";
+    if (kind === "composition") return "Composition";
     if (kind === "interro_ecrite") return "Interrogation écrite";
     return "Interrogation orale";
   }
