@@ -624,6 +624,9 @@ export default function TeacherNotesPage() {
     }
 
     appendSelectedPeriod(params);
+    if (isPrimaryProgram && selectedPrimaryEvent) {
+      params.set("primary_event_id", selectedPrimaryEvent.id);
+    }
 
     // Dès qu'une évaluation est publiée, l'affichage des moyennes doit être
     // aligné sur le bulletin et le compte-classe : on lit donc la source officielle.
@@ -1671,6 +1674,10 @@ export default function TeacherNotesPage() {
 
   async function openAverages() {
     if (!selected) return;
+    if (isPrimaryProgram && !selectedPrimaryEvent) {
+      setMsg("Choisissez une composition ou une évaluation programmée pour consulter sa moyenne.");
+      return;
+    }
     if (!isOnline) {
       setMsg("Le calcul officiel des moyennes nécessite une connexion Internet.");
       return;
