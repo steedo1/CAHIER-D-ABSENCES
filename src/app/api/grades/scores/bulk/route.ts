@@ -1,6 +1,10 @@
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
+import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
+import { usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
+import { publishEvaluationOfficially } from "@/lib/grades/publication";
 // src/app/api/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -343,6 +347,34 @@ export async function POST(req: NextRequest) {
       return bad("FORBIDDEN", 403);
     }
 
+    // A class-device is authorized for its own linked class and assigned
+    // subject only. The primary direct-publication rule is opt-in by school.
+    const { data: roleRows, error: roleError } = await srv.from("user_roles")
+      .select("role").eq("profile_id", profile.id).eq("institution_id", profile.institution_id);
+    if (roleError) return bad("CLASS_ROLE_LOOKUP_FAILED", 503);
+    const ownRoles = new Set((roleRows || []).map((r: any) => String(r.role || "")));
+    const classDeviceOnly = ownRoles.has("class_device") && !ownRoles.has("teacher") &&
+      !ownRoles.has("admin") && !ownRoles.has("super_admin") && !ownRoles.has("educator");
+    let autoPublishPrimary = false;
+    if (classDeviceOnly) {
+      if (!await classDeviceMayAccessClass({ service: srv, userId: profile.id,
+        classId: ge.class_id })) return bad("CLASS_DEVICE_CLASS_FORBIDDEN", 403);
+      if (!ge.subject_id) return bad("CLASS_DEVICE_SUBJECT_REQUIRED", 403);
+      const { data: assigned, error: assignErr } = await srv.from("class_teachers")
+        .select("id").eq("institution_id", profile.institution_id)
+        .eq("class_id", ge.class_id).eq("subject_id", ge.subject_id)
+        .is("end_date", null).limit(1);
+      if (assignErr || !assigned?.length) return bad("CLASS_DEVICE_SUBJECT_FORBIDDEN", 403);
+      const { data: inst, error: instErr } = await srv.from("institutions")
+        .select("settings_json").eq("id", profile.institution_id).maybeSingle();
+      const { data: cls, error: clsErr } = await srv.from("classes")
+        .select("id,level").eq("id", ge.class_id).eq("institution_id", profile.institution_id).maybeSingle();
+      if (instErr || clsErr || !inst || !cls) return bad("SCHOOL_SCOPE_UNAVAILABLE", 503);
+      const school = parseSchoolCyclesSettings(inst.settings_json);
+      autoPublishPrimary = school.enabled && usesDirectGradePublication(inst.settings_json) &&
+        resolveSchoolCycleForClass(cls, school) === "primary";
+    }
+
     // ✅ Verrou période avant toute écriture.
     // On bloque seulement les non privilégiés.
     const privileged = await isPrivilegedUser(
@@ -383,7 +415,9 @@ export async function POST(req: NextRequest) {
     // ✅ Verrou métier publication AVANT toute écriture.
     const editable = assertEvaluationEditable(ge);
 
-    if (!editable.ok) {
+    const isPublished = ge.is_published === true || ge.publication_status === "published";
+    const mayRepublish = autoPublishPrimary && isPublished;
+    if (!editable.ok && !mayRepublish) {
       console.warn("[grades/scores/bulk] evaluation not editable", {
         evaluation_id,
         error: editable.error,
@@ -517,6 +551,24 @@ export async function POST(req: NextRequest) {
       warnings.push(`${violations.length} ligne(s) ignorée(s) (validation)`);
     }
 
+    // A saved primary mark becomes official immediately. Subsequent pupils'
+    // marks update the same evaluation via a new audited snapshot/version.
+    // Nothing is published for other schools or roles.
+    let publication: Awaited<ReturnType<typeof publishEvaluationOfficially>> | null = null;
+    if (autoPublishPrimary && (upserted > 0 || deleted > 0)) {
+      publication = await publishEvaluationOfficially({
+        evaluationId: evaluation_id, actorProfileId: profile.id,
+        forceNewVersion: isPublished, queuePush: true,
+      });
+      if (!publication.ok) {
+        console.error("[grades/scores/bulk] primary marks saved but publication failed",
+          { evaluation_id, publication });
+        return bad("PRIMARY_PUBLICATION_PENDING", publication.status || 503,
+          { message: "Notes enregistrées, mais publication à reprendre. Réessayez l’enregistrement.",
+            saved: true, publication_error: publication.error });
+      }
+    }
+
     console.log("[grades/scores/bulk] done", {
       evaluation_id,
       upserted,
@@ -532,7 +584,10 @@ export async function POST(req: NextRequest) {
       upserted,
       deleted,
       warnings,
-      publication_status: editable.publication_status,
+      publication_status: publication?.ok ? "published" : editable.publication_status,
+      publication: publication?.ok ? { is_published: true,
+        publication_version: publication.publication_version,
+        push_queued: publication.push_queued } : null,
       grading_period_id: ge.grading_period_id,
     });
   } catch (e: any) {
