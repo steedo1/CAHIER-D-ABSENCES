@@ -559,6 +559,7 @@ export async function POST(req: NextRequest) {
       publication = await publishEvaluationOfficially({
         evaluationId: evaluation_id, actorProfileId: profile.id,
         forceNewVersion: isPublished, queuePush: true,
+        notifyStudentIds: [...new Set([...upserts.map(item => item.student_id), ...toDelete])],
       });
       if (!publication.ok) {
         console.error("[grades/scores/bulk] primary marks saved but publication failed",
