@@ -1,3 +1,5 @@
+import { primaryTitleScale, primaryBaseTitle } from "@/lib/grades/primary-storage-scale";
+import { parsePrimaryEventTitle, readPrimaryEventsCatalog } from "@/lib/grades/primary-evaluation-events";
 // src/lib/push/grades.ts
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { triggerPushDispatch } from "@/lib/push-dispatch";
@@ -128,6 +130,7 @@ export async function queueGradeNotificationsForEvaluation(
       subject_component_id,
       eval_date,
       eval_kind,
+      title,
       scale,
       coeff,
       is_published,
@@ -137,6 +140,7 @@ export async function queueGradeNotificationsForEvaluation(
         id,
         label,
         level,
+        academic_year,
         institution_id
       ),
       subject:subjects!grade_evaluations_subject_id_fkey (
@@ -186,7 +190,7 @@ export async function queueGradeNotificationsForEvaluation(
     subject_component_id: ev.subject_component_id,
     eval_date: ev.eval_date,
     eval_kind: ev.eval_kind,
-    scale: toFiniteNumber(ev.scale, 20),
+    scale: primaryTitleScale(ev.title) || toFiniteNumber(ev.scale, 20),
     coeff: toFiniteNumber(ev.coeff, 1),
     class: {
       id: klass.id,
@@ -201,7 +205,15 @@ export async function queueGradeNotificationsForEvaluation(
   const classLabel = evalRow.class.label || "Classe";
   const subjectName = evalRow.subject?.name || "Note";
   const evalDateFr = formatDateFr(evalRow.eval_date);
-  const evalKindText = evalKindLabel(evalRow.eval_kind);
+  const marker = parsePrimaryEventTitle(ev.title);
+  const primaryEvaluation = !!marker || primaryTitleScale(ev.title) !== null;
+  let primaryLabel: string | null = marker?.kind === "homework" ? "Devoir" : !marker && primaryEvaluation ? String(primaryBaseTitle(ev.title)) : null;
+  if (marker && marker.kind !== "homework" && klass.academic_year) {
+    const school = await srv.from("institutions").select("settings_json").eq("id", institutionId).maybeSingle();
+    primaryLabel = readPrimaryEventsCatalog(school.data?.settings_json).years[klass.academic_year]?.events
+      .find(event => event.code === marker.code && event.kind === marker.kind)?.label || null;
+  }
+  const evalKindText = primaryLabel || evalKindLabel(evalRow.eval_kind);
 
   console.log("[push/grades] queue depuis snapshot officiel", {
     evaluationId: cleanEvaluationId,
@@ -338,7 +350,7 @@ export async function queueGradeNotificationsForEvaluation(
     (g) => g.notifications_enabled && g.guardian_profile_id
   );
 
-  if (!effectiveGuardians.length) {
+  if (!effectiveGuardians.length && !primaryEvaluation) {
     console.log("[push/grades] aucun responsable avec notifications activées", {
       evaluationId: cleanEvaluationId,
     });
@@ -349,7 +361,7 @@ export async function queueGradeNotificationsForEvaluation(
   type QueueInsert = {
     institution_id: string;
     student_id: string;
-    target_profile_id: string;
+    target_profile_id: string | null;
     channels: string[];
     payload: any;
     status: string;
@@ -366,7 +378,11 @@ export async function queueGradeNotificationsForEvaluation(
       (g) => g.student_id === official.student_id
     );
 
-    if (!guardiansForStudent.length) continue;
+    const targets: Array<string | null> = guardiansForStudent.map(guardian => guardian.guardian_profile_id as string);
+    // Parent Connect also supports matricule-linked student devices without
+    // a separately created guardian account. Preserve that primary delivery.
+    if (!targets.length && primaryEvaluation) targets.push(null);
+    if (!targets.length) continue;
 
     const student =
       studentById.get(official.student_id) ||
@@ -395,7 +411,7 @@ export async function queueGradeNotificationsForEvaluation(
       body = `${subjectName} • ${classLabel} • ${evalKindText} du ${evalDateFr} manqué`;
     } else {
       title = `Nouvelle note — ${studentName}`;
-      body = `${subjectName} • ${classLabel} • ${score}/${scale}`;
+      body = `${subjectName} • ${classLabel} • ${score}/${scale}${primaryLabel ? ` • ${primaryLabel} du ${evalDateFr}` : ""}`;
     }
 
     const payloadBase = {
@@ -420,6 +436,7 @@ export async function queueGradeNotificationsForEvaluation(
         id: evalRow.id,
         date: evalRow.eval_date,
         kind: evalRow.eval_kind,
+        ...(primaryLabel ? { label: primaryLabel, teaching_track: marker?.track || null } : {}),
         scale,
         coeff,
       },
@@ -432,8 +449,7 @@ export async function queueGradeNotificationsForEvaluation(
       missed: isMissed,
     };
 
-    for (const guardian of guardiansForStudent) {
-      const profileId = guardian.guardian_profile_id as string;
+    for (const profileId of targets) {
 
       rowsToInsert.push({
         institution_id: institutionId,
@@ -458,7 +474,7 @@ export async function queueGradeNotificationsForEvaluation(
   }
 
   const filteredRows = rowsToInsert.filter(
-    (row) => !!row.target_profile_id && !!row.student_id && !!row.official_score_id
+    (row) => (!!row.target_profile_id || primaryEvaluation) && !!row.student_id && !!row.official_score_id
   );
 
   if (!filteredRows.length) {

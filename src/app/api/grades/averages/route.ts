@@ -1,3 +1,4 @@
+import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
 import { selectProgramComponents, isProgramComponentLevel } from "@/lib/school-subject-components";
 // src/app/api/grades/averages/route.ts
@@ -70,6 +71,7 @@ function normalizeUuidLike(value: unknown): string | null {
 }
 
 type EvaluationRow = {
+  title?: string | null;
   id: string;
   class_id: string;
   subject_id: string | null;
@@ -454,7 +456,7 @@ export async function GET(req: NextRequest) {
     let qEvals = svc
       .from("grade_evaluations")
       .select(
-        "id, scale, coeff, class_id, subject_id, subject_component_id, grading_period_id, is_published"
+        "id, scale, coeff, class_id, subject_id, subject_component_id, grading_period_id, is_published, title"
       )
       .eq("class_id", class_id)
       .eq("academic_year", academic_year);
@@ -474,7 +476,7 @@ export async function GET(req: NextRequest) {
 
     if (eErr) return bad(eErr.message || "EVALS_FETCH_FAILED", 400);
 
-    const evaluations = (evals ?? []) as unknown as EvaluationRow[];
+    const evaluations = ((evals ?? []) as unknown as EvaluationRow[]).map(withPrimaryDisplayScale);
     const evaluationIds = evaluations.map((e) => e.id);
 
     logInfo("evals loaded", {

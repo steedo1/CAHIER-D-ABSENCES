@@ -1,3 +1,5 @@
+import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
+import { primarySubjectEventAverages } from "@/lib/server/primary-subject-event-averages";
 import { classComponentContext, selectProgramComponents, isProgramComponentLevel } from "@/lib/school-subject-components";
 // src/app/api/teacher/grades/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -245,6 +247,10 @@ export async function GET(req: NextRequest) {
       primaryFrancoArabic = school.enabled &&
         resolveSchoolCycleForClass(cls, school) === "primary";
     }
+    if (primaryFrancoArabic && searchParams.has("primary_event_code") && cls) {
+      return primarySubjectEventAverages({ service: svc, actorId: auth.user.id,
+        settings: componentSettings, classroom: cls, params: searchParams });
+    }
     if (primaryFrancoArabic) {
       // On the teacher's primary screen, report exactly the official
       // compositions, never draft devoirs or hypothetical missing zeros.
@@ -308,7 +314,7 @@ export async function GET(req: NextRequest) {
     const { data: evals, error: eErr } = await qEvals;
     if (eErr) return bad(eErr.message || "EVALS_FETCH_FAILED", 400);
 
-    const evaluations = ((evals ?? []) as unknown as EvaluationRow[]).filter(e =>
+    const evaluations = ((evals ?? []) as unknown as EvaluationRow[]).map(withPrimaryDisplayScale).filter(e =>
       !primaryFrancoArabic || (e.grading_period_id === grading_period_id && isPrimaryComposition(e)));
     const evaluationIds = evaluations.map((e) => e.id);
 

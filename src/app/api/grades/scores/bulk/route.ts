@@ -1,3 +1,5 @@
+import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
+import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 // src/app/api/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -38,6 +40,7 @@ type GradePeriodRow = {
 };
 
 type EvaluationRow = {
+  title: string | null;
   id: string;
   scale: number | null;
   class_id: string;
@@ -294,6 +297,7 @@ export async function POST(req: NextRequest) {
       .select(
         [
           "id",
+          "title",
           "scale",
           "class_id",
           "subject_id",
@@ -320,7 +324,7 @@ export async function POST(req: NextRequest) {
       return bad(geErr?.message || "EVALUATION_NOT_FOUND_OR_FORBIDDEN", 404);
     }
 
-    const ge = geRaw as unknown as EvaluationRow;
+    const ge = withPrimaryDisplayScale(geRaw as unknown as EvaluationRow);
 
     // Vérifier que la classe de cette évaluation appartient bien à l'établissement.
     const allowed = await ensureClassAccess(
@@ -419,7 +423,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!await specializedGradeStudentsAllowed(srv, profile.id, ge.class_id,
-      items.map(item => String(item?.student_id || "").trim()).filter(Boolean))) {
+      items.map(item => String(item?.student_id || "").trim()).filter(Boolean), undefined, parsePrimaryEventTitle(ge.title)?.track)) {
       return bad("STUDENT_OUTSIDE_AUTHORIZED_CLASS", 403);
     }
 

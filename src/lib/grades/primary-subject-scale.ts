@@ -3,15 +3,18 @@ import { ciPrimaryFrenchDenominator, ciPrimaryFrenchEntryForName } from "@/lib/p
 import { hasCiPrimaryFrenchReference } from "@/lib/school-class-subjects";
 import { parseSchoolCyclesSettings, type TeachingTrack } from "@/lib/school-cycles";
 import { readStudentProgramSettings } from "@/lib/school-student-programs";
-import { resolvePrimaryTeachingTrack } from "./primary-evaluation-kind";
 
 /** Call with the canonical subject ID and the server-authorized class/year. */
-export function primarySubjectTeachingTrack(settings: unknown, year: string, classId: string, subjectId: string): TeachingTrack | null {
+export function primarySubjectTeachingTracks(settings: unknown, year: string, classId: string, subjectId: string): TeachingTrack[] {
   const school = parseSchoolCyclesSettings(settings);
-  const subjectTracks = school.subjectTracksByCycle.primary?.[subjectId];
-  if (!subjectTracks?.length) return null;
-  return resolvePrimaryTeachingTrack({ offeredTracks: school.teachingTracksByCycle.primary || [], subjectTracks,
-    classTracks: readStudentProgramSettings(settings).years[year]?.classes[classId]?.tracks || school.teachingTracksByCycle.primary || [] });
+  const subjectTracks = school.subjectTracksByCycle.primary?.[subjectId] || [];
+  const classTracks = readStudentProgramSettings(settings).years[year]?.classes[classId]?.tracks || school.teachingTracksByCycle.primary || [];
+  return subjectTracks.filter(track => classTracks.includes(track) && school.teachingTracksByCycle.primary?.includes(track));
+}
+export function primarySubjectTeachingTrack(settings: unknown, year: string, classId: string, subjectId: string, requested?: string | null): TeachingTrack | null {
+  const tracks = primarySubjectTeachingTracks(settings, year, classId, subjectId);
+  if (requested) return tracks.find(track => track === requested) || null;
+  return tracks.length === 1 ? tracks[0] : null;
 }
 
 /** One barème authority for the teacher selector, server writes and reports.

@@ -1,3 +1,5 @@
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
+import { programsForStudent, readStudentProgramSettings } from "@/lib/school-student-programs";
 import { loadLinkedClassEnrollments } from "@/lib/server/school-linked-class-roster";
 //src/app/api/teacher/roster/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -90,8 +92,18 @@ export async function GET(req: NextRequest) {
   const ids = new Set((data || []).map((row: any) => row.student_id));
   const allEnrollments = [...(data || []), ...linked.filter(row => !ids.has(row.student_id))];
 
+  const requestedTrack = url.searchParams.get("teaching_track");
+  const school = parseSchoolCyclesSettings(institution?.settings_json);
+  const primary = school.enabled && resolveSchoolCycleForClass(classRow, school) === "primary";
+  const policy = readStudentProgramSettings(institution?.settings_json).years[classRow.academic_year || ""]?.classes[class_id];
+  if (requestedTrack && (!primary || (requestedTrack !== "french" && requestedTrack !== "arabic") ||
+      !(policy?.tracks || school.teachingTracksByCycle.primary || []).includes(requestedTrack))) {
+    return NextResponse.json({ error: "teaching_track_not_allowed" }, { status: 403 });
+  }
   // map + tri "Nom puis Pr�nom"
   const items = allEnrollments
+    .filter(row => !primary || !requestedTrack || (policy ? programsForStudent(policy, row.student_id,
+      school.teachingTracksByCycle.primary || []) : school.teachingTracksByCycle.primary || []).includes(requestedTrack as "french" | "arabic"))
     .map((row: any) => {
       const s = row.students || {};
       const full = [s.last_name, s.first_name].filter(Boolean).join(" ").trim() || "Élève";

@@ -77,6 +77,13 @@ export type BulletinProgram = {
   appreciation?: string | null;
   directorName?: string | null;
   allowHistoricalNc?: boolean;
+  primaryAnnual?: {
+    ordinary: Array<{ label: string; average: number | null }>;
+    ordinaryAverage: number | null;
+    passageAverage: number | null;
+    annualAverage: number | null;
+    decision: string | null;
+  };
   historicalSecondary?: {
     /** Original authorized historical row, retained without recalculation. */
     sourceItem?: Record<string, unknown>;
@@ -276,6 +283,20 @@ function Panel({ program, compact, ordinary }: { program: BulletinProgram; compa
     <Heading track={program.track} compact={compact} ordinary={ordinary}/>
     <CourseTable program={program} compact={compact}/>
     <Summary program={program} compact={compact} ordinary={ordinary}/>
+    {program.primaryAnnual && <div className={styles.primaryAnnual}>
+      <table aria-label="Récapitulatif annuel des compositions">
+        <tbody>
+          <tr><th colSpan={2}>Récapitulatif des compositions officielles</th></tr>
+          {program.primaryAnnual.ordinary.map((item, index) => <tr key={index}>
+            <th>{item.label}</th><td>{number(item.average)} /{program.denominator}</td>
+          </tr>)}
+          <tr><th>Moyenne des compositions</th><td>{number(program.primaryAnnual.ordinaryAverage)} /{program.denominator}</td></tr>
+          <tr><th>Composition de passage (×2)</th><td>{number(program.primaryAnnual.passageAverage)} /{program.denominator}</td></tr>
+          <tr><th>Moyenne générale annuelle</th><td><strong>{number(program.primaryAnnual.annualAverage)} /{program.denominator}</strong></td></tr>
+          {program.primaryAnnual.decision && <tr><th>Décision de passage</th><td>{program.primaryAnnual.decision}</td></tr>}
+        </tbody>
+      </table>
+    </div>}
     {program.historicalSecondary && <div className={styles.historicalDetails}>
       {program.historicalSecondary.groups.length > 0 && (
         <div className={styles.historicalLine}>
@@ -357,7 +378,7 @@ export default function FrancoArabicBulletin({
   const primary = programs.every(program => /^(primaire|primary)$/i.test(program.cycle.trim()));
   const compact = variant === "combined";
   const context = programs[0];
-  return <article className={`${styles.page} ${primary ? styles.primaryPage : ""} ${printRoot ? "fa-report-print-root" : ""} ${compact ? styles.combinedPage : ""} ${variant === "ordinary" ? styles.ordinaryPage : ""}`}
+  return <article className={`${styles.page} ${primary ? styles.primaryPage : ""} ${primary && programs.some(program => program.primaryAnnual) ? styles.passagePage : ""} ${printRoot ? "fa-report-print-root" : ""} ${compact ? styles.combinedPage : ""} ${variant === "ordinary" ? styles.ordinaryPage : ""}`}
     aria-label={`Bulletin ${variant}`}>
     <Head model={model} variant={variant}/>
     <div className={styles.body}>

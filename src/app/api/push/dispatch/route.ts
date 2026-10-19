@@ -1,3 +1,4 @@
+import { filterPrimaryOfficialNotifications } from "@/lib/grades/primary-notification-policy";
 import { filterParentConnectQueue } from "@/lib/parent-connect/server";
 // src/app/api/push/dispatch/route.ts
 import { NextResponse } from "next/server";
@@ -250,7 +251,19 @@ async function run(req: Request) {
     );
   }
 
-  const candidateRows: QueueRow[] = (raw || []).filter(hasPushChannel);
+  let candidateRows: QueueRow[] = (raw || []).filter(hasPushChannel);
+  try {
+    const officialRows = await filterPrimaryOfficialNotifications(srv, candidateRows);
+    const officialIds = new Set(officialRows.map(row => row.id));
+    const suppressedIds = candidateRows.filter(row => !officialIds.has(row.id)).map(row => row.id);
+    if (suppressedIds.length) {
+      const suppressed = await srv.from("notifications_queue").update({ status: "error", last_error: "PRIMARY_OFFICIAL_SNAPSHOT_ONLY" }).in("id", suppressedIds);
+      if (suppressed.error) throw suppressed.error;
+    }
+    candidateRows = officialRows;
+  } catch {
+    return NextResponse.json({ ok: false, error: "PRIMARY_NOTIFICATION_CONTEXT_UNAVAILABLE", id }, { status: 503 });
+  }
   let rows: QueueRow[];
   try {
     rows = await filterParentConnectQueue(srv, candidateRows);

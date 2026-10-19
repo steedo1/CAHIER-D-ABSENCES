@@ -19,8 +19,9 @@ import {
 } from "@/lib/education-organization";
 import { proposeEndOfYearDecision } from "@/lib/end-of-year-decisions.mjs";
 import dynamic from "next/dynamic";
-import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import { usePrimaryBulletinCalendar } from "@/hooks/usePrimaryBulletinCalendar";
+import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
 const SpecializedBulletinPanel = dynamic(() => import("@/components/bulletins/SpecializedBulletinPanel"));
 
 /* ───────── Types ───────── */
@@ -2434,6 +2435,7 @@ function StudentBulletinCard({
 
 export default function BulletinsPage() {
   const schoolNavigation = useSchoolNavigation();
+
   const schoolCycle = schoolNavigation?.selection.cycle;
   const schoolTrack = schoolNavigation?.selection.track;
   const schoolLevel = schoolNavigation?.selection.level;
@@ -2453,6 +2455,9 @@ export default function BulletinsPage() {
   const [periodsLoading, setPeriodsLoading] = useState(false);
   const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
+  const { primaryBulletinEvents, selectedPrimaryEventCode, setSelectedPrimaryEventCode,
+    usesPrimaryEventBulletins, primaryCalendarLoading, primaryCalendarError } = usePrimaryBulletinCalendar(
+      classes.find(row => row.id === selectedClassId), selectedAcademicYear);
 
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
@@ -2620,7 +2625,14 @@ export default function BulletinsPage() {
       setErrorMsg("Veuillez sélectionner une classe.");
       return;
     }
-    if (!dateFrom || !dateTo) {
+    if (primaryCalendarLoading || primaryCalendarError) {
+      setErrorMsg(primaryCalendarError || "Chargement du calendrier…"); return;
+    }
+    if (usesPrimaryEventBulletins && !selectedPrimaryEventCode) {
+      setErrorMsg("Veuillez choisir une composition ou une évaluation interne.");
+      return;
+    }
+    if (!usesPrimaryEventBulletins && (!dateFrom || !dateTo)) {
       setErrorMsg("Veuillez choisir une période (dates du bulletin).");
       return;
     }
@@ -2633,8 +2645,10 @@ export default function BulletinsPage() {
 
       const params = new URLSearchParams();
       params.set("class_id", selectedClassId);
-      params.set("from", dateFrom);
-      params.set("to", dateTo);
+      const selectedEvent = !usesPrimaryEventBulletins ? null : primaryBulletinEvents.find(event => event.code === selectedPrimaryEventCode);
+      params.set("from", selectedEvent?.date || dateFrom);
+      params.set("to", selectedEvent?.date || dateTo);
+      if (usesPrimaryEventBulletins && selectedEvent) params.set("primary_event_code", selectedEvent.code);
 
       /*
        * ✅ Important pour la conduite officielle :
@@ -2925,7 +2939,7 @@ export default function BulletinsPage() {
       return;
     }
 
-    if (navigator.onLine) {
+    if (navigator.onLine && !bulletinRaw?.specialized) {
       try {
         setErrorMsg(null);
         setPrintPreparing(true);
@@ -3647,7 +3661,7 @@ export default function BulletinsPage() {
               </p>
             </div>
 
-            <div className="md:col-span-2">
+            {!usesPrimaryEventBulletins ? <div className="md:col-span-2">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
                 Période d’évaluation
               </label>
@@ -3673,7 +3687,18 @@ export default function BulletinsPage() {
               <p className="mt-1 text-[0.7rem] text-slate-500">
                 La période positionne automatiquement les dates.
               </p>
-            </div>
+            </div> : <div className="md:col-span-2">
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
+                Composition ou évaluation interne
+              </label>
+              <Select value={selectedPrimaryEventCode} onChange={e => setSelectedPrimaryEventCode(e.target.value)}>
+                <option value="">Sélectionner une évaluation…</option>
+                {primaryBulletinEvents.map(event => <option key={event.code} value={event.code}>
+                  {event.label} — {event.date.split("-").reverse().join("/")}
+                </option>)}
+              </Select>
+              <p className="mt-1 text-[0.7rem] text-slate-500">Chaque évaluation ponctuelle a son propre bulletin.</p>
+            </div>}
 
             <div className="md:col-span-2">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
@@ -3701,7 +3726,7 @@ export default function BulletinsPage() {
               </Select>
             </div>
 
-            <div className="md:col-span-3">
+            {!usesPrimaryEventBulletins && <div className="md:col-span-3">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
                 Date de début
               </label>
@@ -3710,9 +3735,9 @@ export default function BulletinsPage() {
                 value={dateFrom}
                 onChange={(e) => setDateFrom(e.target.value)}
               />
-            </div>
+            </div>}
 
-            <div className="md:col-span-3">
+            {!usesPrimaryEventBulletins && <div className="md:col-span-3">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
                 Date de fin
               </label>
@@ -3721,7 +3746,7 @@ export default function BulletinsPage() {
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}
               />
-            </div>
+            </div>}
 
             {selectedClass ? (
               <div className="md:col-span-6 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
@@ -3738,6 +3763,8 @@ export default function BulletinsPage() {
             ) : null}
           </div>
 
+          {primaryCalendarLoading && <p role="status">Chargement du calendrier primaire…</p>}
+          {primaryCalendarError && <p role="alert" className="text-red-700">{primaryCalendarError}</p>}
           {errorMsg && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 print:hidden">
               {errorMsg}

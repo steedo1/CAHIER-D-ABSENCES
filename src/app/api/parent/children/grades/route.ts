@@ -1,3 +1,6 @@
+import { parsePrimaryEventTitle, readPrimaryEventsCatalog } from "@/lib/grades/primary-evaluation-events";
+import { primaryBaseTitle } from "@/lib/grades/primary-storage-scale";
+import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { parentConnectDenial } from "@/lib/parent-connect/server";
 // src/app/api/parent/children/grades/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -413,14 +416,27 @@ export async function GET(req: NextRequest) {
     const subjectIds = Array.from(new Set(flat.map((x) => x.ev.subject_id).filter(Boolean))) as string[];
     const subjectNameById = await resolveSubjectNames(srv, subjectIds);
 
+    const hasPrimaryEvents = flat.some(({ev}) => parsePrimaryEventTitle(ev.title));
+    const primarySchool = hasPrimaryEvents ? await srv.from("institutions").select("settings_json")
+      .eq("id",institution_id).maybeSingle() : null;
+    const primaryCatalog = readPrimaryEventsCatalog(primarySchool?.data?.settings_json);
+    const primaryLabel = (ev: any) => {
+      const marker = parsePrimaryEventTitle(ev.title);
+      if (!marker) return typeof ev.title === "string" ? String(primaryBaseTitle(ev.title)) : null;
+      const date = String(ev.eval_date || ""), dateYear = Number(date.slice(0,4));
+      const start = Number(date.slice(5,7)) >= 9 ? dateYear : dateYear-1;
+      return primaryCatalog.years[`${start}-${start+1}`]?.events.find(event => event.code === marker.code && event.kind === marker.kind)?.label ||
+        ({official:"Composition",passage:"Composition de passage",internal:"Évaluation interne",mock:"Examen blanc",homework:"Devoir"})[marker.kind];
+    };
+
     const items: GradeRow[] = flat
       .map(({ ev, score }) => ({
         id: String(ev.id),
         eval_date: String(ev.eval_date),
         eval_kind: ev.eval_kind as EvalKind,
-        scale: Number(ev.scale ?? 20),
+        scale: Number(withPrimaryDisplayScale(ev).scale ?? 20),
         coeff: Number(ev.coeff ?? 1),
-        title: ev.title ?? null,
+        title: primaryLabel(ev),
         score,
         subject_id: ev.subject_id ?? null,
         subject_name: ev.subject_id ? subjectNameById.get(String(ev.subject_id)) ?? null : null,

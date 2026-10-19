@@ -1,3 +1,5 @@
+import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
+import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 // src/app/api/teacher/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -30,6 +32,7 @@ type GradePeriodRow = {
 };
 
 type EvaluationRow = {
+  title: string | null;
   teacher_id: string | null;
   id: string;
   scale: number | null;
@@ -223,6 +226,7 @@ export async function POST(req: NextRequest) {
       .select(
         [
           "id",
+          "title",
           "scale",
           "class_id",
           "teacher_id",
@@ -253,7 +257,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const ge = geRaw as unknown as EvaluationRow;
+    const ge = withPrimaryDisplayScale(geRaw as unknown as EvaluationRow);
     const srv = getSupabaseServiceClient();
 
     // ✅ CHECK CLÔTURE PAR FIN DE PÉRIODE
@@ -351,7 +355,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!await specializedGradeStudentsAllowed(srv, auth.user.id, ge.class_id,
-      items.map(item => String(item?.student_id || "").trim()).filter(Boolean), ge.teacher_id)) {
+      items.map(item => String(item?.student_id || "").trim()).filter(Boolean), ge.teacher_id, parsePrimaryEventTitle(ge.title)?.track)) {
       return bad("STUDENT_OUTSIDE_AUTHORIZED_CLASS", 403);
     }
 

@@ -1,3 +1,4 @@
+import { primaryBaseTitle } from "./primary-storage-scale";
 /**
  * Compatibility adapter for PRIMARY Franco-Arabic compositions.
  *
@@ -8,6 +9,8 @@
  *
  * No schema migration, no changes to secondary evaluation behaviour.
  */
+import { parsePrimaryEventTitle } from "./primary-evaluation-events";
+
 export const PRIMARY_COMPOSITION_TITLE = "Composition";
 export type PrimaryEvaluationKind = "devoir" | "composition";
 export type StoredEvaluationKind = "devoir" | "interro_ecrite" | "interro_orale";
@@ -16,8 +19,10 @@ export function isPrimaryComposition(row: {
   eval_kind?: string | null;
   title?: string | null;
 }): boolean {
+  const marker = parsePrimaryEventTitle(row.title);
   return row.eval_kind === "interro_ecrite" &&
-    row.title === PRIMARY_COMPOSITION_TITLE;
+    (primaryBaseTitle(row.title) === PRIMARY_COMPOSITION_TITLE ||
+     marker?.kind === "official" || marker?.kind === "passage");
 }
 
 export function encodePrimaryEvaluation(kind: PrimaryEvaluationKind): {

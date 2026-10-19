@@ -14,7 +14,7 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass, type SchoolCycle
 import { readStudentProgramSettings } from "@/lib/school-student-programs";
 import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
 import { resolvePrimaryTeachingTrack } from "@/lib/grades/primary-evaluation-kind";
-import { primarySubjectScale, primarySubjectTeachingTrack } from "@/lib/grades/primary-subject-scale";
+import { primarySubjectScale, primarySubjectTeachingTrack, primarySubjectTeachingTracks } from "@/lib/grades/primary-subject-scale";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -228,18 +228,17 @@ export async function GET(_req: NextRequest) {
         canonicalById.set(subjId, subjId);
       }
 
-      return list.map((it) => {
+      return list.flatMap((it) => {
         const subjectName = it.subject_id ? nameById.get(it.subject_id) ?? it.subject_name : it.subject_name;
         const subjectId = it.subject_id ? canonicalById.get(it.subject_id) : null;
         const primary = it.school_cycle === "primary";
-        const track = primary && subjectId
-          ? primarySubjectTeachingTrack(institutionContext.settings, it.academic_year, it.class_id, subjectId)
-          : it.teaching_track;
-        return { ...it, subject_name: subjectName, teaching_track: track,
+        const tracks = primary && subjectId
+          ? primarySubjectTeachingTracks(institutionContext.settings, it.academic_year, it.class_id, subjectId) : [];
+        return (tracks.length ? tracks : [it.teaching_track]).map(track => ({ ...it, subject_name: subjectName, teaching_track: track,
           configured_scale: primary ? (track && subjectId ? primarySubjectScale(institutionContext.settings, {
             year: it.academic_year, classId: it.class_id, level: it.level, track,
             subjectId, subjectName: subjectName || "",
-          }) : null) : it.configured_scale };
+          }) : null) : it.configured_scale }));
 
       });
     }

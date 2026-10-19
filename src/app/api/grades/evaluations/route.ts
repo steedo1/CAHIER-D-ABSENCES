@@ -1,3 +1,4 @@
+import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
 import { selectProgramComponents } from "@/lib/school-subject-components";
 // src/app/api/grades/evaluations/route.ts
@@ -27,6 +28,7 @@ type PublicationStatus =
   | string;
 
 type EvalRow = {
+  title?: string | null;
   id: string;
   class_id: string;
   subject_id: string | null; // ⇐ toujours un subjects.id en DB
@@ -667,6 +669,7 @@ async function validateSubjectComponentForClass(
 
 const EVALUATION_SELECT = [
   "id",
+  "title",
   "class_id",
   "subject_id",
   "subject_component_id",
@@ -825,7 +828,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
 
-    return NextResponse.json({ items: (data ?? []) as EvalRow[] });
+    return NextResponse.json({ items: ((data ?? []) as unknown as EvalRow[]).map(withPrimaryDisplayScale) });
   } catch (e: any) {
     console.error("[grades/evaluations] unexpected GET", e);
     return NextResponse.json({ items: [] as EvalRow[] }, { status: 500 });
@@ -1083,7 +1086,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ ok: true, item: data as EvalRow });
+    return NextResponse.json({ ok: true, item: withPrimaryDisplayScale(data as unknown as EvalRow) });
   } catch (e: any) {
     console.error("[grades/evaluations] unexpected POST", e);
 
@@ -1233,7 +1236,7 @@ export async function PATCH(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      item: data as EvalRow,
+      item: withPrimaryDisplayScale(data as unknown as EvalRow),
       publication: publicationResult,
     });
   } catch (e: any) {

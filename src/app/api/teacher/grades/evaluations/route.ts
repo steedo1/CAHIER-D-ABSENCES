@@ -1,3 +1,5 @@
+import { primaryScaleTitle, primaryStorageScale, withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
+import { createHash } from "node:crypto";
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
 import { selectProgramComponents } from "@/lib/school-subject-components";
 // src/app/api/teacher/grades/evaluations/route.ts
@@ -15,6 +17,7 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/sch
 import { primarySubjectScale, primarySubjectTeachingTrack } from "@/lib/grades/primary-subject-scale";
 
 import { encodePrimaryEvaluation, isPrimaryComposition } from "@/lib/grades/primary-evaluation-kind";
+import { readPrimaryEventsCatalog, primaryHomeworkTitle, primaryEventsForClass, primaryEventTitle, parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { classSubjectIds } from "@/lib/school-class-subjects";
 
 import {
@@ -687,6 +690,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
     }
 
+    const schoolCtx = await primarySchoolContext(srv, institutionId, classId);
+    const catalogEnabled = schoolCtx.isPrimary;
+    const subjectTrack = schoolCtx.isPrimary && globalId
+      ? primarySubjectTeachingTrack(schoolCtx.settings, schoolCtx.year, classId, globalId, url.searchParams.get("teaching_track")) : null;
+    if (schoolCtx.isPrimary && url.searchParams.has("teaching_track") && !subjectTrack) {
+      return NextResponse.json({ error: "primary_subject_teaching_unconfigured" }, { status: 403 });
+    }
+    const primaryEvents = catalogEnabled && subjectTrack
+      ? primaryEventsForClass(schoolCtx.settings, schoolCtx.year, schoolCtx.level, subjectTrack) : [];
+
+    // Calendrier primaire : le filtre d'une ancienne période ne doit jamais
+    // masquer les événements ponctuels du nouveau cahier.
     if (gradingPeriodId) {
       const rawPeriod = await getGradePeriodById(srv, institutionId, gradingPeriodId);
       const period = rawPeriod
@@ -698,10 +713,7 @@ export async function GET(req: NextRequest) {
             gradingPeriodId,
           )
         : null;
-
-      if (!period) {
-        return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
-      }
+      if (!period) return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
 
     let q = srv
@@ -732,14 +744,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
 
-    const schoolCtx = await primarySchoolContext(srv, institutionId, classId);
-    const items = ((data ?? []) as unknown as EvalRow[]).map(item =>
+    const items = ((data ?? []) as unknown as EvalRow[]).filter(item => {
+      const marker = parsePrimaryEventTitle(item.title);
+      return !schoolCtx.isPrimary || !marker?.track || marker.track === subjectTrack;
+    }).map(withPrimaryDisplayScale).map(item =>
       schoolCtx.isPrimary && isPrimaryComposition(item)
         ? { ...item, eval_kind: "composition" as const } : item
     );
 
     const direct_publication = await requiresDirectGradePublication(srv, institutionId);
-    return NextResponse.json({ items, direct_publication }, { status: 200 });
+    const publication_requires_admin_validation = !direct_publication && (await getGradePublicationSettings(institutionId)).require_admin_validation;
+    return NextResponse.json({ items, direct_publication, publication_requires_admin_validation, primary_events: primaryEvents,
+      primary_event_catalog_enabled: catalogEnabled }, { status: 200 });
   } catch (e) {
     console.error("[teacher/grades/evaluations] unexpected GET", e);
     return NextResponse.json({ items: [] as EvalRow[] }, { status: 500 });
@@ -764,10 +780,11 @@ export async function POST(req: NextRequest) {
       subjectComponentId,
       grading_period_id: grading_period_id_raw,
       gradingPeriodId,
-      eval_date,
+      eval_date: supplied_eval_date,
       eval_kind,
       scale,
       coeff,
+      primary_event_code, teaching_track,
     } = body as {
       class_id: string;
       subject_id?: string | null;
@@ -779,9 +796,11 @@ export async function POST(req: NextRequest) {
       eval_kind: EvalKind;
       scale: number;
       coeff: number;
+      primary_event_code?: string | null; teaching_track?: string | null;
     };
+    let eval_date = supplied_eval_date;
 
-    if (!class_id || !eval_date || !eval_kind || typeof scale !== "number") {
+    if (!class_id || !eval_kind || typeof scale !== "number") {
       return NextResponse.json(
         { ok: false, error: "missing_fields" },
         { status: 400 }
@@ -824,15 +843,42 @@ export async function POST(req: NextRequest) {
       subjRaw
     );
     const schoolCtx = await primarySchoolContext(srv, institutionId, class_id);
+    const eventCatalogEnabled = schoolCtx.isPrimary && Boolean(
+      (primary_event_code || readPrimaryEventsCatalog(schoolCtx.settings).years[schoolCtx.year]?.events.length));
+    let chosenEvent: ReturnType<typeof primaryEventsForClass>[number] | null = null;
+    if (eventCatalogEnabled) {
+      const eventCode = String(primary_event_code || "").trim().toUpperCase();
+      const track = globalId
+        ? primarySubjectTeachingTrack(schoolCtx.settings, schoolCtx.year, class_id, globalId, teaching_track) : null;
+      if (!track || !eventCode) {
+        return NextResponse.json({ ok: false, error: "primary_event_required" }, { status: 400 });
+      }
+      if (eventCode !== "DEVOIR") {
+        chosenEvent = primaryEventsForClass(schoolCtx.settings, schoolCtx.year,
+          schoolCtx.level, track).find(event => event.code === eventCode) || null;
+        if (!chosenEvent) return NextResponse.json({ ok: false, error: "primary_event_not_allowed" }, { status: 403 });
+        eval_date = chosenEvent.date;
+      }
+      try {
+        if (computeAcademicYearFromEvalDate(eval_date) !== schoolCtx.year) {
+          return NextResponse.json({ ok: false, error: "primary_event_wrong_year" }, { status: 400 });
+        }
+      } catch {
+        return NextResponse.json({ ok: false, error: "invalid_eval_date" }, { status: 400 });
+      }
+    }
     let storedKind: "devoir" | "interro_ecrite" | "interro_orale" = "devoir";
     let storedTitle: string | null = null;
     let primaryScale: number | null = null;
     if (schoolCtx.isPrimary) {
-      if (eval_kind !== "devoir" && eval_kind !== "composition") {
+      const primaryKind = eventCatalogEnabled
+        ? (chosenEvent?.kind === "official" || chosenEvent?.kind === "passage" ? "composition" : "devoir")
+        : eval_kind;
+      if (primaryKind !== "devoir" && primaryKind !== "composition") {
         return NextResponse.json({ ok: false, error: "primary_eval_kind_not_allowed" }, { status: 400 });
       }
       const track = globalId
-        ? primarySubjectTeachingTrack(schoolCtx.settings, schoolCtx.year, class_id, globalId) : null;
+        ? primarySubjectTeachingTrack(schoolCtx.settings, schoolCtx.year, class_id, globalId, teaching_track) : null;
       if (!track || !globalId) {
         return NextResponse.json({ ok: false, error: "primary_subject_teaching_unconfigured" }, { status: 409 });
       }
@@ -858,9 +904,10 @@ export async function POST(req: NextRequest) {
       if (!Number.isFinite(scale) || scale !== primaryScale || coeff !== 1) {
         return NextResponse.json({ ok: false, error: "primary_scale_or_weight_mismatch" }, { status: 400 });
       }
-      const encoded = encodePrimaryEvaluation(eval_kind);
+      const encoded = encodePrimaryEvaluation(primaryKind);
       storedKind = encoded.eval_kind;
-      storedTitle = encoded.title;
+      if (scale >= 10000) return NextResponse.json({ok:false,error:"primary_scale_exceeds_existing_storage"},{status:409});
+      storedTitle = primaryScaleTitle(chosenEvent ? primaryEventTitle(chosenEvent, track) : eventCatalogEnabled ? primaryHomeworkTitle(track) : encoded.title, scale);
     } else {
       if (eval_kind !== "devoir" && eval_kind !== "interro_ecrite" && eval_kind !== "interro_orale") {
         return NextResponse.json({ ok: false, error: "invalid_eval_kind" }, { status: 400 });
@@ -929,7 +976,7 @@ export async function POST(req: NextRequest) {
     const explicitGradingPeriodId =
       normalizeUuidLike(gradingPeriodId) ??
       normalizeUuidLike(grading_period_id_raw);
-    if (schoolCtx.isPrimary && !explicitGradingPeriodId) {
+    if (schoolCtx.isPrimary && !eventCatalogEnabled && !explicitGradingPeriodId) {
       return NextResponse.json({ ok: false, error: "primary_grading_period_required" }, { status: 400 });
     }
 
@@ -947,7 +994,7 @@ export async function POST(req: NextRequest) {
     let grading_period_id: string | null = null;
     let resolvedPeriod: GradePeriodRow | null = null;
 
-    if (explicitGradingPeriodId) {
+    if (explicitGradingPeriodId && !eventCatalogEnabled) {
       const validated = await validateExplicitGradePeriod(
         srv,
         institutionId,
@@ -966,7 +1013,7 @@ export async function POST(req: NextRequest) {
 
       grading_period_id = validated.period.id;
       resolvedPeriod = validated.period;
-    } else {
+    } else if (!eventCatalogEnabled) {
       grading_period_id = await autoDetectGradePeriodId(
         srv,
         institutionId,
@@ -988,9 +1035,35 @@ export async function POST(req: NextRequest) {
       return closedPeriodResponse(resolvedPeriod);
     }
 
+    const eventEvaluationId = chosenEvent ? (() => {
+      const eventTrack = parsePrimaryEventTitle(storedTitle)?.track;
+      const hex = createHash("sha256").update(JSON.stringify([institutionId, academic_year, class_id, globalId, primaryEventTitle(chosenEvent, eventTrack)])).digest("hex").slice(0, 32);
+      return `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20)}`;
+    })() : null;
+    const visibleItem = (rawItem: EvalRow) => {
+      const item = withPrimaryDisplayScale(rawItem);
+      return schoolCtx.isPrimary && isPrimaryComposition(item) ? { ...item, eval_kind: "composition" as const } : item;
+    };
+    if (eventEvaluationId && chosenEvent) {
+      const existing = await srv.from("grade_evaluations").select(EVALUATION_SELECT)
+        .eq("class_id", class_id).eq("subject_id", globalId as string)
+        .eq("academic_year", academic_year).like("title", "MCPE:%").limit(2001);
+      if (existing.error) return NextResponse.json({ ok: false, error: "primary_event_lookup_failed" }, { status: 503 });
+      const items = ((existing.data || []) as unknown as EvalRow[]).filter(item => {
+        const marker = parsePrimaryEventTitle(item.title), expected = parsePrimaryEventTitle(storedTitle);
+        return marker?.code === chosenEvent.code && marker.kind === chosenEvent.kind &&
+          (!marker.track || marker.track === expected?.track);
+      });
+      if (items.length > 1) return NextResponse.json({ ok: false, error: "primary_event_duplicate_subject" }, { status: 409 });
+      if (items[0]) {
+        if (items[0].teacher_id !== profileId && !isPrivileged(roles)) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+        return NextResponse.json({ ok: true, reused: true, item: visibleItem(items[0]) });
+      }
+    }
     const { data, error } = await srv
       .from("grade_evaluations")
       .insert({
+        ...(eventEvaluationId ? {id:eventEvaluationId} : {}),
         class_id,
         subject_id: subjRaw ? (globalId as string) : null,
         subject_component_id: subjectComponentIdNorm,
@@ -1000,7 +1073,7 @@ export async function POST(req: NextRequest) {
         eval_date,
         eval_kind: storedKind,
         title: storedTitle,
-        scale,
+        scale: schoolCtx.isPrimary ? primaryStorageScale(scale) : scale,
         coeff: schoolCtx.isPrimary ? 1 : (typeof coeff === "number" ? coeff : 1),
         is_published: false,
         published_at: null,
@@ -1011,6 +1084,12 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (error) {
+      if (eventEvaluationId && error.code === "23505") {
+        const existing = await srv.from("grade_evaluations").select(EVALUATION_SELECT).eq("id",eventEvaluationId).maybeSingle();
+        const item = existing.data as unknown as EvalRow | null;
+        if (item && (item.teacher_id === profileId || isPrivileged(roles)))
+          return NextResponse.json({ ok: true, reused: true, item: visibleItem(item) });
+      }
       console.error("[teacher/grades/evaluations] POST error", error);
 
       return NextResponse.json(
@@ -1019,7 +1098,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const item = data as unknown as EvalRow;
+    const item = withPrimaryDisplayScale(data as unknown as EvalRow);
     const visible = schoolCtx.isPrimary && isPrimaryComposition(item)
       ? { ...item, eval_kind: "composition" as const } : item;
 
@@ -1185,7 +1264,7 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    const item = data as unknown as EvalRow;
+    const item = withPrimaryDisplayScale(data as unknown as EvalRow);
 
     return NextResponse.json(
       {

@@ -21,7 +21,9 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
     : format === "separate" ? ["french", "arabic"] : ["combined", "french", "arabic"];
   const [variant, setVariant] = useState<BulletinVariant>(choices[0]);
   const selected = choices.includes(variant) ? variant : choices[0];
-  const printable = data.documents.length > 0 && data.documents.every(row =>
+  const visibleDocuments = data.documents.filter(row => selected === "combined"
+    ? !!row.document.french && !!row.document.arabic : !!row.document[selected === "ordinary" ? "french" : selected]);
+  const printable = visibleDocuments.length > 0 && visibleDocuments.every(row =>
     isSpecializedBulletinPrintable(row.document, row.programReadiness, selected));
   useEffect(() => {
     const printShortcut = (event: KeyboardEvent) => {
@@ -36,7 +38,7 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
   if (data.cycle === "secondary") return <a href="/admin/bulletins">Ouvrir les bulletins historiques du secondaire</a>;
   return <section className="space-y-4">
     <div className="flex flex-wrap items-center gap-3 print:hidden">
-      <button type="button" onClick={onBack} className="rounded-lg border px-3 py-2">Changer de classe ou de période</button>
+      <button type="button" onClick={onBack} className="rounded-lg border px-3 py-2">Changer de classe ou d’évaluation</button>
       <label htmlFor="specialized-bulletin-layout">Présentation</label>
       <select id="specialized-bulletin-layout" value={selected} onChange={event => setVariant(event.target.value as BulletinVariant)} className="rounded-lg border p-2">
         {choices.map(choice => <option key={choice} value={choice}>{choice === "combined" ? "Français et arabe — résultats séparés" : choice === "arabic" ? "Arabe" : choice === "ordinary" ? "Bulletin scolaire" : "Français"}</option>)}
@@ -51,7 +53,7 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
     </div>}
     <div className="specialized-print-denied" role="status">Impression indisponible : les bulletins sélectionnés sont incomplets ou non validés. Vérifiez la configuration et les notes publiées dans Mon Cahier.</div>
     <div className={`fa-report-print-root specialized-print-root ${!printable || printPreparing || error ? "specialized-print-blocked" : ""} space-y-6 overflow-x-auto print:overflow-visible`}>
-      {data.documents.map(row => <FrancoArabicBulletin key={row.studentId} model={{ ...row.document, school: { ...row.document.school, ...data.school },
+      {visibleDocuments.map(row => <FrancoArabicBulletin key={row.studentId} model={{ ...row.document, school: { ...row.document.school, ...data.school },
         draft: !isSpecializedBulletinPrintable(row.document, row.programReadiness, selected) }} variant={selected} printRoot={false} />)}
     </div>
   </section>;

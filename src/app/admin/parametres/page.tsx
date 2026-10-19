@@ -20,6 +20,7 @@ import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
 import SchoolCoefficientsClassicWorkflow from "@/components/admin/SchoolCoefficientsClassicWorkflow";
 import SchoolBulletinModelPicker from "@/components/admin/SchoolBulletinModelPicker";
 import SchoolGradingPeriodsEditor from "@/components/admin/SchoolGradingPeriodsEditor";
+import PrimaryEvaluationEventsEditor from "@/components/admin/PrimaryEvaluationEventsEditor";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
 } from "@/components/admin/EducationScopeSwitcher";
@@ -745,6 +746,7 @@ export default function AdminSettingsPage() {
   const { relayEnabled } = useRelayCapability();
   const schoolNavigation = useSchoolNavigation();
   const hasSpecializedSettings = Boolean(schoolNavigation);
+  const hasPrimaryPrograms = schoolNavigation?.settings.enabledCycles.includes("primary") === true;
   const hasBilingualPrograms = Boolean(
     schoolNavigation && isBilingualSchool(schoolNavigation.settings),
   );
@@ -3789,7 +3791,10 @@ export default function AdminSettingsPage() {
         {activeTab === "grading-periods" && (
           <>
             {hasSpecializedSettings ? (
-              <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} />
+              <div className="space-y-6">
+                {hasPrimaryPrograms && <PrimaryEvaluationEventsEditor key={selectedAcademicYear} academicYear={selectedAcademicYear} />}
+                <SchoolGradingPeriodsEditor academicYear={selectedAcademicYear} hidePrimary={hasPrimaryPrograms} />
+              </div>
             ) : (
               <>
             {!hasSpecializedSettings && (

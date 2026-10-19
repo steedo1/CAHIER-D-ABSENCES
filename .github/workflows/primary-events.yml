@@ -1,0 +1,42 @@
+name: Primary gradebook and bulletin regression
+on:
+  pull_request:
+    branches: [reprise-propre-5418ce7-20260729]
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'package*.json'
+      - '.github/workflows/primary-events.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: primary-events-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-build-anon
+      SUPABASE_URL: http://127.0.0.1:54321
+      SUPABASE_SERVICE_ROLE_KEY: isolated-build-service
+      CIRCLE_NODE_TOTAL: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:primary-events
+      - run: npm run test:multicycle
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:primary-events:browser
+      - run: npm run build
