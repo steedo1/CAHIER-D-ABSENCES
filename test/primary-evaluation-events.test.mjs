@@ -1,4 +1,8 @@
 import test from "node:test";
+import {
+  getEvaluationSettingsScope,
+  isVisibleGradingPeriodCycle,
+} from "../src/lib/grades/evaluation-settings-scope.ts";
 import assert from "node:assert/strict";
 import {
   readPrimaryEventsCatalog, validatePrimaryEvents, primaryEventsForClass,
@@ -61,4 +65,32 @@ test("teacher-compatible primary markers do not turn internal events into compos
   assert.equal(isPrimaryComposition({ eval_kind: "interro_ecrite", title: primaryEventTitle(passage) }), true);
   assert.equal(isPrimaryComposition({ eval_kind: "devoir", title: primaryEventTitle(internal) }), false);
   assert.equal(isPrimaryComposition({ eval_kind: "interro_ecrite", title: "Interrogation écrite" }), false);
+});
+
+test("the existing cycle selector isolates primary events from other period editors", () => {
+  const enabled = ["preschool", "primary", "secondary"];
+  assert.deepEqual(getEvaluationSettingsScope("primary", enabled), {
+    showPrimaryEvents: true, showGradingPeriods: false,
+  });
+  assert.deepEqual(getEvaluationSettingsScope("secondary", enabled), {
+    showPrimaryEvents: false, showGradingPeriods: true,
+  });
+  assert.deepEqual(getEvaluationSettingsScope("preschool", enabled), {
+    showPrimaryEvents: false, showGradingPeriods: true,
+  });
+  assert.deepEqual(getEvaluationSettingsScope("all", enabled), {
+    showPrimaryEvents: true, showGradingPeriods: true,
+  });
+  assert.deepEqual(getEvaluationSettingsScope("all", ["primary"]), {
+    showPrimaryEvents: true, showGradingPeriods: false,
+  });
+  assert.deepEqual(getEvaluationSettingsScope("all", ["secondary"]), {
+    showPrimaryEvents: false, showGradingPeriods: true,
+  });
+  for (const cycle of enabled) {
+    assert.equal(isVisibleGradingPeriodCycle(cycle, "primary", true), false);
+    assert.equal(isVisibleGradingPeriodCycle(cycle, "secondary", true), cycle === "secondary");
+    assert.equal(isVisibleGradingPeriodCycle(cycle, "preschool", true), cycle === "preschool");
+    assert.equal(isVisibleGradingPeriodCycle(cycle, "all", true), cycle !== "primary");
+  }
 });
