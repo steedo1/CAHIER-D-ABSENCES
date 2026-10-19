@@ -1910,6 +1910,7 @@ export default function ClassDeviceNotesPage() {
   const labelByEvalId: Record<string, string> = useMemo(() => {
     const counters: Record<EvalKind, number> = {
       devoir: 0,
+      composition: 0,
       interro_ecrite: 0,
       interro_orale: 0,
     };
@@ -1920,6 +1921,7 @@ export default function ClassDeviceNotesPage() {
       const idx = counters[kind];
       let prefix: string;
       if (kind === "devoir") prefix = "DEVOIR";
+      else if (kind === "composition") prefix = "COMPO";
       else if (kind === "interro_ecrite") prefix = "IE";
       else prefix = "IO";
       map[ev.id] = `${prefix}${idx}`;
