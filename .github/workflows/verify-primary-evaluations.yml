@@ -1,0 +1,28 @@
+name: Vérification évaluations du primaire
+on:
+  pull_request:
+    branches:
+      - reprise-propre-5418ce7-20260729
+    paths:
+      - 'src/lib/grades/primary-evaluation-events.ts'
+      - 'src/app/api/school/primary-evaluations/**'
+      - 'src/app/api/teacher/grades/**'
+      - 'src/app/grades/page.tsx'
+      - 'src/app/admin/parametres/page.tsx'
+      - 'src/components/admin/PrimaryEvaluationsSettings.tsx'
+      - 'test/primary-evaluation-events.test.ts'
+      - '.github/workflows/verify-primary-evaluations.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: node --import tsx --test test/primary-evaluation-events.test.ts
