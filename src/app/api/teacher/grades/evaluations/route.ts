@@ -688,7 +688,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
     }
 
-    if (gradingPeriodId) {
+    const schoolCtx = await primarySchoolContext(srv, institutionId, classId);
+    const catalogEnabled = schoolCtx.isPrimary && Boolean(
+      readPrimaryEventsCatalog(schoolCtx.settings).years[schoolCtx.year]?.events.length);
+    const subjectTrack = schoolCtx.isPrimary && globalId
+      ? primarySubjectTeachingTrack(schoolCtx.settings, schoolCtx.year, classId, globalId) : null;
+    const primaryEvents = catalogEnabled && subjectTrack
+      ? primaryEventsForClass(schoolCtx.settings, schoolCtx.year, schoolCtx.level, subjectTrack) : [];
+
+    // Calendrier primaire : le filtre d'une ancienne période ne doit jamais
+    // masquer les événements ponctuels du nouveau cahier.
+    if (gradingPeriodId && !catalogEnabled) {
       const rawPeriod = await getGradePeriodById(srv, institutionId, gradingPeriodId);
       const period = rawPeriod
         ? await getApplicableGradePeriodById(
@@ -699,19 +709,8 @@ export async function GET(req: NextRequest) {
             gradingPeriodId,
           )
         : null;
-
-      if (!period) {
-        return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
-      }
+      if (!period) return NextResponse.json({ items: [] as EvalRow[] }, { status: 200 });
     }
-
-    const schoolCtx = await primarySchoolContext(srv, institutionId, classId);
-    const catalogEnabled = schoolCtx.isPrimary && Boolean(
-      readPrimaryEventsCatalog(schoolCtx.settings).years[schoolCtx.year]?.events.length);
-    const subjectTrack = schoolCtx.isPrimary && globalId
-      ? primarySubjectTeachingTrack(schoolCtx.settings, schoolCtx.year, classId, globalId) : null;
-    const primaryEvents = catalogEnabled && subjectTrack
-      ? primaryEventsForClass(schoolCtx.settings, schoolCtx.year, schoolCtx.level, subjectTrack) : [];
 
     let q = srv
       .from("grade_evaluations")
@@ -722,7 +721,7 @@ export async function GET(req: NextRequest) {
       q = q.eq("teacher_id", profileId);
     }
 
-    if (gradingPeriodId) {
+    if (gradingPeriodId && !catalogEnabled) {
       q = q.eq("grading_period_id", gradingPeriodId);
     }
 

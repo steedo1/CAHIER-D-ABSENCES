@@ -54,3 +54,11 @@ test("passage formula ordinary plus twice final divided by three", () => {
   assert.equal(primaryPassageAverage([7, Number.NaN], 9), null);
   assert.equal(primaryPassageAverage([6, 7], null), null);
 });
+
+test("teacher-compatible primary markers do not turn internal events into compositions", async () => {
+  const { isPrimaryComposition } = await import("../src/lib/grades/primary-evaluation-kind.ts");
+  assert.equal(isPrimaryComposition({ eval_kind: "interro_ecrite", title: primaryEventTitle(official) }), true);
+  assert.equal(isPrimaryComposition({ eval_kind: "interro_ecrite", title: primaryEventTitle(passage) }), true);
+  assert.equal(isPrimaryComposition({ eval_kind: "devoir", title: primaryEventTitle(internal) }), false);
+  assert.equal(isPrimaryComposition({ eval_kind: "interro_ecrite", title: "Interrogation écrite" }), false);
+});
