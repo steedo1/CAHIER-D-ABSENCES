@@ -6,7 +6,8 @@ import { selectProgramComponents } from "@/lib/school-subject-components";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { requiresDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
+import { requiresDirectGradePublication, usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
+import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 import {
   getGradePublicationSettings,
   handleTeacherPublicationIntent,
@@ -327,6 +328,21 @@ async function teacherHasAccessToClass(
     .limit(1);
 
   return !!(Array.isArray(anyRow) && anyRow.length > 0);
+}
+
+/** Only the assigned subject of the authenticated primary class-device can be accessed. */
+async function primaryClassDeviceAccess(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  roles: Set<Role>, institutionId: string, profileId: string,
+  classId: string, subjectIds: string[], schoolCtx: Awaited<ReturnType<typeof primarySchoolContext>>,
+): Promise<boolean> {
+  if (!roles.has("class_device") || roles.has("teacher") || !schoolCtx.isPrimary ||
+      !usesDirectGradePublication(schoolCtx.settings) || !subjectIds.length) return false;
+  if (!await classDeviceMayAccessClass({ service: srv, userId: profileId, classId })) return false;
+  const { data, error } = await srv.from("class_teachers").select("id")
+    .eq("institution_id", institutionId).eq("class_id", classId)
+    .in("subject_id", subjectIds).is("end_date", null).limit(1);
+  return !error && Array.isArray(data) && data.length > 0;
 }
 
 async function getGradePeriodById(
@@ -676,7 +692,11 @@ export async function GET(req: NextRequest) {
       (x): x is string => !!x
     );
 
-    const accessOk = isPrivileged(roles)
+    const schoolCtx = await primarySchoolContext(srv, institutionId, classId);
+    const classDeviceAccess = await primaryClassDeviceAccess(
+      srv, roles, institutionId, profileId, classId, subjectCandidates, schoolCtx,
+    );
+    const accessOk = isPrivileged(roles) || classDeviceAccess
       ? true
       : await teacherHasAccessToClass(
           srv,
@@ -690,7 +710,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
     }
 
-    const schoolCtx = await primarySchoolContext(srv, institutionId, classId);
     const catalogEnabled = schoolCtx.isPrimary;
     const subjectTrack = schoolCtx.isPrimary && globalId
       ? primarySubjectTeachingTrack(schoolCtx.settings, schoolCtx.year, classId, globalId, url.searchParams.get("teaching_track")) : null;
@@ -721,7 +740,7 @@ export async function GET(req: NextRequest) {
       .select(EVALUATION_SELECT)
       .eq("class_id", classId);
 
-    if (!isPrivileged(roles)) {
+    if (!isPrivileged(roles) && !classDeviceAccess) {
       q = q.eq("teacher_id", profileId);
     }
 
@@ -954,7 +973,10 @@ export async function POST(req: NextRequest) {
 
     const requireExactSubjectAssignment =
       !isPrivileged(roles) && await requiresDirectGradePublication(srv, institutionId);
-    const accessOk = isPrivileged(roles)
+    const classDeviceAccess = await primaryClassDeviceAccess(
+      srv, roles, institutionId, profileId, class_id, subjectCandidates, schoolCtx,
+    );
+    const accessOk = isPrivileged(roles) || classDeviceAccess
       ? true
       : await teacherHasAccessToClass(
           srv,
@@ -1056,9 +1078,21 @@ export async function POST(req: NextRequest) {
       });
       if (items.length > 1) return NextResponse.json({ ok: false, error: "primary_event_duplicate_subject" }, { status: 409 });
       if (items[0]) {
-        if (items[0].teacher_id !== profileId && !isPrivileged(roles)) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+        if (items[0].teacher_id !== profileId && !isPrivileged(roles) && !classDeviceAccess) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
         return NextResponse.json({ ok: true, reused: true, item: visibleItem(items[0]) });
       }
+    }
+    // An EPC class-device acts for the assigned teacher, never as the teacher identity itself.
+    let evaluationTeacherId = profileId;
+    if (classDeviceAccess) {
+      const { data: assignment, error: assignmentError } = await srv.from("class_teachers")
+        .select("teacher_id").eq("institution_id", institutionId)
+        .eq("class_id", class_id).in("subject_id", subjectCandidates)
+        .is("end_date", null).order("teacher_id").limit(1).maybeSingle();
+      if (assignmentError || !assignment?.teacher_id) {
+        return NextResponse.json({ ok: false, error: "class_subject_teacher_missing" }, { status: 409 });
+      }
+      evaluationTeacherId = assignment.teacher_id;
     }
     const { data, error } = await srv
       .from("grade_evaluations")
@@ -1069,7 +1103,7 @@ export async function POST(req: NextRequest) {
         subject_component_id: subjectComponentIdNorm,
         grading_period_id,
         academic_year,
-        teacher_id: profileId,
+        teacher_id: evaluationTeacherId,
         eval_date,
         eval_kind: storedKind,
         title: storedTitle,
@@ -1087,7 +1121,7 @@ export async function POST(req: NextRequest) {
       if (eventEvaluationId && error.code === "23505") {
         const existing = await srv.from("grade_evaluations").select(EVALUATION_SELECT).eq("id",eventEvaluationId).maybeSingle();
         const item = existing.data as unknown as EvalRow | null;
-        if (item && (item.teacher_id === profileId || isPrivileged(roles)))
+        if (item && (item.teacher_id === profileId || isPrivileged(roles) || classDeviceAccess))
           return NextResponse.json({ ok: true, reused: true, item: visibleItem(item) });
       }
       console.error("[teacher/grades/evaluations] POST error", error);
