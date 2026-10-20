@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import "./dashboard-premium.css";
 import Link from "next/link";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import {
@@ -437,9 +438,9 @@ export default function AdminDashboardClient() {
   const unavailableHint = "Non disponible pour ce filtre";
 
   return (
-    <div className="space-y-6">
+    <div className="premium-school-dashboard space-y-6">
       {/* En-tête gradient (section héro) */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-600 via-lime-500 to-amber-500 p-5 text-white sm:p-6">
+      <div className="premium-school-hero relative overflow-hidden rounded-3xl p-5 text-white sm:p-6">
         <div
           className="pointer-events-none absolute inset-0 opacity-20"
           style={{
