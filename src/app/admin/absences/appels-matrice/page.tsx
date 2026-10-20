@@ -751,11 +751,11 @@ export default function AppelsMatricePage() {
                     cellColorClasses(cell.status),
                   ].join(" ")}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-semibold">
+                  <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                    <span className="min-w-0 max-w-full break-words text-sm font-semibold" title={cell.class_label}>
                       {cell.class_label}
                     </span>
-                    <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-semibold uppercase">
+                    <span className="shrink-0 whitespace-nowrap rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-semibold uppercase">
                       {cell.status === "not_started"
                         ? "À VENIR"
                         : cell.status === "missing"

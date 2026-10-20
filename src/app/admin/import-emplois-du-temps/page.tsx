@@ -1639,13 +1639,13 @@ export default function ImportEmploisDuTempsPage() {
                           >
                             <input
                               type="checkbox"
-                              className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              className="h-4 w-4 shrink-0 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
                               checked={checked}
                               onChange={() => toggleClassForActiveCell(c.id)}
                             />
                             <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
-                                <span className="truncate">{c.label}</span>
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <span className="min-w-0 max-w-full break-words" title={c.label}>{c.label}</span>
                                 {conflictMessages.length > 0 ? (
                                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
                                 ) : null}
@@ -1781,13 +1781,13 @@ export default function ImportEmploisDuTempsPage() {
                           >
                             <input
                               type="checkbox"
-                              className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              className="h-4 w-4 shrink-0 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
                               checked={checked}
                               onChange={() => toggleClassForActiveCell(c.id)}
                             />
                             <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
-                                <span className="truncate">{c.label}</span>
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <span className="min-w-0 max-w-full break-words" title={c.label}>{c.label}</span>
                                 {conflictMessages.length > 0 ? (
                                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
                                 ) : null}
