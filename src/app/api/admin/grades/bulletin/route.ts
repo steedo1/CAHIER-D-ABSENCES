@@ -738,9 +738,10 @@ const snapFor = (row: any) => {
   const prepared = (row as any)?.__qr_snapshot;
   if (prepared && typeof prepared === "object") return prepared;
 
-  const g = cleanNumber((row as any)?.general_avg, 4);
-  const a = cleanNumber((row as any)?.annual_avg, 4);
-  const c = cleanNumber((row as any)?.conduct_avg, 4);
+  // QR fallback: distinguish a missing/NC mark from a real zero.
+  const g = (row as any)?.general_avg == null ? null : cleanNumber((row as any).general_avg, 4);
+  const a = (row as any)?.annual_avg == null ? null : cleanNumber((row as any).annual_avg, 4);
+  const c = (row as any)?.conduct_avg == null ? null : cleanNumber((row as any).conduct_avg, 4);
   const r =
     (row as any)?.rank !== null &&
     (row as any)?.rank !== undefined &&
