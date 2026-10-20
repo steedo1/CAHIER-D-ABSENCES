@@ -1,3 +1,5 @@
+import { mayReadDirectAverages } from "@/lib/server/direct-average-access";
+import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
 import { selectProgramComponents, isProgramComponentLevel } from "@/lib/school-subject-components";
@@ -89,6 +91,7 @@ type GradeRow = {
 };
 
 type BonusRow = {
+  reason?: string | null;
   student_id: string;
   bonus: number;
   subject_id: string | null;
@@ -487,35 +490,6 @@ export async function GET(req: NextRequest) {
       published_only,
     });
 
-    if (evaluationIds.length === 0) {
-      logInfo("no evaluations for", {
-        class_id,
-        subjectIdRaw: subject_id,
-        effectiveSubjectId,
-        grading_period_id,
-        academic_year,
-      });
-
-      return NextResponse.json({
-        ok: true,
-        params: {
-          class_id,
-          subject_id,
-          grading_period_id,
-          academic_year,
-          published_only,
-          missing,
-          round_to: round_to ?? "none",
-          rank_by,
-        },
-        items: [],
-        meta: {
-          evaluations: 0,
-          note: "Aucune évaluation concernée. Aucun élève ne doit être affiché avec 0 par défaut.",
-        },
-      });
-    }
-
     // Détection : au moins une évaluation attachée à une sous-matière ?
     const hasAnyComponentEval = evaluations.some(
       (e) => !!(e as any).subject_component_id
@@ -622,7 +596,7 @@ export async function GET(req: NextRequest) {
     } else {
       let qBonus = svc
         .from("grade_adjustments")
-        .select("student_id, bonus, subject_id, grading_period_id")
+        .select("student_id, bonus, subject_id, grading_period_id, reason")
         .eq("class_id", class_id)
         .eq("academic_year", academic_year);
 
@@ -771,6 +745,13 @@ export async function GET(req: NextRequest) {
     });
 
     // Construire le tableau final
+    const directByStudent = directAverageMap(bonusRows as BonusRow[], grading_period_id);
+    if (directByStudent.size && !await mayReadDirectAverages(svc, supabase, auth.user.id, class_id, institution_id, effectiveSubjectId)) return bad("FORBIDDEN", 403);
+    if (effectiveSubjectId) for (const [studentId, subjects] of directByStudent) {
+      if (subjects.has(effectiveSubjectId) && !gradesByStudent.has(studentId))
+        gradesByStudent.set(studentId, { sum: 0, denom: 0, counted: 0, present: 0 });
+    }
+
     const rows: Row[] = [];
     const totalEvals = evaluations.length;
 
@@ -810,16 +791,18 @@ export async function GET(req: NextRequest) {
 
       // Aucun calcul possible = pas de ligne.
       // Le front complète avec le roster et affiche NC.
+      const direct = effectiveSubjectId ? directByStudent.get(sid)?.get(effectiveSubjectId) : undefined;
+      if (direct !== undefined) avg20 = direct;
       if (avg20 === null || !Number.isFinite(avg20)) continue;
 
-      const b = bonusMap.get(sid) ?? 0;
-      const afterBonus = clamp(avg20 + b, 0, 20);
+      const b = direct === undefined ? bonusMap.get(sid) ?? 0 : 0;
+      const afterBonus = finalSubjectAverage(avg20, b, direct)!;
       const rounded = round_to ? roundTo(afterBonus, round_to) : afterBonus;
 
-      const isComplete =
+      const isComplete = direct !== undefined || (
         missing === "zero"
           ? totalEvals > 0
-          : agg.counted >= totalEvals && totalEvals > 0;
+          : agg.counted >= totalEvals && totalEvals > 0);
 
       rows.push({
         student_id: sid,

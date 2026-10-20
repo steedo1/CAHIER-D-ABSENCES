@@ -1,3 +1,6 @@
+import { overlayDirectConductSubjects } from "@/lib/server/direct-conduct-subject-averages";
+import { directConductSource } from "@/lib/manual-conduct-absences";
+import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
 import { deductManualSanctions, parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
 // src/app/api/public/bulletins/verify/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -1142,6 +1145,7 @@ type ScoreRow = {
 };
 
 type GradeAdjustmentBonusRow = {
+  reason?: string | null;
   student_id: string;
   subject_id: string | null;
   grading_period_id?: string | null;
@@ -1149,6 +1153,7 @@ type GradeAdjustmentBonusRow = {
 };
 
 type AdjustmentBonusMaps = {
+  directSubjectByStudent: Map<string, Map<string, number>>;
   subjectBonusByStudent: Map<string, Map<string, number>>;
   generalBonusByStudent: Map<string, number>;
 };
@@ -1434,9 +1439,9 @@ async function computeStudentGeneralAvgForRange(opts: {
     .lte("eval_date", to);
 
   const { data: evalData, error: evalErr } = await evalQuery;
-  if (evalErr || !evalData || !evalData.length) return null;
+  if (evalErr) throw evalErr;
 
-  const evals = evalData as EvalRow[];
+  const evals = (evalData || []) as EvalRow[];
   const evalById = new Map<string, EvalRow>();
   evals.forEach((e) => evalById.set(e.id, e));
 
@@ -1448,8 +1453,8 @@ async function computeStudentGeneralAvgForRange(opts: {
     .in("evaluation_id", evalIds)
     .eq("student_id", studentId);
 
-  if (scoreErr || !scoreData || !scoreData.length) return null;
-  const scores = scoreData as ScoreRow[];
+  if (scoreErr) throw scoreErr;
+  const scores = (scoreData || []) as ScoreRow[];
 
   const perSubject = new Map<
     string,
@@ -1542,6 +1547,9 @@ async function computeStudentGeneralAvgForRange(opts: {
       const adjusted = clampAverage20(Number(avg20) + subjectBonus);
       avg20 = adjusted === null ? null : cleanNumber(adjusted, 4);
     }
+
+    const direct = bonusMaps?.directSubjectByStudent.get(studentId)?.get(String(s.subject_id));
+    avg20 = finalSubjectAverage(rawAvg20, subjectBonus, direct);
 
     return {
       subject_id: s.subject_id,
@@ -2223,6 +2231,7 @@ export async function GET(req: NextRequest) {
     periodId?: string | null;
   }): Promise<AdjustmentBonusMaps> {
     const empty: AdjustmentBonusMaps = {
+      directSubjectByStudent: new Map(),
       subjectBonusByStudent: new Map(),
       generalBonusByStudent: new Map(),
     };
@@ -2230,6 +2239,7 @@ export async function GET(req: NextRequest) {
     const academicYear = String(params.academicYear || "").trim();
     if (!academicYear || !studentIds.length) return empty;
 
+    let directRows: GradeAdjustmentBonusRow[] = [];
     const selectedByKey = new Map<
       string,
       {
@@ -2244,6 +2254,7 @@ export async function GET(req: NextRequest) {
       rows: GradeAdjustmentBonusRow[],
       hasPeriodColumn: boolean,
     ) => {
+      directRows = rows;
       for (const row of rows || []) {
         const sid = String(row.student_id || "").trim();
         if (!sid) continue;
@@ -2281,7 +2292,7 @@ export async function GET(req: NextRequest) {
     try {
       const { data, error } = await srv
         .from("grade_adjustments")
-        .select("student_id, subject_id, grading_period_id, bonus")
+        .select("student_id, subject_id, grading_period_id, bonus, reason")
         .eq("class_id", classIdStr)
         .eq("academic_year", academicYear)
         .in("student_id", studentIds);
@@ -2292,7 +2303,7 @@ export async function GET(req: NextRequest) {
       try {
         const { data, error: fallbackError } = await srv
           .from("grade_adjustments")
-          .select("student_id, subject_id, bonus")
+          .select("student_id, subject_id, bonus, reason")
           .eq("class_id", classIdStr)
           .eq("academic_year", academicYear)
           .in("student_id", studentIds);
@@ -2309,6 +2320,7 @@ export async function GET(req: NextRequest) {
     }
 
     const out: AdjustmentBonusMaps = {
+      directSubjectByStudent: new Map(),
       subjectBonusByStudent: new Map(),
       generalBonusByStudent: new Map(),
     };
@@ -2326,6 +2338,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    out.directSubjectByStudent = directAverageMap(directRows, params.periodId);
     return out;
   }
 
@@ -2438,6 +2451,12 @@ export async function GET(req: NextRequest) {
               to,
             })
           : new Map<string, Map<string, number>>();
+
+      if (conductPolicy.mode === "conduct_plus_subjects") await overlayDirectConductSubjects(srv, conductSubjectAverageBySubject, {
+        institutionId: instIdStr, classId: classIdStr, academicYear: conductAcademicYear,
+        periodId: conductPeriodId, periodCode: conductPeriodCode, from, to,
+        subjectIds: conductSubjectPolicies.map(row => row.subject_id), studentIds,
+      });
 
       const officialTotalMax =
         conductPolicy.mode === "conduct_plus_subjects" ? 20 : totalMax;
@@ -2876,7 +2895,7 @@ export async function GET(req: NextRequest) {
 
         const override = overridesByStudent.get(sid);
         const rawOverrideTotal = Number(override?.override_total);
-        const isOverridden = !!override && !parseManualAbsenceReason(override.reason) && Number.isFinite(rawOverrideTotal);
+        const isOverridden = !!override && (!parseManualAbsenceReason(override.reason) || !!directConductSource(override.reason)) && Number.isFinite(rawOverrideTotal);
         const finalTotal = isOverridden
           ? Number(
               clampConduct(rawOverrideTotal, 0, officialTotalMax).toFixed(2),
@@ -3742,10 +3761,14 @@ export async function GET(req: NextRequest) {
         avg20 = adjusted === null ? null : cleanNumber(adjusted, 4);
       }
 
+      const direct = currentBonusMaps.directSubjectByStudent.get(cs.student_id)?.get(String(s.subject_id));
+      avg20 = finalSubjectAverage(rawAvg20, subjectBonus, direct);
+
       return {
         subject_id: s.subject_id,
         avg20,
-        bonus: Number(subjectBonus.toFixed(2)),
+        bonus: direct === undefined ? Number(subjectBonus.toFixed(2)) : 0,
+        ...(direct === undefined ? {} : { average_source: "direct" }),
         avg20_before_bonus: rawAvg20,
       };
     });

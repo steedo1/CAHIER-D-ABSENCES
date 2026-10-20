@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { createRequire } from "node:module";
 import ts from "typescript";
@@ -8,13 +9,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const require = createRequire(import.meta.url);
 function load(file, mocks = {}) {
+  file = path.resolve(import.meta.dirname, "..", file);
+  if (!path.extname(file)) file += fs.existsSync(`${file}.tsx`) ? ".tsx" : ".ts";
   const exports = {};
-  const code = ts.transpileModule(fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"), {
+  const code = ts.transpileModule(fs.readFileSync(file, "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
   }).outputText;
   new Function("exports", "require", code)(exports, (name) => {
     if (name in mocks) return mocks[name];
-    if (name.startsWith("@/")) return load(`src/${name.slice(2)}.ts`, mocks);
+    if (name.startsWith("@/")) return load(`src/${name.slice(2)}`, mocks);
+    if (name.startsWith(".")) return load(path.resolve(path.dirname(file), name), mocks);
     return require(name);
   });
   return exports;
@@ -90,7 +94,7 @@ const base = {
   classes: [classRow], class_teachers: [assignment], subjects: [subject], institution_subjects: [instSubject],
 };
 function handlers(seed) {
-  const db = database(seed);
+  const db = database({ institutions: [{ id: "csca", settings_json: {} }], ...seed });
   const mocks = {
     "@/lib/supabase-server": { getSupabaseServerClient: async () => db.srv, getVerifiedServerUser: (srv) => srv.auth.getUser() },
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => db.srv },

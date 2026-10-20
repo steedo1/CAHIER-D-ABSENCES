@@ -1,3 +1,4 @@
+import { DIRECT_AVERAGES_PREFIX } from "@/lib/grades/direct-subject-averages";
 // src/app/api/teacher/grades/adjustments/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -391,10 +392,22 @@ export async function POST(req: NextRequest) {
         return bad(lookupErr.message || "LOOKUP_FAILED", 400, { student_id });
       }
 
-      const existingId =
+      let existingId =
         Array.isArray(existingRows) && existingRows.length > 0
           ? ((existingRows[0] as any).id as string)
           : null;
+
+      // A source-only average row must not prevent the first pedagogical
+      // bonus from being saved under the existing annual unique constraint.
+      if (!existingId) {
+        let sourceLookup = svc.from("grade_adjustments").select("id")
+          .eq("class_id", class_id).eq("student_id", student_id).eq("academic_year", academic_year)
+          .eq("bonus", 0).is("grading_period_id", null).like("reason", `${DIRECT_AVERAGES_PREFIX}%`).limit(1);
+        sourceLookup = applyNullishEq(sourceLookup, "subject_id", subject_id);
+        const source = await sourceLookup;
+        if (source.error) return bad(source.error.message || "LOOKUP_FAILED", 400);
+        existingId = source.data?.[0]?.id ?? null;
+      }
 
       if (existingId) {
         // 2) Update ciblé si trouvé

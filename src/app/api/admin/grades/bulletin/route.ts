@@ -1,3 +1,4 @@
+import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
 // src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -76,6 +77,7 @@ type ScoreRow = {
 };
 
 type GradeAdjustmentBonusRow = {
+  reason?: string | null;
   student_id: string;
   subject_id: string | null;
   grading_period_id?: string | null;
@@ -83,6 +85,7 @@ type GradeAdjustmentBonusRow = {
 };
 
 type AdjustmentBonusMaps = {
+  directSubjectByStudent: Map<string, Map<string, number>>;
   subjectBonusByStudent: Map<string, Map<string, number>>;
   generalBonusByStudent: Map<string, number>;
 };
@@ -3082,6 +3085,7 @@ async function loadBulletin(
     periodId?: string | null;
   }): Promise<AdjustmentBonusMaps> {
     const empty: AdjustmentBonusMaps = {
+      directSubjectByStudent: new Map(),
       subjectBonusByStudent: new Map(),
       generalBonusByStudent: new Map(),
     };
@@ -3089,12 +3093,14 @@ async function loadBulletin(
     const academicYear = String(params.academicYear || "").trim();
     if (!academicYear || !studentIds.length) return empty;
 
+    let directRows: GradeAdjustmentBonusRow[] = [];
     const selectedByKey = new Map<
       string,
       { student_id: string; subject_id: string | null; bonus: number; priority: number }
     >();
 
     const ingest = (rows: GradeAdjustmentBonusRow[], hasPeriodColumn: boolean) => {
+      directRows = rows;
       for (const row of rows || []) {
         const sid = String(row.student_id || "").trim();
         if (!sid) continue;
@@ -3137,7 +3143,7 @@ async function loadBulletin(
       // Requête moderne : tient compte de grading_period_id quand la colonne existe.
       const { data, error } = await srvClient
         .from("grade_adjustments")
-        .select("student_id, subject_id, grading_period_id, bonus")
+        .select("student_id, subject_id, grading_period_id, bonus, reason")
         .eq("class_id", classRow.id)
         .eq("academic_year", academicYear)
         .in("student_id", studentIds);
@@ -3150,7 +3156,7 @@ async function loadBulletin(
       try {
         const { data, error: fallbackError } = await srvClient
           .from("grade_adjustments")
-          .select("student_id, subject_id, bonus")
+          .select("student_id, subject_id, bonus, reason")
           .eq("class_id", classRow.id)
           .eq("academic_year", academicYear)
           .in("student_id", studentIds);
@@ -3167,6 +3173,7 @@ async function loadBulletin(
     }
 
     const out: AdjustmentBonusMaps = {
+      directSubjectByStudent: new Map(),
       subjectBonusByStudent: new Map(),
       generalBonusByStudent: new Map(),
     };
@@ -3184,6 +3191,7 @@ async function loadBulletin(
       }
     }
 
+    out.directSubjectByStudent = directAverageMap(directRows, params.periodId);
     return out;
   }
 
@@ -3326,6 +3334,9 @@ async function loadBulletin(
         avg20 = adjusted === null ? null : cleanNumber(adjusted, 4);
       }
 
+      const direct = currentBonusMaps.directSubjectByStudent.get(cs.student_id)?.get(String(s.subject_id));
+      avg20 = finalSubjectAverage(rawAvg20, subjectBonus, direct);
+
       const hasGrade = avg20 !== null && avg20 !== undefined && Number.isFinite(Number(avg20));
 
       return {
@@ -3334,7 +3345,8 @@ async function loadBulletin(
 
         // ✅ Bonus matière appliqué au bulletin sans casser l'ancien front.
         // avg20 = moyenne finale matière ; avg20_before_bonus garde la trace brute.
-        bonus: Number(subjectBonus.toFixed(2)),
+        bonus: direct === undefined ? Number(subjectBonus.toFixed(2)) : 0,
+        ...(direct === undefined ? {} : { average_source: "direct" }),
         avg20_before_bonus: rawAvg20,
 
         // ✅ Métadonnées NC : ne cassent pas le front existant, mais permettent
@@ -3800,9 +3812,9 @@ async function loadBulletin(
         .gte("eval_date", from)
         .lte("eval_date", to);
 
-      if (eErr || !eData?.length) return out;
+      if (eErr) throw eErr;
 
-      const pevals = (eData as any[]) as EvalRow[];
+      const pevals = ((eData || []) as any[]) as EvalRow[];
       const evalMap = new Map<string, EvalRow>();
       pevals.forEach((ev) => evalMap.set(ev.id, ev));
 
@@ -3816,7 +3828,7 @@ async function loadBulletin(
         return out;
       }
 
-      if (!pscores.length) return out;
+
 
       const perStuSub = new Map<string, Map<string, { sumWeighted: number; sumCoeff: number }>>();
       const perStuComp = new Map<
@@ -3915,12 +3927,10 @@ async function loadBulletin(
             }
           }
 
-          if (subAvg === null || subAvg === undefined) continue;
-          if (!Number.isFinite(subAvg)) continue;
-
           const subjectBonus =
             rangeBonusMaps.subjectBonusByStudent.get(sid)?.get(String(s.subject_id)) ?? 0;
-          const adjustedSubjectAvg = clampAverage20(Number(subAvg) + subjectBonus);
+          const direct = rangeBonusMaps.directSubjectByStudent.get(sid)?.get(String(s.subject_id));
+          const adjustedSubjectAvg = finalSubjectAverage(subAvg, subjectBonus, direct);
           if (adjustedSubjectAvg === null) continue;
           subAvg = adjustedSubjectAvg;
 
