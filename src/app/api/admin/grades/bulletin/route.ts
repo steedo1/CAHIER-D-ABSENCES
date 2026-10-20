@@ -4201,8 +4201,8 @@ async function loadBulletin(
 
     if (!exportLight) {
       it.__qr_snapshot = {
-        g: cleanNumber(it?.general_avg, 4),
-        a: cleanNumber(it?.annual_avg, 4),
+        g: it?.general_avg == null ? null : cleanNumber(it.general_avg, 4),
+        a: it?.annual_avg == null ? null : cleanNumber(it.annual_avg, 4),
         c: conductAvg,
         r:
           it?.rank !== null && it?.rank !== undefined && Number.isFinite(Number(it.rank))
