@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 380" role="img" aria-label="Illustration architecturale d'un établissement scolaire">
+<defs><linearGradient id="sky" x2=".2" y2="1"><stop stop-color="#69c6d6"/><stop offset="1" stop-color="#ffdc8c"/></linearGradient><linearGradient id="wall" x2="0" y2="1"><stop stop-color="#ffdb91"/><stop offset="1" stop-color="#bc8e54"/></linearGradient><linearGradient id="ground" x2="0" y2="1"><stop stop-color="#3d9769"/><stop offset="1" stop-color="#1b644d"/></linearGradient></defs>
+<rect width="1120" height="380" fill="url(#sky)"/><circle cx="892" cy="69" r="49" fill="#ffefd2" opacity=".7"/>
+<path d="M0 270 Q170 225 330 267 T690 246 T1120 256 V380 H0" fill="#69a57b"/>
+<path d="M0 310 Q260 284 530 306 T1120 290 V380 H0" fill="url(#ground)"/>
+<g opacity=".72" fill="#225e51"><path d="M93 275l-12-123 8-2 19 125z"/><path d="M82 149q-90-63-85-20 50-6 85 34-59-96-84-51 46 0 84 45 39-91 84-57-49 9-76 61 90-55 97-8-56-9-92 13z"/><path d="M990 270l-10-130 9-3 19 133z"/><path d="M982 140q-90-63-85-20 50-6 85 34-59-96-84-51 46 0 84 45 39-91 84-57-49 9-76 61 90-55 97-8-56-9-92 13z"/></g>
+<g transform="translate(365 48)">
+<rect x="20" y="140" width="665" height="166" rx="3" fill="url(#wall)"/><path d="M0 144L105 94H658L709 144Z" fill="#a8733b"/>
+<rect x="295" y="40" width="116" height="252" fill="#e9bd75"/><path d="M285 43L353 0 423 43Z" fill="#b48240"/><rect x="328" y="90" width="48" height="71" rx="24" fill="#6c785e"/>
+<path d="M322 306V212a32 32 0 0164 0v94" fill="#406350"/><path d="M326 306V212a28 28 0 0156 0v94" fill="#35654e"/>
+<g fill="#456d62"><path d="M67 269v-66a29 29 0 0158 0v66z"/><path d="M166 269v-66a29 29 0 0158 0v66z"/><path d="M475 269v-66a29 29 0 0158 0v66z"/><path d="M570 269v-66a29 29 0 0158 0v66z"/></g>
+<rect x="342" y="15" width="24" height="19" rx="4" fill="#f8eac0"/>
+<path d="M353 0v-19" stroke="#a57e3f" stroke-width="6"/><circle cx="353" cy="-21" r="7" fill="#d2a55b"/>
+<path d="M24 306H688" stroke="#efe0ae" stroke-width="9"/>
+</g>
+<g fill="#246746" opacity=".9"><ellipse cx="120" cy="315" rx="146" ry="48"/><ellipse cx="1002" cy="305" rx="148" ry="46"/><ellipse cx="345" cy="332" rx="100" ry="28"/></g>
+<path d="M760 380L710 342 650 342 610 380Z" fill="#dbc48c" opacity=".8"/>
+</svg>
