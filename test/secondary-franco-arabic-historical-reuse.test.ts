@@ -98,4 +98,6 @@ test("la conduite manquante et les moyennes NC restent null dans l'API historiqu
   assert.match(api, /conduct_avg == null \? null : cleanNumber/);
   assert.match(api, /general_avg == null \? null : cleanNumber/);
   assert.match(api, /annual_avg == null \? null : cleanNumber/);
+  assert.match(api, /g: it\?\.general_avg == null \? null : cleanNumber/);
+  assert.match(api, /a: it\?\.annual_avg == null \? null : cleanNumber/);
 });
