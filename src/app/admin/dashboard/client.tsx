@@ -3,6 +3,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./dashboard-premium.css";
+import { educationQuoteOfDay } from "@/lib/education-quote-of-day";
 import Link from "next/link";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import {
@@ -72,24 +73,9 @@ type InstitutionInfo = {
   logo_url: string | null;
 };
 
-/**
- * Citations originales non attribuées, embarquées avec l'application.
- * Aucun accès réseau, API, serveur ou base de données.
- */
-const EDUCATION_QUOTES = [
-  "Chaque enfant mérite une chance d’apprendre et de réussir.",
-  "La curiosité est le premier pas vers la connaissance.",
-  "L’éducation ouvre des portes sur l’avenir.",
-  "Enseigner, c’est aider chaque talent à grandir.",
-  "La réussite se construit chaque jour, pas à pas.",
-  "Apprendre aujourd’hui, c’est préparer demain.",
-  "Une école qui encourage fait naître la confiance.",
-  "Le savoir grandit lorsqu’on le partage.",
-] as const;
-
 /** Heure civile ivoirienne, calculée uniquement dans le navigateur. */
 function SchoolClockAndQuotes() {
-  const [clock, setClock] = useState<{ date: string; time: string } | null>(null);
+  const [clock, setClock] = useState<{ date: string; time: string; quote: string } | null>(null);
 
   useEffect(() => {
     const dateFormat = new Intl.DateTimeFormat("fr-FR", {
@@ -107,7 +93,7 @@ function SchoolClockAndQuotes() {
     });
     const refreshClock = () => {
       const now = new Date();
-      setClock({ date: dateFormat.format(now), time: timeFormat.format(now) });
+      setClock({ date: dateFormat.format(now), time: timeFormat.format(now), quote: educationQuoteOfDay(now) });
     };
 
     refreshClock();
@@ -124,20 +110,11 @@ function SchoolClockAndQuotes() {
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <div className="flex shrink-0 items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-300 sm:text-xs">
           <BookOpen className="h-4 w-4" aria-hidden="true" />
-          <span>Pensées éducatives</span>
+          <span>Citation du jour</span>
         </div>
-        <div className="premium-school-quotes-viewport min-w-0 flex-1 overflow-hidden" aria-label="Citations sur l’éducation">
-          <span className="sr-only">{EDUCATION_QUOTES.join(" ")}</span>
-          <div className="premium-school-quotes-track" aria-hidden="true">
-            {[0, 1].map((copy) => (
-              <div className="premium-school-quotes-set" key={copy}>
-                {EDUCATION_QUOTES.map((quote) => (
-                  <span className="premium-school-quote" key={quote}>« {quote} »</span>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
+        <p className="premium-school-quote min-w-0 flex-1" aria-label="Citation du jour">
+          {clock ? `« ${clock.quote} »` : "Chargement de la citation du jour…"}
+        </p>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/15 pt-2 text-xs sm:border-l sm:border-t-0 sm:py-0 sm:pl-4 sm:pt-0" aria-label="Date et heure en Côte d’Ivoire">
         <span className="inline-flex items-center gap-1.5 text-slate-200">

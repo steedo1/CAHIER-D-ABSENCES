@@ -88,12 +88,14 @@ export function planCiPrimaryFrenchReference(
  * A true zero is a mark; null (not evaluated) is NOT zero.
  * Preserve CI order and display the matching composition denominators.
  * Real scored subjects outside the CI reference remain visible at the end.
+ * Franco-Arabic previews may explicitly keep ungraded curriculum rows; their
+ * null marks and the default behavior of other schools remain unchanged.
  */
 export function ciPrimaryFrenchBulletinRows<T extends {
   id: string; name: string; average: number | null; coefficient: number | null;
   includeInAverage?: boolean; denominator?: number;
-}>(level: string, subjects: readonly T[]): Array<T & { denominator?: number }> {
-  const scored = subjects.filter(row => typeof row.average === "number" && Number.isFinite(row.average));
+}>(level: string, subjects: readonly T[], includeUngraded = false): Array<T & { denominator?: number }> {
+  const scored = subjects.filter(row => includeUngraded || (typeof row.average === "number" && Number.isFinite(row.average)));
   const used = new Set<string>();
   const ordered = CI_PRIMARY_FRENCH_REFERENCE.flatMap(entry => {
     const candidates = scored.filter(row => ciPrimaryFrenchEntryForName(row.name)?.code === entry.code);

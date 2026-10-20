@@ -360,7 +360,8 @@ test("Supabase read count grows by pages, not by student or program", async () =
     assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
     counts.push(db.calls.length);
   }
-  assert.equal(counts[0], counts[1]); assert.ok(counts[0] <= 12, `Unexpected read count: ${counts}`);
+  // One additional batch reads teachers for the entire class, never per pupil.
+  assert.equal(counts[0], counts[1]); assert.ok(counts[0] <= 13, `Unexpected read count: ${counts}`);
 });
 test("historical bulletin averages, subject calculations and ranks match the starting commit", async () => {
   const original = execFileSync("git", ["-c", `safe.directory=${process.cwd().replaceAll("\\", "/")}`, "show", `6d6799fe7c0e39de011b417b99179f4b00bc1fe4:${routePath}`], { encoding: "utf8" });

@@ -19,6 +19,7 @@ import { classSubjectIds, hasCiPrimaryFrenchReference } from "@/lib/school-class
 import { ciPrimaryFrenchEntryForName, ciPrimaryFrenchDenominator, ciPrimaryFrenchBulletinRows } from "@/lib/primary-french-reference-ci";
 import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
 import { adaptHistoricalFrenchSecondaryBulletins, type HistoricalSecondaryFrenchResponse } from "@/lib/server/historical-french-secondary-adapter";
+import { createSchoolSubjectResolver } from "@/lib/school-subject-identifiers";
 
 export type SpecializedBulletinPayload = {
   engine: "specialized"; cycle: SchoolCycle; format: "separate" | "combined" | "both";
@@ -26,7 +27,8 @@ export type SpecializedBulletinPayload = {
   /** Shared once: an inline school logo can be several hundred kilobytes. */
   school?: BulletinSchool;
   documents: Array<{ studentId: string; document: BulletinDocument; ready: boolean;
-    programReadiness: Partial<Record<TeachingTrack, boolean>>; problems: string[] }>;
+    programReadiness: Partial<Record<TeachingTrack, boolean>>; problems: string[];
+    problemsByProgram?: Partial<Record<TeachingTrack, string[]>> }>;
 };
 type SchoolClass = { id: string; institution_id?: string | null; level?: string | null; label?: string | null; academic_year?: string | null; education_type?: string | null; formation_code?: string | null; head_teacher_id?: string | null };
 type Student = { id: string; institution_id: string; full_name: string | null; first_name: string | null; last_name: string | null; matricule: string | null; birthdate: string | null; birth_place?: string | null; gender?: string | null; photo_path?: string | null; photo_updated_at?: string | null };
@@ -106,8 +108,8 @@ export async function loadSpecializedBulletin(input: {
       pages<{ student_id: string; students: Student | Student[] | null }>((from, to) => service.from("class_enrollments")
         .select("student_id,students(id,institution_id,full_name,first_name,last_name,matricule,birthdate,birth_place,gender,photo_path,photo_updated_at)")
         .eq("class_id", schoolClass.id).is("end_date", null).order("student_id").range(from, to)),
-      pages<{ subject_id: string; custom_name: string | null; subjects: { name: string } | { name: string }[] | null }>((from, to) => service.from("institution_subjects")
-        .select("subject_id,custom_name,subjects(name)").eq("institution_id", institutionId).eq("is_active", true).order("id").range(from, to)),
+      pages<{ id: string; subject_id: string; custom_name: string | null; subjects: { name: string } | { name: string }[] | null }>((from, to) => service.from("institution_subjects")
+        .select("id,subject_id,custom_name,subjects(name)").eq("institution_id", institutionId).eq("is_active", true).order("id").range(from, to)),
       reports.coefficientSource === "program" ? Promise.resolve([] as InstitutionCoefficient[]) :
         pages<InstitutionCoefficient>((from, to) => service.from("institution_subject_coeffs")
           .select("level,subject_id,coeff,include_in_average").eq("institution_id", institutionId).order("subject_id").order("level").range(from, to)),
@@ -305,15 +307,39 @@ export async function loadSpecializedBulletin(input: {
           year, classId: schoolClass.id, level, track: "arabic", subjectId: row.subject_id,
           subjectName: subjectNames.get(row.subject_id) || "",
         })])) : undefined;
-    const { data: primaryAssignments } = cycle === "primary" && classPolicy?.tracks.length === 1 && !schoolClass.head_teacher_id
-      ? await service.from("class_teachers").select("teacher_id").eq("institution_id", institutionId)
-          .eq("class_id", schoolClass.id).is("end_date", null).limit(501) : { data: [] };
-    const teacherIds = [...new Set((primaryAssignments || []).map(row => row.teacher_id))];
-    const primaryTeacherId = schoolClass.head_teacher_id || (teacherIds.length === 1 ? teacherIds[0] : null);
-    const { data: primaryTeacher } = cycle === "primary" && primaryTeacherId
-      ? await service.from("profiles").select("display_name").eq("id", primaryTeacherId)
-          .eq("institution_id", institutionId).maybeSingle()
-      : { data: null };
+    // Read assignments in one batch, accepting both historical subject IDs.
+    // A bilingual class can have a different teacher for each teaching track.
+    const assignments = await pages<{ id: string; teacher_id: string; subject_id: string | null }>((from, to) =>
+      service.from("class_teachers").select("id,teacher_id,subject_id")
+        .eq("institution_id", institutionId).eq("class_id", schoolClass.id)
+        .is("end_date", null).order("id").range(from, to));
+    const resolveSubject = createSchoolSubjectResolver(activeSubjects);
+    const teacherIds = [...new Set([...assignments.map(row => row.teacher_id),
+      ...(schoolClass.head_teacher_id ? [schoolClass.head_teacher_id] : [])])];
+    const teachers = teacherIds.length ? await pages<{ id: string; display_name: string | null }>((from, to) =>
+      service.from("profiles").select("id,display_name").eq("institution_id", institutionId)
+        .in("id", teacherIds).order("id").range(from, to)) : [];
+    const teacherNames = new Map(teachers.map(row => [row.id, row.display_name?.trim() || ""]));
+    const subjectTeacher = (subjectId: string) => [...new Set(assignments
+      .filter(row => resolveSubject(row.subject_id) === subjectId)
+      .map(row => teacherNames.get(row.teacher_id)).filter(Boolean))].join(" / ") || null;
+    const programTeacher = (track: TeachingTrack) => {
+      const ids = [...new Set(assignments.filter(row => {
+        const subjectId = resolveSubject(row.subject_id);
+        return subjectId && school.subjectTracksByCycle[cycle]?.[subjectId]?.includes(track);
+      }).map(row => row.teacher_id))];
+      return ids.length === 1 ? teacherNames.get(ids[0]) || null
+        : classPolicy?.tracks.length === 1 && schoolClass.head_teacher_id
+          ? teacherNames.get(schoolClass.head_teacher_id) || null : null;
+    };
+    const primaryTeacherName = (track: TeachingTrack) => {
+      if (isBilingualSchool(school)) return programTeacher(track) ||
+        (schoolClass.head_teacher_id && programs.length === 1 ? teacherNames.get(schoolClass.head_teacher_id) || null : null);
+      // Preserve the previous teacher selection for other primary schools.
+      const id = schoolClass.head_teacher_id ||
+        (classPolicy?.tracks.length === 1 && teacherIds.length === 1 ? teacherIds[0] : null);
+      return id ? teacherNames.get(id) || null : null;
+    };
     const scoresByStudent = new Map<string, OfficialEvaluationScore[]>();
     for (const score of officialScores) {
       const rows = scoresByStudent.get(score.studentId) || [];
@@ -400,23 +426,39 @@ export async function loadSpecializedBulletin(input: {
           gender: student.gender, photoUrl: buildProtectedStudentPhotoUrl(student) },
       };
       const historicalFrench = useHistoricalFrench ? historicalFrenchPrograms.get(student.id) : null;
-      if (historicalFrench) document.french = historicalFrench;
+      const missingHistoricalSubjects = historicalFrench && isBilingualSchool(school)
+        ? (classSubjectIds(input.settingsJson, year, schoolClass.id) || []).filter(subjectId =>
+          subjectNames.has(subjectId) && school.subjectTracksByCycle[cycle]?.[subjectId]?.includes("french") &&
+          !historicalFrench.subjects.some(subject => subject.id === subjectId)) : [];
+      if (historicalFrench) document.french = { ...historicalFrench, subjects: [
+        ...historicalFrench.subjects,
+        ...missingHistoricalSubjects.map(subjectId => ({ id: subjectId, name: subjectNames.get(subjectId)!,
+          teacherName: subjectTeacher(subjectId), coefficient: null, average: null })),
+      ] };
       for (const draft of drafts) {
         const rank = ranksByProgram.get(draft.track)?.get(student.id) ?? null;
         const isCiPrimaryFrench = ciPrimaryFrench && draft.track === "french";
-        // In specialized primary bulletins show ONLY subjects actually graded
-        // for this student and this period. Keep a genuine zero, omit null.
-        // The 11 configured subjects remain available in teacher/admin screens.
-        const rawSubjectRows = draft.subjects
-          .filter(subject => cycle !== "primary" || (typeof subject.average === "number" && Number.isFinite(subject.average)))
+        // A Franco-Arabic preview must retain its configured curriculum even
+        // before marks are published. Empty cells never contribute a zero.
+        const showCurriculum = isBilingualSchool(school);
+        const configuredIds = classSubjectIds(input.settingsJson, year, schoolClass.id) || [];
+        const displaySubjects = [...draft.subjects];
+        if (showCurriculum) for (const subjectId of configuredIds) {
+          if (!subjectNames.has(subjectId) || !school.subjectTracksByCycle[cycle]?.[subjectId]?.includes(draft.track) ||
+              displaySubjects.some(row => row.subjectId === subjectId)) continue;
+          displaySubjects.push({ subjectId, coefficient: null, includeInAverage: true, average: null, evaluatedCount: 0 });
+        }
+        const rawSubjectRows = displaySubjects
+          .filter(subject => showCurriculum || cycle !== "primary" || (typeof subject.average === "number" && Number.isFinite(subject.average)))
           .map(subject => ({ id: subject.subjectId,
             name: subjectNames.get(subject.subjectId) || subject.subjectId,
+            teacherName: showCurriculum ? subjectTeacher(subject.subjectId) : undefined,
             coefficient: subject.coefficient, average: subject.average,
             classAverage: (() => { const tally = subjectTotals.get(`${draft.track}:${subject.subjectId}`);
               return tally?.count ? Math.round(tally.total / tally.count * 100) / 100 : null; })(),
             includeInAverage: subject.includeInAverage, denominator: subject.denominator, components: subject.components }));
         const bulletinSubjectRows = isCiPrimaryFrench
-          ? ciPrimaryFrenchBulletinRows(level, rawSubjectRows) : rawSubjectRows;
+          ? ciPrimaryFrenchBulletinRows(level, rawSubjectRows, showCurriculum) : rawSubjectRows;
         const annualOrdinary = passageMode ? applicableOrdinaryEvents.filter(event => event.tracks.includes(draft.track)).map(event => {
           const policy = resolved.find(item => item.track === draft.track);
           const row = policy && buildProgramBulletinDraft({
@@ -437,7 +479,7 @@ export async function loadSpecializedBulletin(input: {
         const program: BulletinProgram = { track: draft.track, cycle: SCHOOL_CYCLE_OPTIONS.find(option => option.id === cycle)?.label || cycle, level, className: schoolClass.label || level,
           ciPrimaryFrench: isCiPrimaryFrench,
           primarySubjectScores: !!primaryEvent || isCiPrimaryFrench || (cycle === "primary" && draft.track === "arabic" && primaryDenominators !== undefined),
-          teacherName: cycle === "primary" ? primaryTeacher?.display_name || null : null,
+          teacherName: cycle === "primary" ? primaryTeacherName(draft.track) : null,
           year, period: period.label || period.code || "", denominator: draft.maximumScore || 0,
           subjects: bulletinSubjectRows,
           generalAverage: draft.generalAverage, rank, classSize: cycle === "primary" ? [...students.keys()].filter(id => studentTracks(id).includes(draft.track)).length : students.size,
@@ -455,12 +497,17 @@ export async function loadSpecializedBulletin(input: {
           const annualReady = !passageMode || (program?.primaryAnnual?.annualAverage != null);
           return [draft.track, draft.status === "ready" && annualReady];
         }));
-      if (useHistoricalFrench) readiness.french = historicalFrench != null;
+      if (useHistoricalFrench) readiness.french = historicalFrench != null && missingHistoricalSubjects.length === 0;
       const errors = [...drafts.flatMap(row => row.problems)];
       if (passageMode && !drafts.every(draft => readiness[draft.track])) errors.push("PRIMARY_ANNUAL_INCOMPLETE");
       if (useHistoricalFrench && !historicalFrench) errors.push("SECONDARY_FRENCH_STUDENT_MISSING_IN_HISTORICAL_RESULT");
+      if (missingHistoricalSubjects.length) errors.push("SECONDARY_FRENCH_CURRICULUM_INCOMPLETE");
       // Valid historical NC is preserved, never silently converted to 0.
-      return { studentId: student.id, document,
+      const problemsByProgram = Object.fromEntries(drafts.map(draft => [draft.track,
+        [...new Set([...draft.problems, ...(passageMode && !readiness[draft.track] ? ["PRIMARY_ANNUAL_INCOMPLETE"] : [])])]]));
+      if (useHistoricalFrench && !historicalFrench) problemsByProgram.french = ["SECONDARY_FRENCH_STUDENT_MISSING_IN_HISTORICAL_RESULT"];
+      if (missingHistoricalSubjects.length) problemsByProgram.french = ["SECONDARY_FRENCH_CURRICULUM_INCOMPLETE"];
+      return { studentId: student.id, document, problemsByProgram,
         ready: (cycle === "primary" ? drafts.map(draft => draft.track) : programs).every(track => readiness[track] === true),
         programReadiness: readiness, problems: [...new Set(errors)] };
     });

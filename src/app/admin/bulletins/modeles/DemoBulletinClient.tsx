@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { SchoolCycle, TeachingTrack } from "@/lib/school-cycles";
 import type { ReportFormat } from "@/lib/franco-arabic-reporting";
+import { CI_PRIMARY_FRENCH_REFERENCE, ciPrimaryFrenchDenominator } from "@/lib/primary-french-reference-ci";
 import PreschoolBookletDemo from "./PreschoolBookletDemo";
 import "./print.css";
 import Link from "next/link";
@@ -93,6 +94,7 @@ export default function DemoBulletinClient({
   embedded?: boolean; previewCycle?: SchoolCycle; previewFormat?: ReportFormat;
 }) {
   const [variant, setVariant] = useState<BulletinVariant>(hasArabic ? "combined" : "ordinary");
+  const [evaluation, setEvaluation] = useState("Composition de décembre");
   const [localCycle, setCycle] = useState<SchoolCycle>(enabledCycles.includes("primary") ? "primary" : enabledCycles[0] || "secondary");
   const cycle = embedded && previewCycle ? previewCycle : localCycle;
   // Both programs must exist in the selected cycle before a bilingual template applies.
@@ -138,6 +140,31 @@ export default function DemoBulletinClient({
       generalAverage: cycle === "secondary" ? demo.arabic.generalAverage : 16,
     } : undefined,
   };
+  if (cycle === "primary") {
+    if (preview.french) Object.assign(preview.french, {
+      period: evaluation, denominator: 10, ciPrimaryFrench: true, primarySubjectScores: true,
+      teacherName: "Instituteur français (exemple)", generalAverage: 8,
+      subjects: CI_PRIMARY_FRENCH_REFERENCE.map(subject => {
+        const denominator = ciPrimaryFrenchDenominator("CM1", subject.code);
+        return { id: subject.code, name: subject.label, coefficient: null, denominator,
+          average: denominator * 0.8, classAverage: denominator * 0.7 };
+      }),
+      ...(evaluation === "Composition de passage" ? { primaryAnnual: {
+        ordinary: ["Composition de décembre", "Composition de février", "Composition d’avril"].map(label => ({ label, average: 7.5 })),
+        ordinaryAverage: 7.5, passageAverage: 8, annualAverage: 7.83, decision: "ADMIS",
+      } } : {}),
+    });
+    if (preview.arabic) Object.assign(preview.arabic, {
+      period: evaluation, denominator: 10, primarySubjectScores: true,
+      teacherName: "Instituteur arabe (exemple)", generalAverage: 7,
+      subjects: preview.arabic.subjects.map(subject => ({ ...subject, denominator: 20,
+        average: 14, classAverage: 12, coefficient: null })),
+      ...(evaluation === "Composition de passage" ? { primaryAnnual: {
+        ordinary: ["Composition de décembre", "Composition de février", "Composition d’avril"].map(label => ({ label, average: 6.5 })),
+        ordinaryAverage: 6.5, passageAverage: 7, annualAverage: 6.83, decision: "ADMIS",
+      } } : {}),
+    });
+  }
   const visibleOptions = options.filter(option => allowedVariants.includes(option.id));
   if (!cycleHasArabic && !onlyArabic) visibleOptions.push({ id: "ordinary", label: "Bulletin de notes" });
   return (
@@ -158,6 +185,13 @@ export default function DemoBulletinClient({
           Le primaire présente des barèmes sans coefficients et le préscolaire un livret de compétences.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
+          {cycle === "primary" && <label className="flex items-center gap-2 text-sm font-semibold">
+            Évaluation de démonstration
+            <select aria-label="Évaluation de démonstration" value={evaluation} onChange={event => setEvaluation(event.target.value)} className="rounded-lg border px-3 py-2">
+              {["Composition de décembre", "Évaluation de niveau", "Composition de passage"].map(title =>
+                <option key={title}>{title}</option>)}
+            </select>
+          </label>}
           {!embedded && <label className="flex items-center gap-2 text-sm font-semibold">
             Cycle
             <select value={cycle} onChange={event => setCycle(event.target.value as SchoolCycle)}

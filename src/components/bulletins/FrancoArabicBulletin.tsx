@@ -160,7 +160,10 @@ function Head({ model, variant }: { model: BulletinDocument; variant: BulletinVa
       </div>
       <div className={styles.documentHeading}>
         <div className={styles.documentTitle}>{kind}</div>
-        <div className={styles.documentPeriod}>Année scolaire {first?.year || "—"} · {first?.period || "—"}</div>
+        {model.school.isFrancoArabic ? <>
+          <div className={styles.evaluationTitle}>{first?.period || "Évaluation non renseignée"}</div>
+          <div className={styles.documentYear}>Année scolaire {first?.year || "—"}</div>
+        </> : <div className={styles.documentPeriod}>Année scolaire {first?.year || "—"} · {first?.period || "—"}</div>}
       </div>
     </header>
   </>;
@@ -203,7 +206,9 @@ function Heading({ track, compact, ordinary }: { track: BulletinTrack; compact: 
 function CourseTable({ program, compact }: { program: BulletinProgram; compact: boolean }) {
   // Only secondary-school report cards present disciplinary coefficients.
   const secondary = /^(secondaire|secondary)$/i.test(program.cycle.trim());
-  return <table className={`${styles.marks} ${compact ? styles.compactMarks : ""}`}>
+  const primaryTeachers = new Set(program.subjects.map(row => row.teacherName).filter(Boolean));
+  const subjectTeachers = !secondary && primaryTeachers.size > 1;
+  return <table className={`${styles.marks} ${compact ? styles.compactMarks : ""} ${subjectTeachers ? styles.marksWithTeachers : ""}`}>
     <thead><tr>
       <th scope="col" className={styles.subjectColumn}>Discipline</th>
       {secondary && <th scope="col">Coef.</th>}
@@ -218,8 +223,8 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
           {row.arabicName && <small lang="ar" dir="rtl">{row.arabicName}</small>}
           {program.historicalSecondary && row.subjectRank != null &&
             <small>Rang matière : {row.subjectRank}</small>}
-          {program.historicalSecondary && row.teacherName &&
-            <small>Enseignant : {row.teacherName}</small>}
+          {row.teacherName && (secondary || subjectTeachers) &&
+            <small className={styles.subjectTeacher}>Enseignant : {row.teacherName}</small>}
         </td>
         {secondary && <td>{number(row.coefficient, row.coefficient !== null && row.coefficient % 1 !== 0 ? 1 : 0)}</td>}
         <td className={styles.markCell}>{(program.primarySubjectScores || program.ciPrimaryFrench)
@@ -258,7 +263,7 @@ function Summary({ program, compact, ordinary }: { program: BulletinProgram; com
     </div>}
     <div className={styles.summaryMetric}>
       <span>{ordinary ? "Moyenne générale" : `Moyenne ${program.track === "arabic" ? "arabe" : "française"}`}</span>
-      <strong>{program.allowHistoricalNc && program.generalAverage === null ? "NC" : score}<small> / {program.denominator}</small></strong>
+      <strong>{program.allowHistoricalNc && program.generalAverage === null ? "NC" : score}<small> / {program.denominator > 0 ? program.denominator : "—"}</small></strong>
     </div>
     <div className={styles.summaryMetric}><span>Rang</span><strong>{rank}</strong></div>
     {program.historicalSecondary && <div className={styles.summaryMetric}>
@@ -279,8 +284,11 @@ function Signature({ name, title }: { name?: string | null; title: string }) {
 }
 
 function Panel({ program, compact, ordinary }: { program: BulletinProgram; compact: boolean; ordinary: boolean }) {
+  const teachers = [...new Set(program.subjects.map(row => row.teacherName).filter(Boolean))];
+  const teacher = teachers.length === 1 ? teachers[0] : program.teacherName;
   return <section className={`${styles.program} ${program.track === "arabic" ? styles.arabicProgram : ""}`}>
     <Heading track={program.track} compact={compact} ordinary={ordinary}/>
+    {teacher && (compact || teacher !== program.teacherName) && <div className={styles.programTeacher}>Enseignant : {teacher}</div>}
     <CourseTable program={program} compact={compact}/>
     <Summary program={program} compact={compact} ordinary={ordinary}/>
     {program.primaryAnnual && <div className={styles.primaryAnnual}>
@@ -322,7 +330,7 @@ function Panel({ program, compact, ordinary }: { program: BulletinProgram; compa
           {program.historicalSecondary.annualRank != null ? ` · Rang ${program.historicalSecondary.annualRank}` : ""}</span>
       </div>}
       {program.historicalSecondary.decision?.official_decision && <div className={styles.historicalLine}>
-        <strong>Décision de fin d'année</strong>
+        <strong>Décision de fin d’année</strong>
         <span>{program.historicalSecondary.decision.official_decision}</span>
       </div>}
     </div>}
