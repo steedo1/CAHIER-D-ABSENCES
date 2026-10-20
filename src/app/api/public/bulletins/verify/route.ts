@@ -3768,7 +3768,7 @@ export async function GET(req: NextRequest) {
         subject_id: s.subject_id,
         avg20,
         bonus: direct === undefined ? Number(subjectBonus.toFixed(2)) : 0,
-        average_source: direct === undefined ? "calculated" : "direct",
+        ...(direct === undefined ? {} : { average_source: "direct" }),
         avg20_before_bonus: rawAvg20,
       };
     });

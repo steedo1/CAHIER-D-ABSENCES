@@ -3346,7 +3346,7 @@ async function loadBulletin(
         // ✅ Bonus matière appliqué au bulletin sans casser l'ancien front.
         // avg20 = moyenne finale matière ; avg20_before_bonus garde la trace brute.
         bonus: direct === undefined ? Number(subjectBonus.toFixed(2)) : 0,
-        average_source: direct === undefined ? "calculated" : "direct",
+        ...(direct === undefined ? {} : { average_source: "direct" }),
         avg20_before_bonus: rawAvg20,
 
         // ✅ Métadonnées NC : ne cassent pas le front existant, mais permettent
