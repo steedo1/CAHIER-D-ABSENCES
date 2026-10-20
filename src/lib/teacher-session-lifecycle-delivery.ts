@@ -1,6 +1,6 @@
 "use client";
 
-import { cacheGet, putDurableAttendanceRecord } from "@/lib/offline";
+import { cacheGet, putDurableAttendanceRecord, listOfflineOutboxEntries, resolveOfflineSessionReference } from "@/lib/offline";
 import {
   LocalRelayHttpError,
   postRelayTeacherAttendanceSessionClose,
@@ -561,11 +561,19 @@ export async function isTeacherSessionLocallyFinalized(
   const records = await listTeacherSessionLifecycleOperations(
     normalizedInstitutionId,
   );
-  return records.some(
-    (record) =>
-      record.kind === "close" &&
-      record.session_id === normalizedSessionId,
-  );
+  const resolved = await resolveOfflineSessionReference(normalizedSessionId);
+  const references = new Set([normalizedSessionId, resolved.sessionReference, resolved.serverSessionId].filter(Boolean));
+  for (const reference of [...references]) {
+    if (reference && !reference.startsWith("client:")) references.add(`client:${reference}`);
+  }
+  if (records.some((record) => record.kind === "close" && references.has(record.session_id))) return true;
+  // Cloud-only class/teacher finishes already persist their close in outbox.
+  // Restoring the stale Cloud-open response must not create a new attendance
+  // and close every morning while that original finish awaits its ACK.
+  const outbox = await listOfflineOutboxEntries();
+  return outbox.some((entry) => entry.operationType === "session-end" &&
+    entry.meta?.institutionId === normalizedInstitutionId &&
+    references.has(entry.sessionDependencyKey));
 }
 
 export async function retryTeacherSessionCloseOnRelay(

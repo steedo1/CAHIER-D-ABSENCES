@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
@@ -37,7 +38,7 @@ function query(rows) {
   };
 }
 
-function fixture() {
+function fixture({ classDeviceAllowed = false } = {}) {
   const institutionId = "csca-test";
   const teacherId = "teacher-eps";
   const sessionId = "session-eps";
@@ -123,13 +124,14 @@ function fixture() {
   const common = {
     "next/server": { NextResponse: { json: (body, options) => Response.json(body, options) } },
     "@/lib/supabase-server": { getSupabaseServerClient: async () => authenticated },
+    "@/lib/server/attendance-receipt-proof": evaluate("src/lib/server/attendance-receipt-proof.ts", { "node:crypto": crypto }),
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => service },
   };
   const bulk = evaluate("src/app/api/teacher/attendance/bulk/route.ts", {
     ...common,
     "@/lib/push-dispatch": { triggerPushDispatch: async () => { notifications.push("push"); } },
     "@/lib/sms-dispatch": { triggerSmsDispatch: async () => { notifications.push("sms"); } },
-    "@/lib/class-device-identity": { classDeviceMayAccessClass: async () => false },
+    "@/lib/class-device-identity": { classDeviceMayAccessClass: async () => classDeviceAllowed },
   });
   const organization = evaluate("src/lib/education-organization.ts", {});
   const scope = evaluate("src/lib/education-scope.ts", {
@@ -146,6 +148,7 @@ function fixture() {
     bulk, monitor, tables, rpcCalls, notifications, service, surveillance, institutionId,
     sessionId, capturedAt,
     asAdmin() { currentUserId = "admin-1"; },
+    asClass() { currentUserId = "class-phone"; },
   };
 }
 
@@ -212,3 +215,30 @@ test("vraie route : appel offline accepté, RPC atomique idempotent, reçu visib
   assert.equal(admin.rows[0].attendance_received_at, "2026-09-23T11:00:00.000Z");
   assert.match(scenario.surveillance.attendanceReceiptLabel(admin.rows[0]), /Appel élèves reçu/);
 });
+
+for (const classDeviceAllowed of [false, true]) {
+  test(`bulk ${classDeviceAllowed ? "class device" : "teacher"}: ambiguous retry requires exact full receipt, retains absence/lateness and sends no notifications`, async () => {
+    const f = fixture({ classDeviceAllowed });
+    if (classDeviceAllowed) f.asClass();
+    const ids = [1, 2, 3].map((n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`);
+    f.tables.class_enrollments = ids.map((student_id) => ({ student_id, class_id: "class-5e2", end_date: null }));
+    f.tables.teacher_sessions[0].actual_call_at = f.capturedAt;
+    const atomic = ids.map((student_id, n) => ({ student_id, status: ["present", "absent", "late"][n], late_minutes: n === 2 ? 7 : 0, comment: n === 1 ? "Malade" : null }));
+    const helper = evaluate("src/lib/server/attendance-receipt-proof.ts", { "node:crypto": crypto });
+    f.tables.relay_attendance_session_causality.push({ institution_id: f.institutionId, session_id: f.sessionId, last_operation_id: "already-received-call", last_captured_at_device: f.capturedAt, last_payload_fingerprint: helper.attendancePayloadFingerprint(atomic) });
+    f.tables.attendance_marks.push(atomic[1], atomic[2]);
+    f.service.rpc = async () => ({ data: { status: "attendance_operation_ambiguous" }, error: null });
+    const body = { session_id: f.sessionId, captured_at_device: f.capturedAt, marks: atomic.map(({ comment, late_minutes, ...mark }) => ({ ...mark, reason: comment, observed_at: mark.status === "late" ? "2026-09-21T09:12:00Z" : null })) };
+    const res = await f.bulk.POST(attendanceRequest("different-retry-id", body));
+    assert.equal(res.status, 200);
+    const payload = await res.json();
+    assert.equal(payload.operation_id, "different-retry-id");
+    assert.equal(payload.receipt_operation_id, "already-received-call");
+    assert.equal(payload.idempotent, true);
+    assert.equal(payload.upserted, 0);
+    assert.deepEqual(f.notifications, []);
+    assert.deepEqual(f.tables.attendance_marks, [atomic[1], atomic[2]]);
+    body.marks[1].reason = "Correction non confirmée";
+    assert.equal((await f.bulk.POST(attendanceRequest("different-retry-id-2", body))).status, 409);
+  });
+}

@@ -210,3 +210,8 @@ export async function readCloudRelayCache<T>(options: {
   if (cached) return cached;
   throw cloudError;
 }
+
+/** No remote source can prove that an offline phone did not start a call. */
+export function unconfirmedAttendanceMessage() {
+  return "Appel non reçu : le démarrage sur l’appareil n’est pas confirmé. Vérifiez la synchronisation avant de conclure à une absence.";
+}

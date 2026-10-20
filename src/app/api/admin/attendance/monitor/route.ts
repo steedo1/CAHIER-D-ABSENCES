@@ -35,6 +35,7 @@ type MonitorRow = {
   ended_at: string | null;
   attendance_received_at: string | null;
   attendance_receipt_available: boolean;
+  reception_status: "received" | "started" | "unconfirmed";
   date: string; // "YYYY-MM-DD"
   weekday_label?: string | null;
   period_label?: string | null;
@@ -697,6 +698,7 @@ export async function GET(req: NextRequest) {
         ended_at: matched?.ended_at || null,
         attendance_received_at: matched ? receiptBySession.get(matched.session_id) || null : null,
         attendance_receipt_available: receiptAvailable,
+        reception_status: matched ? (receiptBySession.has(matched.session_id) ? "received" : "started") : "unconfirmed",
         id: [ymd, tt.period_id, classId, subjectId, teacherId].join("|"),
         date: ymd,
         weekday_label: null,

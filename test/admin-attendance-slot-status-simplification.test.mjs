@@ -26,7 +26,8 @@ test("un appel started est compté comme conforme", () => {
 test("les six cartes de pilotage sont explicites", () => {
   assert.match(source, /lg:grid-cols-6/);
   assert.match(source, /Créneaux qui n’ont pas encore commencé\./);
-  assert.match(source, /Délai dépassé, aucun appel commencé\./);
+  assert.match(source, /Démarrage non confirmé\. Vérifier la synchronisation\./);
+  assert.doesNotMatch(source, /\? "OFF"/);
   assert.match(source, /Appels commencés après le délai prévu\./);
   assert.match(source, /Justifications reçues à examiner\./);
 });

@@ -5,6 +5,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 // ✨ temps réel
 import { triggerPushDispatch } from "@/lib/push-dispatch";
 import { triggerSmsDispatch } from "@/lib/sms-dispatch";
+import { attendanceReceiptMatches } from "@/lib/server/attendance-receipt-proof";
 import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 
 export const runtime = "nodejs";
@@ -511,6 +512,17 @@ export async function POST(req: NextRequest) {
   const atomicStatus = String((atomicResult as any)?.status || "");
   if (atomicStatus === "session_not_found") {
     return NextResponse.json({ error: "session_not_found" }, { status: 404 });
+  }
+  if (["attendance_operation_ambiguous", "session_closed"].includes(atomicStatus)) {
+    const { data: receipt, error: receiptError } = await srv
+      .from("relay_attendance_session_causality")
+      .select("last_operation_id,last_captured_at_device,last_payload_fingerprint")
+      .eq("institution_id", clsRow.institution_id).eq("session_id", session_id).maybeSingle();
+    if (!receiptError && attendanceReceiptMatches({ capturedAt: capturedAtDevice, marks: atomicMarks, receipt })) {
+      return NextResponse.json({ ok: true, operation_id: operationId, session_id,
+        captured_at_device: capturedAtDevice, idempotent: true,
+        receipt_operation_id: receipt?.last_operation_id, upserted: 0, deleted: 0 });
+    }
   }
   if (atomicStatus === "session_closed") {
     return NextResponse.json(

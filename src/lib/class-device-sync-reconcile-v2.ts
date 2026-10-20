@@ -2,6 +2,7 @@
 
 import {
   cacheGet,
+  cacheSet,
   confirmClassDeviceCompletionInCloud,
   flushOutbox,
   listOfflineOutboxEntries,
@@ -47,6 +48,8 @@ type ReconcileResult = {
   operation_id: string;
   operation_type: OperationType;
   acknowledged: boolean;
+  session_reference_confirmed?: boolean;
+  receipt_operation_id?: string | null;
   session_id: string | null;
   reason: string;
   subject_id?: string | null;
@@ -333,32 +336,48 @@ async function reconcileClass(
 ) {
   const operations = await classOperations(cls, outbox, rawRows);
   if (!operations.length) return 0;
-  const response = await fetchAttendanceBackground("/api/class/sync/reconcile-v2", {
-    method: "POST",
-    credentials: "include",
-    cache: "no-store",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      class_id: cls.id,
-      operations: operations.map((operation) => ({
-        operation_id: operation.operationId,
-        operation_type: operation.operationType,
-        session_dependency_key: operation.dependencyKey,
-        operation_body: operation.body,
-      })),
-    }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload?.ok !== true) return 0;
-  const results = Array.isArray(payload?.results)
-    ? (payload.results as ReconcileResult[])
-    : [];
+  const results: ReconcileResult[] = [];
+  for (let offset = 0; offset < operations.length; offset += 100) {
+    const response = await fetchAttendanceBackground("/api/class/sync/reconcile-v2", {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        class_id: cls.id,
+        operations: operations.slice(offset, offset + 100).map((operation) => ({
+          operation_id: operation.operationId,
+          operation_type: operation.operationType,
+          session_dependency_key: operation.dependencyKey,
+          operation_body: operation.body,
+        })),
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok !== true) continue;
+    if (Array.isArray(payload?.results)) results.push(...payload.results as ReconcileResult[]);
+  }
   const byId = new Map(operations.map((operation) => [operation.operationId, operation]));
   let resolved = 0;
   for (const result of results) {
-    if (!result.acknowledged) continue;
     const operation = byId.get(result.operation_id);
-    if (!operation) continue;
+    if (!operation || operation.operationType !== result.operation_type) continue;
+    if (result.session_reference_confirmed && result.session_id) {
+      for (const reference of [operation.dependencyKey, text(operation.body.session_id)]) {
+        if (reference.startsWith("client:")) {
+          await registerOfflineSessionReference(reference, result.session_id);
+        }
+      }
+    }
+    if (!result.acknowledged || !result.session_id) continue;
+    // Retain the association before retiring an acknowledged queue row. No
+    // student payload is copied; a storage failure leaves the operation queued.
+    await cacheSet(`attendance:cloud-receipt:v1:${result.operation_id}`, {
+      operation_id: result.operation_id, operation_type: result.operation_type,
+      institution_id: cls.institution_id, class_id: cls.id,
+      session_id: result.session_id, receipt_operation_id: result.receipt_operation_id || null,
+      reason: result.reason, confirmed_at: new Date().toISOString(),
+    });
     await terminalizeResult(cls, result);
     for (const outboxId of operation.outboxIds) {
       await removeQueuedOfflineMutation(outboxId);
