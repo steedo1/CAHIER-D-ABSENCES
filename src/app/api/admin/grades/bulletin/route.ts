@@ -2126,7 +2126,15 @@ async function loadBulletin(
         }
       );
 
-      if (!r.ok) return out;
+      if (!r.ok) {
+        console.warn("[bulletin] conduct averages unavailable", {
+          status: r.status,
+          institutionId,
+          classId: classIdStr,
+          periodCode: conductPeriodCode,
+        });
+        return out;
+      }
 
       const j: any = await r.json();
 
@@ -2152,8 +2160,13 @@ async function loadBulletin(
 
         out.set(sid, clamp20(total));
       }
-    } catch {
-      // ne casse jamais le bulletin si la conduite échoue
+    } catch (error) {
+      // Keep bulletin available, but make missing conduct diagnosable server-side.
+      console.warn("[bulletin] conduct averages request failed", {
+        institutionId,
+        classId: classIdStr,
+        error: error instanceof Error ? error.message : "unknown",
+      });
     }
 
     return out;
