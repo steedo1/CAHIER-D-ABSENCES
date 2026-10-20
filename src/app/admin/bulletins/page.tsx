@@ -1385,6 +1385,9 @@ type StudentBulletinCardProps = {
   institution: InstitutionSettings | null;
   stats: ClassStats;
   conduct?: ConductItem | null;
+  /** Exact historical /20 result for the specialized French secondary card.
+   * Undefined keeps the current classic-card behavior; null means no result. */
+  officialConductAverage?: number | null;
   conductLabel?: string | null;
   conductTeacherName?: string | null;
   conductRank?: number | null;
@@ -1410,6 +1413,7 @@ function StudentBulletinCard({
   institution,
   stats,
   conduct,
+  officialConductAverage,
   conductLabel,
   conductTeacherName,
   conductRank,
@@ -1555,8 +1559,10 @@ function StudentBulletinCard({
 
   const rawConductTotal =
     conduct && typeof conduct.total === "number" ? conduct.total : null;
+  // For specialized secondary French, reuse the official historical score.
+  // The independent conduct summary only supplies rubric/teacher metadata.
   const conductNoteOn20 = clampTo20(
-    rawConductTotal !== null ? Number(rawConductTotal) : null
+    officialConductAverage !== undefined ? officialConductAverage : rawConductTotal
   );
 
   // ✅ ANNUEL (affiché seulement si l’API le remplit = dernière période)
@@ -4111,7 +4117,14 @@ function BulletinsPageContent() {
                     institution_head_name: row.program.directorName || institution.institution_head_name,
                   } : null}
                   stats={secondaryStatistics}
-                  conduct={null} signaturesEnabled={false}
+                  conduct={selectedSecondaryTrack === "french"
+                    ? conductByStudentId.get(row.studentId) || null : null}
+                  officialConductAverage={selectedSecondaryTrack === "french"
+                    ? row.program.historicalSecondary?.conductAverage ?? null : null}
+                  conductLabel={selectedSecondaryTrack === "french" ? conductSummary?.conduct_label || null : null}
+                  conductTeacherName={selectedSecondaryTrack === "french" ? conductSummary?.conduct_teacher_name || null : null}
+                  conductRank={selectedSecondaryTrack === "french" ? conductRankByStudentId.get(row.studentId) ?? null : null}
+                  signaturesEnabled={false}
                   disableLocalQr previewZoomForMeasure={previewZoom}
                 />
               ))}

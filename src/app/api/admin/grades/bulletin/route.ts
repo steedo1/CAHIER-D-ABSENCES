@@ -738,9 +738,10 @@ const snapFor = (row: any) => {
   const prepared = (row as any)?.__qr_snapshot;
   if (prepared && typeof prepared === "object") return prepared;
 
-  const g = cleanNumber((row as any)?.general_avg, 4);
-  const a = cleanNumber((row as any)?.annual_avg, 4);
-  const c = cleanNumber((row as any)?.conduct_avg, 4);
+  // QR fallback: distinguish a missing/NC mark from a real zero.
+  const g = (row as any)?.general_avg == null ? null : cleanNumber((row as any).general_avg, 4);
+  const a = (row as any)?.annual_avg == null ? null : cleanNumber((row as any).annual_avg, 4);
+  const c = (row as any)?.conduct_avg == null ? null : cleanNumber((row as any).conduct_avg, 4);
   const r =
     (row as any)?.rank !== null &&
     (row as any)?.rank !== undefined &&
@@ -2147,6 +2148,8 @@ async function loadBulletin(
         const raw =
           it?.total ?? it?.avg ?? it?.value ?? it?.score ?? it?.note ?? null;
 
+        // Number(null) === 0, yet a missing conduct result is NOT a 0/20.
+        if (raw === null || raw === undefined || raw === "") continue;
         const total = Number(raw);
         if (!Number.isFinite(total)) continue;
 
@@ -3538,10 +3541,11 @@ async function loadBulletin(
       per_subject,
       per_group,
       general_avg,
-      conduct_avg:
-        conductAvgByStudent && conductAvgByStudent.has(cs.student_id)
-          ? cleanNumber(conductAvgByStudent.get(cs.student_id), 4)
-          : null,
+      // Preserve a missing conduct result as null (never coerce null to 0).
+      conduct_avg: (() => {
+        const value = conductAvgByStudent?.get(cs.student_id);
+        return value == null ? null : cleanNumber(value, 4);
+      })(),
       general_bonus: Number(generalBonus.toFixed(2)),
       general_avg_before_bonus: generalAvgBeforeBonus,
       rank: null as number | null,
@@ -4186,17 +4190,19 @@ async function loadBulletin(
   // du bulletin (moyenne, conduite CSCA, groupes de matières, rangs).
   // En mode export statistique, on ne l'ajoute pas : le JSON reste beaucoup plus léger.
   for (const it of items as any[]) {
-    const conductAvg =
+    const conductSource =
       conductAvgByStudent && conductAvgByStudent.has(String(it.student_id))
-        ? cleanNumber(conductAvgByStudent.get(String(it.student_id)), 4)
-        : cleanNumber(it?.conduct_avg, 4);
+        ? conductAvgByStudent.get(String(it.student_id))
+        : it?.conduct_avg;
+    // The QR snapshot and printed row must agree; unknown is not a zero.
+    const conductAvg = conductSource == null ? null : cleanNumber(conductSource, 4);
 
     it.conduct_avg = conductAvg;
 
     if (!exportLight) {
       it.__qr_snapshot = {
-        g: cleanNumber(it?.general_avg, 4),
-        a: cleanNumber(it?.annual_avg, 4),
+        g: it?.general_avg == null ? null : cleanNumber(it.general_avg, 4),
+        a: it?.annual_avg == null ? null : cleanNumber(it.annual_avg, 4),
         c: conductAvg,
         r:
           it?.rank !== null && it?.rank !== undefined && Number.isFinite(Number(it.rank))
