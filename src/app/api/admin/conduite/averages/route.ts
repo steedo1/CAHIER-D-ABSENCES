@@ -1,3 +1,5 @@
+import { overlayDirectConductSubjects } from "@/lib/server/direct-conduct-subject-averages";
+import { directConductSource } from "@/lib/manual-conduct-absences";
 import { deductManualSanctions, MANUAL_ABSENCE_REASON_PREFIX, manualConductForRange, parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
 //src/app/api/conduite/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -1025,6 +1027,16 @@ export async function GET(req: NextRequest) {
         })
       : new Map<string, Map<string, number>>();
 
+  if (conductPolicy.mode === "conduct_plus_subjects") {
+    try {
+      await overlayDirectConductSubjects(srv, conductSubjectAverageBySubject, {
+        institutionId: institution_id, classId: class_id,
+        academicYear: academic_year || String(cls.academic_year || ""), periodCode: period_code,
+        from, to, subjectIds: conductSubjectPolicies.map(row => row.subject_id), studentIds,
+      });
+    } catch { return NextResponse.json({ error: "conduct_sources_read_failed" }, { status: 503 }); }
+  }
+
   // ✅ Total officiel affiché/modifiable.
   // En mode standard, il suit le total des rubriques.
   // En mode conduite composite (CSCA : Discipline + Religion + Latin), la moyenne officielle
@@ -1547,7 +1559,7 @@ export async function GET(req: NextRequest) {
       const override = overridesByStudent.get(student_id);
       const rawOverrideTotal = Number(override?.override_total);
       const isOverridden =
-        !!override && !manualAbsences && Number.isFinite(rawOverrideTotal);
+        !!override && (!manualAbsences || !!directConductSource(override.reason)) && Number.isFinite(rawOverrideTotal);
 
       const finalTotal = isOverridden
         ? Number(clamp(rawOverrideTotal, 0, officialTotalMax).toFixed(2))

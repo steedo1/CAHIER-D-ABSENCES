@@ -1,4 +1,4 @@
-import { deductManualSanctions, MANUAL_ABSENCE_REASON_PREFIX, manualConductForRange } from "@/lib/manual-conduct-absences";
+import { DIRECT_CONDUCT_REASON_PREFIX, directConductSource, deductManualSanctions, MANUAL_ABSENCE_REASON_PREFIX, manualConductForRange } from "@/lib/manual-conduct-absences";
 import { parentConnectDenial } from "@/lib/parent-connect/server";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -598,10 +598,10 @@ export async function GET(req: NextRequest) {
     const reference = new Date((from || to || new Date().toISOString().slice(0, 10)) + "T12:00:00Z");
     const firstYear = reference.getUTCMonth() >= 7 ? reference.getUTCFullYear() : reference.getUTCFullYear() - 1;
     const { data: manualRows, error: manualError } = await srv.from("conduct_average_overrides")
-      .select("reason,period_code,from_date,to_date,updated_at")
+      .select("reason,override_total,period_code,from_date,to_date,updated_at")
       .eq("institution_id", institution_id).eq("student_id", student_id)
       .eq("academic_year", `${firstYear}-${firstYear + 1}`)
-      .like("reason", `${MANUAL_ABSENCE_REASON_PREFIX}%`);
+      .or(`reason.like.${MANUAL_ABSENCE_REASON_PREFIX}%,reason.like.${DIRECT_CONDUCT_REASON_PREFIX}%`);
     if (manualError) throw manualError;
     const manualSource = manualConductForRange(manualRows || [], from, to);
     const manualHours = manualSource?.hours ?? null;
@@ -734,6 +734,8 @@ export async function GET(req: NextRequest) {
       );
 
     total = deductManualSanctions(Number(total.toFixed(2)), manualSanctions);
+    const direct = (manualRows || []).find(row => directConductSource(row.reason) && row.from_date === from && row.to_date === to);
+    if (direct && Number.isFinite(Number(direct.override_total))) total = Number(direct.override_total);
     const appreciation = appreciationFromTotal(total);
 
     return NextResponse.json({

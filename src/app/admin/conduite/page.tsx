@@ -351,6 +351,7 @@ function normalizeInstitutionSettings(json: any): InstitutionSettings {
 export default function ConduitePage() {
   const role = useAdminRole();
   const isEducator = role === "educator";
+  const isFileCorrespondent = role === "file_correspondent";
   const [manualMode, setManualMode] = useState(role === "educator");
   useEffect(() => {
     if (isEducator) setManualMode(true);
@@ -929,7 +930,7 @@ export default function ConduitePage() {
         <button
           type="button"
           onClick={() => openRubricEditModal(item, key)}
-          disabled={!canEditOfficialAverage || savingRubricOverride || max <= 0}
+          disabled={isFileCorrespondent || !canEditOfficialAverage || savingRubricOverride || max <= 0}
           className={[
             "rounded-lg px-2 py-1 text-left font-medium transition",
             modified
@@ -949,7 +950,7 @@ export default function ConduitePage() {
           <button
             type="button"
             onClick={() => resetRubricOverride(item, key)}
-            disabled={savingRubricOverride}
+            disabled={isFileCorrespondent || savingRubricOverride}
             className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-50"
             title={`Réinitialiser ${RUBRIC_LABELS[key]}`}
           >
@@ -991,7 +992,7 @@ export default function ConduitePage() {
       return;
     }
 
-    const n = parseFrenchNumber(editValue);
+    const n = editValue.trim() ? parseFrenchNumber(editValue) : NaN;
 
     if (!Number.isFinite(n)) {
       setOverrideError("Saisis une moyenne valide.");
@@ -1027,6 +1028,7 @@ export default function ConduitePage() {
           to_date: to || null,
           calculated_total: calculatedTotal,
           override_total: n,
+          direct_entry: true,
         }),
       });
 
@@ -1049,7 +1051,8 @@ export default function ConduitePage() {
         throw new Error(serverMessage);
       }
 
-      closeEditModal();
+      setEditingItem(null);
+      setEditValue("");
       setNotice("Moyenne finale enregistrée.");
       await validate();
     } catch (e: any) {
@@ -1798,12 +1801,12 @@ export default function ConduitePage() {
       <div>
         <h1 className="text-2xl font-semibold">{conductDisplayLabel} — Moyennes par élève</h1>
         <p className="text-slate-600">
-          {manualMode ? "Choisissez une classe et un trimestre, puis saisissez les heures d’absence et les points de sanction. La conduite se calcule automatiquement." : "Sélectionnez l’année scolaire, la période et la classe. Cliquez sur une rubrique pour la corriger."}
+          {manualMode ? "Choisissez une classe et un trimestre, puis saisissez les heures d’absence et les points de sanction. La conduite se calcule automatiquement." : "Sélectionnez l’année scolaire, la période et la classe. Cliquez sur « Saisir la moyenne » pour enregistrer directement la conduite finale, ou sur une rubrique pour la corriger."}
         </p>
       </div>
 
-      {!isEducator && <div className="flex flex-wrap gap-2" aria-label="Mode de gestion de conduite">
-        {([{ manual: false, label: "Calcul automatique" }, { manual: true, label: "Absences et sanctions" }]).map(option => (
+      {!isEducator && !isFileCorrespondent && <div className="flex flex-wrap gap-2" aria-label="Mode de gestion de conduite">
+        {([{ manual: false, label: "Calcul et saisie des moyennes" }, { manual: true, label: "Absences et sanctions" }]).map(option => (
           <button key={option.label} type="button" aria-pressed={manualMode === option.manual} disabled={manualSaving}
             onClick={() => {
               if (manualMode === option.manual) return;
@@ -2070,7 +2073,10 @@ export default function ConduitePage() {
                           )}
                         </td>
                         <td className="px-3 py-2 text-right">
-                          {it.is_overridden ? (
+                          <div className="flex flex-wrap justify-end gap-2">
+                          <Button type="button" onClick={() => openEditModal(it)} disabled={!canEditOfficialAverage || savingOverride}
+                            className="px-3 py-1.5 text-xs">{it.is_overridden ? "Modifier la moyenne" : "Saisir la moyenne"}</Button>
+                          {it.is_overridden && (
                             <Button
                               type="button"
                               onClick={() => resetOverride(it)}
@@ -2079,11 +2085,8 @@ export default function ConduitePage() {
                             >
                               Réinitialiser moyenne
                             </Button>
-                          ) : (
-                            <span className="text-[11px] text-slate-500">
-                              Clique une rubrique
-                            </span>
                           )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2152,7 +2155,7 @@ export default function ConduitePage() {
               <Button
                 type="button"
                 onClick={closeRubricEditModal}
-                disabled={savingRubricOverride}
+                disabled={isFileCorrespondent || savingRubricOverride}
                 className="bg-white !text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
               >
                 Annuler
@@ -2160,7 +2163,7 @@ export default function ConduitePage() {
               <Button
                 type="button"
                 onClick={saveRubricOverride}
-                disabled={savingRubricOverride}
+                disabled={isFileCorrespondent || savingRubricOverride}
               >
                 {savingRubricOverride ? "Enregistrement…" : "Enregistrer"}
               </Button>

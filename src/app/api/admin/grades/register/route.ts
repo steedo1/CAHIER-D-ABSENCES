@@ -139,7 +139,7 @@ async function requireAdmin(): Promise<
   const canManage = ((roles || []) as RoleRow[]).some((row) => {
     const role = String(row.role || "");
     if (role === "super_admin") return true;
-    if (role !== "admin") return false;
+    if (role !== "admin" && role !== "file_correspondent") return false;
     const roleInstitution = String(row.institution_id || "").trim();
     return !roleInstitution || roleInstitution === institutionId;
   });

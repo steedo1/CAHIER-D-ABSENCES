@@ -1,3 +1,5 @@
+import { mayReadDirectAverages } from "@/lib/server/direct-average-access";
+import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { primarySubjectEventAverages } from "@/lib/server/primary-subject-event-averages";
 import { classComponentContext, selectProgramComponents, isProgramComponentLevel } from "@/lib/school-subject-components";
@@ -84,6 +86,7 @@ type GradeRow = {
 };
 
 type BonusRow = {
+  reason?: string | null;
   student_id: string;
   bonus: number;
   subject_id: string | null;
@@ -326,26 +329,6 @@ export async function GET(req: NextRequest) {
       published_only,
     });
 
-    if (evaluationIds.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        params: {
-          class_id,
-          subject_id,
-          grading_period_id,
-          academic_year,
-          published_only,
-          missing,
-          round_to: round_to ?? "none",
-          rank_by,
-        },
-        items: [],
-        meta: {
-          evaluations: 0,
-          note: "Aucune évaluation concernée. Aucun élève ne doit être affiché avec 0 par défaut.",
-        },
-      });
-    }
 
     const hasAnyComponentEval = evaluations.some(
       (e) => !!(e as any).subject_component_id
@@ -445,18 +428,12 @@ export async function GET(req: NextRequest) {
     let qBonuses = svc
       .from("grade_adjustments")
       .select(
-        "student_id, bonus, subject_id, class_id, academic_year, grading_period_id"
+        "student_id, bonus, subject_id, class_id, academic_year, grading_period_id, reason"
       )
       .eq("class_id", class_id)
       .eq("academic_year", academic_year);
 
-    if (grading_period_id) {
-      qBonuses = qBonuses.or(
-        `grading_period_id.eq.${grading_period_id},grading_period_id.is.null`
-      );
-    } else {
-      qBonuses = qBonuses.is("grading_period_id", null);
-    }
+    if (!grading_period_id) qBonuses = qBonuses.is("grading_period_id", null);
 
     const { data: bonuses, error: bErr } = await qBonuses;
 
@@ -589,6 +566,13 @@ export async function GET(req: NextRequest) {
       sample: Array.from(gradesByStudent.entries()).slice(0, 3),
     });
 
+    const directByStudent = directAverageMap((bonuses || []) as BonusRow[], grading_period_id);
+    if (directByStudent.size && !await mayReadDirectAverages(svc, supabase, auth.user.id, class_id, institution_id, subject_id)) return bad("FORBIDDEN", 403);
+    if (subject_id) for (const [studentId, subjects] of directByStudent) {
+      if (subjects.has(subject_id) && !gradesByStudent.has(studentId))
+        gradesByStudent.set(studentId, { sum: 0, denom: 0, counted: 0, present: 0 });
+    }
+
     const rows: Row[] = [];
     const totalEvals = evaluations.length;
 
@@ -629,16 +613,18 @@ export async function GET(req: NextRequest) {
 
       // Aucun calcul possible = pas de ligne renvoyée.
       // Le front affichera NC pour cet élève en complétant avec le roster.
+      const direct = subject_id ? directByStudent.get(sid)?.get(subject_id) : undefined;
+      if (direct !== undefined) avg20 = direct;
       if (avg20 === null || !Number.isFinite(avg20)) continue;
 
-      const b = bonusMap.get(sid) ?? 0;
-      const afterBonus = clamp(avg20 + b, 0, 20);
+      const b = direct === undefined ? bonusMap.get(sid) ?? 0 : 0;
+      const afterBonus = finalSubjectAverage(avg20, b, direct)!;
       const rounded = round_to ? roundTo(afterBonus, round_to) : afterBonus;
 
-      const isComplete =
+      const isComplete = direct !== undefined || (
         missing === "zero"
           ? totalEvals > 0
-          : agg.counted >= totalEvals && totalEvals > 0;
+          : agg.counted >= totalEvals && totalEvals > 0);
 
       rows.push({
         student_id: sid,

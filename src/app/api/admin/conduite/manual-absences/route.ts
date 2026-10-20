@@ -1,3 +1,4 @@
+import { directConductSource } from "@/lib/manual-conduct-absences";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
     const enrolled = new Set((enrollment.data || []).map(r => String(r.student_id)));
     if (ids.some(id => !enrolled.has(id))) return failure("Un élève ne fait pas partie de cette classe pour la période choisie.");
     const changedHours = new Set(entries.filter(entry => entry.hours !== undefined).map(entry => entry.studentId));
-    if ((previous.data || []).some(r => !parseManualAbsenceReason(r.reason)) || (assOverrides.data || []).some(row => changedHours.has(String(row.student_id)))) return failure("Une moyenne ou une note d’assiduité a déjà été corrigée manuellement. Réinitialisez cette correction dans le calcul automatique avant de saisir les absences.", 409);
+    if ((previous.data || []).some(r => directConductSource(r.reason) || !parseManualAbsenceReason(r.reason)) || (assOverrides.data || []).some(row => changedHours.has(String(row.student_id)))) return failure("Une moyenne ou une note d’assiduité a déjà été corrigée manuellement. Réinitialisez cette correction dans le calcul automatique avant de saisir les absences.", 409);
     const s = settings.data;
     const number = (value: unknown, fallback: number) => value === null || value === undefined || !Number.isFinite(Number(value)) ? fallback : Number(value);
     const assMax = number(s?.assiduite_max, 6), other = number(s?.tenue_max, 3) + number(s?.moralite_max, 4) + number(s?.discipline_max, 7);

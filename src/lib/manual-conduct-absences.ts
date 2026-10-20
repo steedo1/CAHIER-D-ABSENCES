@@ -1,5 +1,17 @@
 /** Absence totals entered from a paper register, attached to one grading period. */
 export const MANUAL_ABSENCE_REASON_PREFIX = "MC_MANUAL_ABSENCES_V1:";
+export const DIRECT_CONDUCT_REASON_PREFIX = "MC_DIRECT_CONDUCT_V1:";
+type PreviousConduct = { reason: string | null; override_total: number; calculated_total: number; from_date: string | null; to_date: string | null };
+export function directConductSource(reason: unknown): { previous: PreviousConduct | null } | null {
+  if (typeof reason !== "string" || !reason.startsWith(DIRECT_CONDUCT_REASON_PREFIX)) return null;
+  const source = JSON.parse(reason.slice(DIRECT_CONDUCT_REASON_PREFIX.length));
+  if (!source || !("previous" in source)) throw new Error("Source de conduite illisible");
+  return source;
+}
+export function directConductReason(previous: PreviousConduct | null): string {
+  const existing = directConductSource(previous?.reason);
+  return DIRECT_CONDUCT_REASON_PREFIX + JSON.stringify({ previous: existing ? existing.previous : previous });
+}
 export const MANUAL_CONDUCT_ROLES = ["admin", "educator", "super_admin"] as const;
 export type ManualAbsenceSource = { hours: number; periodId: string; sanctionPoints?: number; useDigitalAbsences?: boolean };
 export type AssiduityRules = {
@@ -32,6 +44,8 @@ export function deductManualSanctions(total: number, points: number): number {
   return Number(Math.max(0, total - points).toFixed(2));
 }
 export function parseManualAbsenceReason(reason: unknown): ManualAbsenceSource | null {
+  const direct = directConductSource(reason);
+  if (direct) reason = direct.previous?.reason;
   if (typeof reason !== "string" || !reason.startsWith(MANUAL_ABSENCE_REASON_PREFIX)) return null;
   try {
     const source = JSON.parse(reason.slice(MANUAL_ABSENCE_REASON_PREFIX.length));

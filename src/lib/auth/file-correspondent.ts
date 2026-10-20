@@ -5,6 +5,8 @@ export const FILE_CORRESPONDENT_HOME = "/admin/dashboard";
 const EXACT_PATHS = new Set([
   FILE_CORRESPONDENT_HOME,
   "/admin/export-moyennes",
+  "/admin/notes/statistiques",
+  "/admin/conduite",
   "/admin/notes/conseil-classe",
   "/admin/notes/bilan",
   "/admin/notes/matrices",

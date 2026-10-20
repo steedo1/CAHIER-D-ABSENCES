@@ -1,4 +1,5 @@
-import { MANUAL_ABSENCE_REASON_PREFIX } from "@/lib/manual-conduct-absences";
+import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
+import { directConductReason, directConductSource, DIRECT_CONDUCT_REASON_PREFIX, MANUAL_ABSENCE_REASON_PREFIX } from "@/lib/manual-conduct-absences";
 // src/app/api/admin/conduite/overrides/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
@@ -181,7 +182,7 @@ async function getConductTotalMax(
 async function getAuthContext() {
   // Seule l'administration peut modifier les notes officielles.
   // L'éducateur saisit uniquement les heures d'absence via manual-absences.
-  const access = await requireInstitutionAccess({ allowedRoles: ["admin", "super_admin"] });
+  const access = await requireInstitutionAccess({ allowedRoles: ["admin", "super_admin", "file_correspondent"] });
   if ("error" in access) return { error: access.error, srv: getSupabaseServiceClient(), user: null, institution_id: null } as const;
   return { error: null, srv: access.srv, user: access.user, institution_id: access.institutionId } as const;
 }
@@ -197,9 +198,6 @@ export async function POST(req: NextRequest) {
     const student_id = cleanText(body.student_id);
     const academic_year = cleanText(body.academic_year);
     const period_code = cleanText(body.period_code);
-
-    const from_date = cleanText(body.from_date || body.from) || null;
-    const to_date = cleanText(body.to_date || body.to) || null;
 
     /*
      * Compatibilité ancienne + nouvelle conduite spéciale :
@@ -219,8 +217,8 @@ export async function POST(req: NextRequest) {
     );
 
     const overrideRaw = toNumber(body.override_total);
-    const reason = cleanText(body.reason) || "Correction administrative";
-    if (reason.startsWith(MANUAL_ABSENCE_REASON_PREFIX)) {
+    let reason = cleanText(body.reason) || "Correction administrative";
+    if (reason.startsWith(MANUAL_ABSENCE_REASON_PREFIX) || reason.startsWith(DIRECT_CONDUCT_REASON_PREFIX)) {
       return NextResponse.json({ error: "reserved_reason" }, { status: 400 });
     }
 
@@ -272,7 +270,7 @@ export async function POST(req: NextRequest) {
     // Vérifier que la classe appartient bien à l'établissement de l'admin.
     const { data: cls, error: clsErr } = await srv
       .from("classes")
-      .select("id,institution_id")
+      .select("id,institution_id,academic_year")
       .eq("id", class_id)
       .maybeSingle();
 
@@ -303,6 +301,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "student_not_in_class" }, { status: 400 });
     }
 
+    const resolved = await listApplicableGradePeriods(srv, institution_id as string, academic_year, class_id);
+    const period = resolved.items.find(row => row.code === period_code && row.is_active !== false);
+    if (!period || cls.academic_year !== academic_year)
+      return NextResponse.json({ error: "invalid_period" }, { status: 400 });
+    if (body.direct_entry === true) {
+      const existing = await srv.from("conduct_average_overrides")
+        .select("reason,override_total,calculated_total,from_date,to_date")
+        .eq("institution_id", institution_id).eq("class_id", class_id).eq("student_id", student_id)
+        .eq("academic_year", academic_year).eq("period_code", period_code).maybeSingle();
+      if (existing.error) throw existing.error;
+      reason = directConductReason(existing.data);
+    }
+
     const now = new Date().toISOString();
 
     const payload = {
@@ -311,8 +322,8 @@ export async function POST(req: NextRequest) {
       student_id,
       academic_year,
       period_code,
-      from_date,
-      to_date,
+      from_date: period.start_date,
+      to_date: period.end_date,
       calculated_total,
       override_total,
       reason,
@@ -401,7 +412,7 @@ export async function DELETE(req: NextRequest) {
 
     const { data: cls, error: clsErr } = await srv
       .from("classes")
-      .select("id,institution_id")
+      .select("id,institution_id,academic_year")
       .eq("id", class_id)
       .maybeSingle();
 
@@ -411,6 +422,19 @@ export async function DELETE(req: NextRequest) {
 
     if (!cls || (cls as any).institution_id !== institution_id) {
       return NextResponse.json({ error: "invalid_class" }, { status: 400 });
+    }
+
+    const existing = await srv.from("conduct_average_overrides")
+      .select("reason").eq("institution_id", institution_id).eq("class_id", class_id)
+      .eq("student_id", student_id).eq("academic_year", academic_year).eq("period_code", period_code).maybeSingle();
+    if (existing.error) throw existing.error;
+    const source = directConductSource(existing.data?.reason);
+    if (source?.previous) {
+      const restored = await srv.from("conduct_average_overrides").update({ ...source.previous, updated_at: new Date().toISOString() })
+        .eq("institution_id", institution_id).eq("class_id", class_id).eq("student_id", student_id)
+        .eq("academic_year", academic_year).eq("period_code", period_code);
+      if (restored.error) throw restored.error;
+      return NextResponse.json({ ok: true, restored: true });
     }
 
     const { error: delErr } = await srv

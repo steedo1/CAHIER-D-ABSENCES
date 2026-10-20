@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import DirectSubjectAverages from "@/components/admin/DirectSubjectAverages";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import {
   DEFAULT_EDUCATION_SCOPE,
@@ -308,6 +309,9 @@ export default function AdminGradeRegisterPage() {
     subject_component_id: "",
   });
   const [overviewItems, setOverviewItems] = useState<RegisterOverviewItem[]>([]);
+  const [entryMode, setEntryMode] = useState<"notes" | "averages">("notes");
+  const [directDirty, setDirectDirty] = useState(false);
+  const [directSaving, setDirectSaving] = useState(false);
   const overviewMode = selectedSubjectId === "";
 
   const loadSeq = useRef(0);
@@ -669,6 +673,7 @@ export default function AdminGradeRegisterPage() {
     setDirty({});
     setSearch("");
     setMessage(null);
+    if (entryMode === "averages") return;
     if (selectedClassId && selectedPeriodId && overviewMode) {
       void loadOverview();
     } else if (
@@ -681,7 +686,7 @@ export default function AdminGradeRegisterPage() {
     }
     return () => { ++loadSeq.current; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClassId, selectedPeriodId, selectedSubjectId, selectedTeacherId]);
+  }, [selectedClassId, selectedPeriodId, selectedSubjectId, selectedTeacherId, entryMode]);
 
   function getCellValue(evaluationId: string, studentId: string) {
     const dirtyValue = dirty[evaluationId]?.[studentId];
@@ -854,13 +859,13 @@ export default function AdminGradeRegisterPage() {
                     Registre des notes
                   </h1>
                   <p className="text-sm text-slate-500">
-                    Consulter les enseignants ayant saisi des notes, puis ouvrir leur registre.
+                    Consultez les notes ou saisissez les moyennes transmises par les enseignants.
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            {entryMode === "notes" && <div className="flex flex-wrap items-center gap-2">
               {!overviewMode && (
                 <Button type="button" tone="ghost" onClick={showAllDisciplines} disabled={saving}>
                   <ArrowLeft className="h-4 w-4" />
@@ -884,10 +889,17 @@ export default function AdminGradeRegisterPage() {
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 Enregistrer{dirtyCount ? ` (${dirtyCount})` : ""}
               </Button>
-            </div>
+            </div>}
           </div>
         </header>
+        <div className="flex flex-wrap gap-2" aria-label="Mode du cahier de notes">
+          {(["notes", "averages"] as const).map(value => <Button key={value} type="button" disabled={directDirty || directSaving || saving || dirtyCount > 0}
+            tone={entryMode === value ? "primary" : "ghost"} aria-pressed={entryMode === value} onClick={() => setEntryMode(value)}>
+            {value === "notes" ? "Notes des devoirs" : "Saisir les moyennes"}
+          </Button>)}
+        </div>
 
+        <fieldset disabled={directDirty || directSaving} className="min-w-0">
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <EducationScopeFilter
             value={educationScope}
@@ -971,6 +983,16 @@ export default function AdminGradeRegisterPage() {
           </div>
         </section>
 
+        </fieldset>
+        {entryMode === "averages" && (
+          selectedClassId && selectedSubjectId && selectedPeriodId && !periodsLoading ?
+            <DirectSubjectAverages key={`${selectedClassId}:${selectedSubjectId}:${selectedPeriodId}`}
+              classId={selectedClassId} subjectId={selectedSubjectId} periodId={selectedPeriodId}
+              onDirtyChange={setDirectDirty} onSavingChange={setDirectSaving} /> :
+            <div className="rounded-2xl border bg-white p-5 text-sm text-slate-600">Choisissez une classe, une discipline et un trimestre pour saisir les moyennes.</div>
+        )}
+
+        {entryMode === "notes" && <>
         {showNewEvaluation && (
           <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-3">
@@ -1339,6 +1361,7 @@ export default function AdminGradeRegisterPage() {
         <p className="px-1 text-xs leading-5 text-slate-400">
           Les colonnes publiées, soumises ou verrouillées restent consultables mais ne sont pas modifiables depuis ce registre.
         </p>
+        </>}
       </div>
     </div>
   );

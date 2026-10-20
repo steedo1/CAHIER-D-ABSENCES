@@ -99,22 +99,33 @@ test("le périmètre ajoute le dashboard sans ouvrir les autres fonctions admin"
   }
 });
 
-test("le menu partagé affiche le dashboard et trois groupes repliés à l'accueil", () => {
+test("le menu partagé affiche le dashboard et cinq groupes repliés à l'accueil", () => {
   const html = sidebar("file_correspondent");
-  assert.equal((html.match(/aria-expanded="false"/g) || []).length, 3);
+  assert.equal((html.match(/aria-expanded="false"/g) || []).length, 5);
   assert.equal((html.match(/aria-expanded="true"/g) || []).length, 0);
   assert.deepEqual(links(html), ["/admin/dashboard"]);
-  for (const title of ["Correspondant fichier", "Organisation scolaire", "Paramètres"]) assert.ok(html.includes(title));
-  for (const title of ["Gestion financière", "Utilisateurs &amp; rôles", "Administration &amp; services", "Infirmerie", "Cahier des absences", "Cahier de notes", "Duplicata"]) assert.ok(!html.includes(title), title);
+  for (const title of ["Correspondant fichier", "Organisation scolaire", "Paramètres", "Cahier de notes", "Gestion conduite"]) assert.ok(html.includes(title));
+  for (const title of ["Gestion financière", "Utilisateurs &amp; rôles", "Administration &amp; services", "Infirmerie", "Cahier des absences", "Duplicata"]) assert.ok(!html.includes(title), title);
 });
 
 test("une liste de classe ouvre uniquement Organisation scolaire et conserve ses sous-pages", () => {
   const html = sidebar("file_correspondent", "/admin/classes/liste/test");
   assert.equal((html.match(/aria-expanded="true"/g) || []).length, 1);
-  assert.equal((html.match(/aria-expanded="false"/g) || []).length, 2);
+  assert.equal((html.match(/aria-expanded="false"/g) || []).length, 4);
   assert.ok(links(html).includes("/admin/parents"));
   assert.ok(!links(html).includes("/admin/users"));
   assert.ok(links(html).every(isFileCorrespondentPathAllowed));
+});
+
+test("le correspondant accède au registre et aux moyennes de conduite sans ouvrir les paramètres de publication", () => {
+  const notes = links(sidebar("file_correspondent", "/admin/notes/statistiques"));
+  assert.ok(notes.includes("/admin/notes/statistiques"));
+  assert.ok(!notes.includes("/admin/notes/publication-settings"));
+  assert.ok(!notes.includes("/admin/notes/publication-requests"));
+  const conduct = links(sidebar("file_correspondent", "/admin/conduite"));
+  assert.ok(conduct.includes("/admin/conduite"));
+  assert.ok(!conduct.includes("/admin/regles-conduite"));
+  assert.ok([...notes, ...conduct].every(isFileCorrespondentPathAllowed));
 });
 
 test("les statistiques générales n'activent jamais le menu financier du Correspondant", () => {

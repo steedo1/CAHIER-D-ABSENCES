@@ -1061,9 +1061,9 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
 
   const conductManagementItems = React.useMemo(
     () =>
-      isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell
+      isInfirmier || isFinanceManager || isFinanceOnlyShell
         ? []
-        : isEducator
+        : isEducator || isFileCorrespondent
           ? CONDUCT_MANAGEMENT_ITEMS.filter((item) => item.href === "/admin/conduite")
           : CONDUCT_MANAGEMENT_ITEMS,
     [isFileCorrespondent, isInfirmier, isFinanceManager, isFinanceOnlyShell, isEducator],
@@ -1125,7 +1125,8 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
   const notesItems = React.useMemo(
     () =>
       NOTES_ITEMS.filter((item) => {
-        if (isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
+        if (isFileCorrespondent) return item.href === "/admin/notes/statistiques";
+        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         if (directSchoolGradePublication && (item.href === "/admin/notes/publication-requests" ||
             item.href === "/admin/notes/publication-settings")) return false;
