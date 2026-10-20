@@ -89,8 +89,8 @@ test("absence de données historiques valides = refus ; ne pas inventer de résu
   assert.throws(() => adaptHistoricalFrenchSecondaryBulletins(repeated, context), /SCOPE_INVALID/);
 });
 
-test("la conduite manquante et les moyennes NC restent null dans l'API historique et le QR", () => {
-  const { readFileSync } = require("node:fs");
+test("la conduite manquante et les moyennes NC restent null dans l'API historique et le QR", async () => {
+  const { readFileSync } = await import("node:fs");
   const api = readFileSync(new URL("../src/app/api/admin/grades/bulletin/route.ts", import.meta.url), "utf8");
   assert.match(api, /if \(raw === null \|\| raw === undefined \|\| raw === ""\) continue/);
   assert.match(api, /value == null \? null : cleanNumber\(value, 4\)/);
