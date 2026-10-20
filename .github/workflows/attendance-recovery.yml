@@ -38,3 +38,5 @@ jobs:
           test/admin-attendance-monitor-fetch.test.ts
           test/admin-attendance-slot-status-simplification.test.mjs
           test/class-device-offline-lifecycle-wiring.test.mjs
+          test/timetable-course-editor.test.mjs
+          test/timetable-course-meta.test.mjs

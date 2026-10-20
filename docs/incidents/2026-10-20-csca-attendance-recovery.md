@@ -111,6 +111,22 @@ Tests ajoutés/adaptés : `attendance-1a-recovery.test.mjs`, `teacher-attendance
 
 **Limite matérielle explicite :** aucun test n'a été effectué sur la tablette Android physique. Quand Android tue complètement la PWA, aucun JavaScript de cette application ne peut garantir une exécution à la seconde prévue. À sa reprise, la finalisation doit garder l'heure théorique fin + 2 minutes et transmettre les données conservées. La recette réelle ci-dessous reste nécessaire ; ce rapport ne prétend pas prouver un déclenchement en arrière-plan d'une application arrêtée par le système.
 
+## Complément : consultation et modification des emplois du temps
+
+À la demande d'Ange Aristide, la livraison inclut une correction ciblée dans Organisation scolaire → Emploi du temps → Saisie manuelle.
+
+- Chaque case indique les matières, professeurs et classes, sans les remplacer par un nombre de « cours occupés » et sans masquer les autres professeurs pendant une modification.
+- Un créneau peut être consulté avant de choisir une matière et un professeur. Le bouton « Modifier ce cours » charge le couple matière/professeur et les cases déjà enregistrées dans l'éditeur existant. Les changements nécessitent toujours « Enregistrer pour ce professeur ».
+- Le panneau est disponible sur ordinateur et sur mobile. Il protège le brouillon quand on choisit un autre cours ; un chargement en cours, invalide ou échoué ne permet pas un enregistrement vide. Une réponse ancienne est ignorée après changement de périmètre.
+- La route de lecture fournit les occupations du périmètre même sans filtre de classe. Les libellés d'un cours existant restent disponibles après la fin de son ancienne affectation. L'établissement, l'année active et les filtres pédagogiques restent appliqués. Les contrôles d'affectation de l'API d'enregistrement restent en place.
+- Fichiers : `src/app/admin/import-emplois-du-temps/page.tsx`, `src/app/api/admin/timetables/meta/route.ts`, deux tests `test/timetable-course-{editor,meta}.test.mjs`, workflow ciblé complété.
+- Résultat final du workflow combiné en local : **113 tests réussis sur 113**, compilation Next.js et TypeScript réussies.
+- Vérification : tests d'interaction React avec transport isolé (consultation, déplacement, payload de sauvegarde, autres cours/classes préservés, erreur réseau et réponse tardive) et exécution de la route GET réelle sur données synthétiques (droits, périmètre, année, établissement, libellés).
+- Limite : contrôle visuel Chromium non effectué dans cet environnement, le navigateur local étant indisponible. Le test physique sur téléphone/tablette reste à réaliser.
+- Le test historique `printed roster puts the four blank note columns together at the far right` échoue aussi sur la base de production : il attend un balisage statique Note1–Note4 alors que la liste utilise déjà des colonnes dynamiques. Aucun fichier de liste de classe n'est modifié par ce complément.
+
+La fusion et la livraison Vercel ont été explicitement autorisées dans la conversation du 20 octobre 2026, après ajout de cette correction. Aucun DDL ni correction SQL de données de production n'est prévu.
+
 ## Recette avant mise en production
 
 1. Vérifier que la PR cible la branche de référence et comparer son point de départ au commit encore déployé. Si la production a changé, refaire le rapprochement et les tests sur cette nouvelle référence avant toute fusion.
@@ -124,4 +140,4 @@ Tests ajoutés/adaptés : `attendance-1a-recovery.test.mjs`, `teacher-attendance
 
 Si les corps d'une opération réelle diffèrent du reçu, elle doit rester visible pour examen : ne pas la forcer, la dater à l'heure courante ou fermer la séance par SQL.
 
-Le SHA du correctif et le lien de PR figurent dans la livraison GitHub. Le déploiement en production reste soumis à l'accord explicite d'Ange Aristide.
+Le SHA du correctif, les résultats CI et le lien de PR figurent dans la livraison GitHub. L'autorisation de fusion et de livraison Vercel a été donnée par Ange Aristide le 20 octobre 2026.
