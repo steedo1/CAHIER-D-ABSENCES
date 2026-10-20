@@ -115,6 +115,26 @@ function CountUp({
   );
 }
 
+type StatAccent = "blue" | "indigo" | "amber" | "violet" | "emerald" | "rose" | "sky" | "slate" | "pink";
+
+const statAccents: Record<StatAccent, { ring: string; icon: string; bar: string }> = {
+  blue: { ring: "ring-blue-100 hover:ring-blue-200", icon: "bg-blue-50 text-blue-600 ring-blue-100", bar: "bg-blue-500" },
+  indigo: { ring: "ring-indigo-100 hover:ring-indigo-200", icon: "bg-indigo-50 text-indigo-600 ring-indigo-100", bar: "bg-indigo-500" },
+  amber: { ring: "ring-amber-100 hover:ring-amber-200", icon: "bg-amber-50 text-amber-600 ring-amber-100", bar: "bg-amber-500" },
+  violet: { ring: "ring-violet-100 hover:ring-violet-200", icon: "bg-violet-50 text-violet-600 ring-violet-100", bar: "bg-violet-500" },
+  emerald: { ring: "ring-emerald-100 hover:ring-emerald-200", icon: "bg-emerald-50 text-emerald-600 ring-emerald-100", bar: "bg-emerald-500" },
+  rose: { ring: "ring-rose-100 hover:ring-rose-200", icon: "bg-rose-50 text-rose-600 ring-rose-100", bar: "bg-rose-500" },
+  sky: { ring: "ring-sky-100 hover:ring-sky-200", icon: "bg-sky-50 text-sky-600 ring-sky-100", bar: "bg-sky-500" },
+  slate: { ring: "ring-slate-100 hover:ring-slate-200", icon: "bg-slate-100 text-slate-600 ring-slate-200", bar: "bg-slate-500" },
+  pink: { ring: "ring-pink-100 hover:ring-pink-200", icon: "bg-pink-50 text-pink-600 ring-pink-100", bar: "bg-pink-500" },
+};
+
+/** Purely presentational: never invent a percentage for incomplete or inconsistent totals. */
+function percentageOf(part: number, total: number): number | null {
+  if (!Number.isFinite(part) || !Number.isFinite(total) || total <= 0 || part < 0 || part > total) return null;
+  return Math.round((part / total) * 1000) / 10;
+}
+
 function StatCard({
   label,
   value,
@@ -122,44 +142,52 @@ function StatCard({
   accent = "emerald",
   loading,
   sub,
+  percentage,
 }: {
   label: string;
   value: number | null;
   Icon: any;
-  accent?: "emerald" | "teal" | "sky" | "violet" | "amber";
+  accent?: StatAccent;
   loading?: boolean;
   sub?: string;
+  percentage?: number | null;
 }) {
-  const ring = useMemo(() => {
-    switch (accent) {
-      case "teal":
-        return "ring-teal-500/30 hover:ring-teal-500/40";
-      case "sky":
-        return "ring-sky-500/30 hover:ring-sky-500/40";
-      case "violet":
-        return "ring-violet-500/30 hover:ring-violet-500/40";
-      case "amber":
-        return "ring-amber-500/30 hover:ring-amber-500/40";
-      default:
-        return "ring-emerald-500/30 hover:ring-emerald-500/40";
-    }
-  }, [accent]);
+  const theme = statAccents[accent];
+  const showPercentage = !loading && value !== null && percentage !== null && percentage !== undefined && Number.isFinite(percentage);
+  const percentageLabel = showPercentage
+    ? percentage.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+    : "";
 
   return (
-    <Card className={`rounded-2xl border-slate-200/80 shadow-sm ring-1 transition ${ring}`}>
+    <Card className={`rounded-2xl border-slate-200/80 shadow-sm ring-1 transition ${theme.ring}`}>
       <CardContent className="p-5">
-        <div className="flex items-start justify-between">
-          <div className="space-y-1">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 space-y-1">
             <div className="text-sm text-slate-500">{label}</div>
             <div className="text-3xl font-semibold tracking-tight">
               {loading ? <Skeleton className="h-8 w-16" /> : value === null ? <span aria-label="Non disponible">—</span> : <CountUp value={value} />}
             </div>
             {sub && <div className="text-xs text-slate-500">{sub}</div>}
           </div>
-          <div className="rounded-xl bg-gradient-to-br from-white to-slate-50 p-3 ring-1 ring-slate-200">
-            <Icon className="h-6 w-6 text-slate-600" />
+          <div className={`shrink-0 rounded-xl p-3 ring-1 ${theme.icon}`}>
+            <Icon className="h-6 w-6" />
           </div>
         </div>
+        {showPercentage && (
+          <div className="mt-3 space-y-1.5">
+            <div
+              className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100"
+              role="progressbar"
+              aria-label={`${label} : ${percentageLabel} % des élèves`}
+              aria-valuenow={percentage}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div className={`h-full rounded-full ${theme.bar}`} style={{ width: `${percentage}%` }} />
+            </div>
+            <div className="text-right text-xs font-medium tabular-nums text-slate-500">{percentageLabel} %</div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -557,7 +585,7 @@ export default function AdminDashboardClient() {
           value={scoped ? scopedCounts?.classes ?? null : counts.classes}
           sub={scoped && scopedCounts?.classes === null ? unavailableHint : undefined}
           Icon={School}
-          accent="emerald"
+          accent="blue"
           loading={countLoading}
         />
         <StatCard
@@ -565,7 +593,7 @@ export default function AdminDashboardClient() {
           value={scoped ? scopedCounts?.teachers ?? null : counts.teachers}
           sub={scoped && scopedCounts?.teachers === null ? unavailableHint : undefined}
           Icon={Users}
-          accent="teal"
+          accent="indigo"
           loading={countLoading}
         />
         <StatCard
@@ -573,7 +601,7 @@ export default function AdminDashboardClient() {
           value={scoped ? null : counts.parents}
           sub={scoped ? unavailableHint : undefined}
           Icon={UserRoundCheck}
-          accent="sky"
+          accent="amber"
           loading={countLoading}
         />
         <StatCard
@@ -599,43 +627,49 @@ export default function AdminDashboardClient() {
           accent="emerald"
           loading={loading}
           sub={!scoped && assignmentUnknown > 0 ? `${assignmentUnknown} non renseigné(s)` : undefined}
+          percentage={scoped ? null : percentageOf(assignedStudents, counts.students)}
         />
         <StatCard
           label="Non affectés"
           value={scoped ? null : notAssignedStudents}
           Icon={Users}
-          accent="amber"
+          accent="rose"
           loading={loading}
+          percentage={scoped ? null : percentageOf(notAssignedStudents, counts.students)}
         />
         <StatCard
           label="Internes"
           value={scoped ? null : boarderStudents}
           Icon={School}
-          accent="teal"
+          accent="sky"
           loading={loading}
           sub={!scoped && boardingUnknown > 0 ? `${boardingUnknown} internat non renseigné` : undefined}
+          percentage={scoped ? null : percentageOf(boarderStudents, counts.students)}
         />
         <StatCard
           label="Non internes"
           value={scoped ? null : notBoarderStudents}
           Icon={School}
-          accent="sky"
+          accent="slate"
           loading={loading}
+          percentage={scoped ? null : percentageOf(notBoarderStudents, counts.students)}
         />
         <StatCard
           label="Garçons"
           value={scoped ? null : boys}
           Icon={GraduationCap}
-          accent="violet"
+          accent="blue"
           loading={loading}
           sub={!scoped && genderUnknown > 0 ? `${genderUnknown} sexe non renseigné` : undefined}
+          percentage={scoped ? null : percentageOf(boys, counts.students)}
         />
         <StatCard
           label="Filles"
           value={scoped ? null : girls}
           Icon={GraduationCap}
-          accent="emerald"
+          accent="pink"
           loading={loading}
+          percentage={scoped ? null : percentageOf(girls, counts.students)}
         />
       </section>
 
