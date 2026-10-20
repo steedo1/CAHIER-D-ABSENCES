@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
+import { attendanceReceiptMatches } from "@/lib/server/attendance-receipt-proof";
 import { classDeviceCloudSessionId } from "@/lib/class-device-cloud-session";
 
 export const dynamic = "force-dynamic";
@@ -71,9 +72,10 @@ function normalizeLocalMarks(value: unknown): LocalMark[] | null {
     const observedAt =
       text((raw as any).observed_at) || text((raw as any).late_observed_at) || null;
     const rawMinutes = (raw as any).minutes_late;
-    const minutesLate = Number.isFinite(Number(rawMinutes))
+    const minutesLate = rawMinutes != null && rawMinutes !== "" && Number.isFinite(Number(rawMinutes))
       ? Math.max(0, Math.round(Number(rawMinutes)))
       : null;
+    if (byStudent.has(studentId)) return null;
     byStudent.set(studentId, {
       studentId,
       status: status as LocalMark["status"],
@@ -104,6 +106,7 @@ async function resolveSessionId(input: {
   institutionId: string;
   classId: string;
   actorProfileId: string;
+  srv: ReturnType<typeof getSupabaseServiceClient>;
 }) {
   if (input.operationType === "session-start") {
     return classDeviceCloudSessionId({
@@ -120,12 +123,21 @@ async function resolveSessionId(input: {
     dependencyStartOperationId(bodySessionId) ||
     dependencyStartOperationId(input.dependencyKey);
   if (!startOperationId) return null;
-  return classDeviceCloudSessionId({
-    institutionId: input.institutionId,
-    classId: input.classId,
-    actorProfileId: input.actorProfileId,
-    operationId: startOperationId,
+  const derivedId = classDeviceCloudSessionId({
+    institutionId: input.institutionId, classId: input.classId,
+    actorProfileId: input.actorProfileId, operationId: startOperationId,
   });
+  // client: can denote either an opening operation or a legacy cloud alias.
+  // Ownership and a single candidate must be proven before mapping either.
+  if (isUuid(startOperationId)) {
+    const { data: candidates, error } = await input.srv.from("teacher_sessions")
+      .select("id").in("id", [startOperationId, derivedId])
+      .eq("institution_id", input.institutionId).eq("class_id", input.classId)
+      .eq("created_by", input.actorProfileId);
+    if (error || (candidates || []).length > 1) return null;
+    if (candidates?.length) return text(candidates[0].id);
+  }
+  return derivedId;
 }
 
 async function attendanceAlreadyApplied(input: {
@@ -142,87 +154,32 @@ async function attendanceAlreadyApplied(input: {
 }) {
   const { data: causality, error: causalityError } = await input.srv
     .from("relay_attendance_session_causality")
-    .select("last_operation_id,last_captured_at_device")
+    .select("last_operation_id,last_captured_at_device,last_payload_fingerprint")
     .eq("institution_id", input.institutionId)
     .eq("session_id", input.session.id)
     .maybeSingle();
 
-  if (!causalityError && text(causality?.last_operation_id) === input.operationId) {
-    return { acknowledged: true, reason: "attendance_operation_confirmed_in_cloud" };
-  }
-
-  const sessionClosed =
-    Boolean(input.session.ended_at) || text(input.session.status) === "submitted";
-  if (!sessionClosed) return { acknowledged: false, reason: "session_still_open" };
-
-  const capturedAt =
-    text(input.localBody.captured_at_device) ||
-    text(input.localBody.actual_call_at) ||
-    text(input.localBody.client_call_at) ||
-    text(input.localBody.call_at);
-  const localCapturedMs = parseDateMs(capturedAt);
-  const cloudCapturedMs = parseDateMs(causality?.last_captured_at_device);
-  if (causalityError || localCapturedMs == null || cloudCapturedMs == null) {
-    return {
-      acknowledged: false,
-      reason: causalityError
-        ? "attendance_receipt_lookup_unavailable"
-        : "attendance_capture_not_confirmed",
-    };
-  }
-  if (Math.abs(localCapturedMs - cloudCapturedMs) > 2_000) {
-    return { acknowledged: false, reason: "attendance_capture_mismatch" };
-  }
-
+  if (causalityError) return { acknowledged: false, reason: "attendance_receipt_lookup_unavailable" };
+  const capturedAt = text(input.localBody.captured_at_device) ||
+    text(input.localBody.actual_call_at) || text(input.localBody.client_call_at) || text(input.localBody.call_at);
   const localMarks = normalizeLocalMarks(input.localBody.marks);
-  if (localMarks == null) {
-    return { acknowledged: false, reason: "attendance_local_payload_unavailable" };
-  }
-  const expected = localMarks
-    .filter((mark) => mark.status === "absent" || mark.status === "late")
-    .map((mark) => ({
-      studentId: mark.studentId,
-      status: mark.status,
-      reason: mark.reason,
-      minutesLate: expectedLateMinutes(mark, input.session.started_at),
-    }));
-  if (expected.some((mark) => mark.minutesLate == null)) {
+  if (localMarks == null) return { acknowledged: false, reason: "attendance_local_payload_unavailable" };
+  const marks = localMarks.map((mark) => ({
+    student_id: mark.studentId, status: mark.status, comment: mark.reason,
+    late_minutes: expectedLateMinutes(mark, input.session.started_at),
+  }));
+  if (marks.some((mark) => mark.late_minutes == null)) {
     return { acknowledged: false, reason: "attendance_lateness_not_provable" };
   }
-
-  const { data: cloudMarks, error: cloudMarksError } = await input.srv
-    .from("attendance_marks")
-    .select("student_id,status,minutes_late,reason")
-    .eq("session_id", input.session.id);
-  if (cloudMarksError) {
-    return { acknowledged: false, reason: "attendance_marks_lookup_unavailable" };
-  }
-  const actual = (cloudMarks || [])
-    .map((mark: any) => ({
-      studentId: text(mark?.student_id),
-      status: text(mark?.status),
-      minutesLate: Math.max(0, Math.round(Number(mark?.minutes_late || 0))),
-      reason: normalizedReason(mark?.reason),
-    }))
-    .filter((mark) => mark.studentId)
-    .sort((a, b) => a.studentId.localeCompare(b.studentId));
-
-  if (actual.length !== expected.length) {
-    return { acknowledged: false, reason: "attendance_mark_count_mismatch" };
-  }
-  for (let index = 0; index < expected.length; index += 1) {
-    const local = expected[index]!;
-    const cloud = actual[index]!;
-    if (
-      local.studentId !== cloud.studentId ||
-      local.status !== cloud.status ||
-      local.minutesLate !== cloud.minutesLate ||
-      local.reason !== cloud.reason
-    ) {
-      return { acknowledged: false, reason: "attendance_mark_payload_mismatch" };
-    }
-  }
-  return { acknowledged: true, reason: "attendance_payload_proven_in_cloud" };
+  const acknowledged = attendanceReceiptMatches({
+    capturedAt,
+    marks: marks as Array<{ student_id: string; status: LocalMark["status"]; comment: string | null; late_minutes: number }>,
+    receipt: causality,
+  });
+  // Exact payload + exact capture are required even for the same operation ID.
+  // An open session is eligible: requiring its close here deadlocks its outbox.
+  return { acknowledged, reason: acknowledged ? "attendance_payload_proven_in_cloud" : "attendance_payload_not_confirmed",
+    receipt_operation_id: acknowledged ? text(causality?.last_operation_id) : null };
 }
 
 export async function POST(req: NextRequest) {
@@ -280,6 +237,7 @@ export async function POST(req: NextRequest) {
       subject_id?: string | null;
       started_at?: string | null;
       actual_call_at?: string | null;
+      receipt_operation_id?: string | null;
     }> = [];
 
     const resolvedOperations = await Promise.all(operations.map(async (operation) => ({
@@ -289,6 +247,7 @@ export async function POST(req: NextRequest) {
         institutionId,
         classId,
         actorProfileId: user.id,
+        srv,
       }),
     })));
     const sessionIds = [...new Set(resolvedOperations.map((item) => item.sessionId).filter((id): id is string => Boolean(id)))];
@@ -394,6 +353,7 @@ export async function POST(req: NextRequest) {
         acknowledged: attendance.acknowledged,
         session_id: sessionId,
         reason: attendance.reason,
+        receipt_operation_id: attendance.receipt_operation_id,
       });
     }
 
@@ -406,7 +366,7 @@ export async function POST(req: NextRequest) {
       const sessionId = await resolveSessionId({
         operationType: "session-end", operationId: "completion-check",
         dependencyKey: text(completion.session_id) || (text(completion.open_operation_id) ? `client:${text(completion.open_operation_id)}` : ""),
-        localBody: { session_id: completion.session_id }, institutionId, classId, actorProfileId: user.id,
+        localBody: { session_id: completion.session_id }, institutionId, classId, actorProfileId: user.id, srv,
       });
       completionResult = { confirmed: false, session_id: sessionId, reason: "completion_not_confirmed" };
       if (sessionId && localEndMs != null) {
@@ -427,7 +387,11 @@ export async function POST(req: NextRequest) {
       ok: true,
       class_id: classId,
       institution_id: institutionId,
-      results,
+      results: results.map((result) => ({
+        ...result,
+        session_reference_confirmed: !sessionLookup.error && Boolean(result.session_id &&
+          text(sessionsById.get(result.session_id)?.created_by) === user.id),
+      })),
       completion: completionResult,
       acknowledged_operation_ids: results
         .filter((item) => item.acknowledged)

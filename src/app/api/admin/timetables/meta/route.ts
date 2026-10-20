@@ -183,6 +183,31 @@ export async function GET(req: NextRequest) {
       : allClasses;
     const scopedClassIds = scopedClasses.map((row) => row.id);
 
+    // Les cours sont visibles avant le choix d'un professeur, y compris si
+    // une ancienne affectation a pris fin. Le périmètre et l'année restent bornés.
+    let timetableRows: any[] = [];
+    if (scopedClassIds.length > 0) {
+      const pageSize = 500;
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await srv
+          .from("teacher_timetables")
+          .select("weekday,period_id,class_id,teacher_id,subject_id")
+          .eq("institution_id", institution_id)
+          .in("class_id", scopedClassIds)
+          .order("class_id").order("period_id").order("teacher_id").order("subject_id")
+          .range(offset, offset + pageSize - 1);
+        if (error) {
+          return NextResponse.json(
+            { error: "timetable_occupancy_failed", message: error.message },
+            { status: 400 },
+          );
+        }
+        const page = data || [];
+        timetableRows.push(...page);
+        if (page.length < pageSize) break;
+      }
+    }
+
     let subjectIds: string[] | null = null;
     let teacherIds: string[] | null = null;
 
@@ -212,6 +237,7 @@ export async function GET(req: NextRequest) {
           new Set(
             (assignments || [])
               .map((row: any) => String(row.subject_id || ""))
+              .concat(timetableRows.map((row) => String(row.subject_id || "")))
               .filter(Boolean),
           ),
         );
@@ -219,6 +245,7 @@ export async function GET(req: NextRequest) {
           new Set(
             (assignments || [])
               .map((row: any) => String(row.teacher_id || ""))
+              .concat(timetableRows.map((row) => String(row.teacher_id || "")))
               .filter(Boolean),
           ),
         );
@@ -308,20 +335,7 @@ export async function GET(req: NextRequest) {
       subject_label: string;
     }> = [];
 
-    if (scope.classId && scopedClassIds.length > 0) {
-      const { data: timetableRows, error: timetableErr } = await srv
-        .from("teacher_timetables")
-        .select("weekday,period_id,class_id,teacher_id,subject_id")
-        .eq("institution_id", institution_id)
-        .in("class_id", scopedClassIds);
-
-      if (timetableErr) {
-        return NextResponse.json(
-          { error: "timetable_occupancy_failed", message: timetableErr.message },
-          { status: 400 },
-        );
-      }
-
+    if (timetableRows.length > 0) {
       const classLabels = new Map(
         allClasses.map((row) => [row.id, String(row.label || "")]),
       );

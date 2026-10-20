@@ -16,6 +16,7 @@ import { fetchAdminAttendanceMonitor, type LocalDataSource } from "@/lib/local-r
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import {
   adminAttendancePollDelay,
+  unconfirmedAttendanceMessage,
   adminAttendanceViewReducer,
   initialAdminAttendanceViewState,
 } from "@/lib/admin-attendance-monitor";
@@ -153,7 +154,7 @@ function statusHint(
     return "Appel commencé dans le délai prévu.";
   }
   if (s === "missing") {
-    return "Délai dépassé : aucun appel commencé pour cette classe.";
+    return unconfirmedAttendanceMessage();
   }
   if (s === "late") {
     return "Appel commencé après le délai prévu.";
@@ -176,7 +177,7 @@ function cellColorClasses(s: MonitorStatus): string {
     return "bg-slate-500 text-white border-slate-300 shadow-lg shadow-slate-300/40";
   }
   if (s === "missing") {
-    return "bg-red-600 text-white border-red-400 shadow-lg shadow-red-300/40";
+    return "bg-slate-100 text-slate-800 border-slate-300";
   }
   if (s === "late") {
     return "bg-amber-500 text-slate-900 border-amber-300 shadow-lg shadow-amber-300/40";
@@ -602,16 +603,16 @@ export default function AppelsMatricePage() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-2 rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm">
+          <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wide text-red-800">
-                Sans appel
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-700">
+                Non reçus
               </span>
-              <AlertTriangle className="h-5 w-5 text-red-500" />
+              <AlertTriangle className="h-5 w-5 text-slate-500" />
             </div>
-            <div className="text-2xl font-semibold text-red-900">{totalMissing}</div>
-            <p className="text-[11px] text-red-800/80">
-              Délai dépassé, aucun appel commencé.
+            <div className="text-2xl font-semibold text-slate-900">{totalMissing}</div>
+            <p className="text-[11px] text-slate-700/80">
+              Démarrage non confirmé. Vérifier la synchronisation.
             </p>
           </div>
 
@@ -677,7 +678,7 @@ export default function AppelsMatricePage() {
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-red-600" />
-                  Sans appel
+                  Non reçus
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-amber-500" />
@@ -746,7 +747,7 @@ export default function AppelsMatricePage() {
                   key={cell.class_id || cell.class_label}
                   className={[
                     "relative flex flex-col rounded-2xl border px-3 py-3 text-xs",
-                    cell.status === "not_started" ? "" : "mc-blink",
+                    cell.status === "not_started" || cell.status === "missing" ? "" : "mc-blink",
                     cellColorClasses(cell.status),
                   ].join(" ")}
                 >
@@ -758,7 +759,7 @@ export default function AppelsMatricePage() {
                       {cell.status === "not_started"
                         ? "À VENIR"
                         : cell.status === "missing"
-                        ? "OFF"
+                        ? "NON REÇU"
                         : cell.status === "late"
                         ? "RETARD"
                         : cell.status === "pending_absence"

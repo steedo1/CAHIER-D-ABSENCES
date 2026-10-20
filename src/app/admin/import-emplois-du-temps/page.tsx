@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Upload,
   Info,
@@ -175,6 +175,7 @@ export default function ImportEmploisDuTempsPage() {
   const [manualMeta, setManualMeta] = useState<ManualMeta | null>(null);
   const [manualLoading, setManualLoading] = useState<boolean>(false);
   const [manualError, setManualError] = useState<string | null>(null);
+  const manualMetaRequest = useRef(0);
 
   // clé = `${weekday}_${period_id}` -> classes sélectionnées
   const [cellSelection, setCellSelection] = useState<Record<string, string[]>>(
@@ -202,6 +203,8 @@ export default function ImportEmploisDuTempsPage() {
   const educationScopeError = getEducationScopeWriteError(educationScope);
 
   function handleEducationScopeChange(next: EducationScopeValue) {
+    manualMetaRequest.current += 1;
+    setManualLoading(false);
     setEducationScope(next);
     setSelectedSubjectId("");
     setSelectedTeacherId("");
@@ -361,8 +364,11 @@ export default function ImportEmploisDuTempsPage() {
 
   // ---------- HELPERS MÉTA MANUELLE ----------
   async function fetchManualMeta(subjectId: string, teacherId?: string) {
+    const requestId = ++manualMetaRequest.current;
+    setManualMeta(null);
+    setCellSelection({});
     if (!subjectId) {
-      setManualMeta(null);
+      setManualLoading(false);
       return;
     }
     try {
@@ -377,8 +383,9 @@ export default function ImportEmploisDuTempsPage() {
           method: "GET",
         }
       );
+      const json = await res.json().catch(() => null);
+      if (requestId !== manualMetaRequest.current) return;
       if (!res.ok) {
-        const json = (await res.json().catch(() => null as any)) as any;
         setManualError(
           json?.message ||
             `Impossible de charger les données (HTTP ${res.status}).`
@@ -386,7 +393,11 @@ export default function ImportEmploisDuTempsPage() {
         setManualMeta(null);
         return;
       }
-      const json = (await res.json()) as ManualMeta;
+      if (!json || json.subject_id !== subjectId ||
+          !Array.isArray(json.teachers) || !Array.isArray(json.teacherClasses) ||
+          !Array.isArray(json.existing) || !Array.isArray(json.occupancy)) {
+        throw new Error("Réponse invalide pour l'emploi du temps sélectionné.");
+      }
       setManualMeta({
         subject_id: json.subject_id,
         teachers: json.teachers || [],
@@ -395,6 +406,7 @@ export default function ImportEmploisDuTempsPage() {
         occupancy: json.occupancy || [],
         teacherOccupancy: json.teacherOccupancy || [],
       });
+      setMeta((previous) => previous ? { ...previous, occupancy: json.occupancy || [] } : previous);
 
       // si un enseignant est précisé, pré-remplir les cases avec l'existant
       if (teacherId && json.existing) {
@@ -412,11 +424,12 @@ export default function ImportEmploisDuTempsPage() {
         setCellSelection({});
       }
     } catch (e: any) {
+      if (requestId !== manualMetaRequest.current) return;
       setManualError(e?.message || "Erreur lors du chargement des données.");
       setManualMeta(null);
       setCellSelection({});
     } finally {
-      setManualLoading(false);
+      if (requestId === manualMetaRequest.current) setManualLoading(false);
     }
   }
 
@@ -432,6 +445,8 @@ export default function ImportEmploisDuTempsPage() {
     if (value) {
       fetchManualMeta(value);
     } else {
+      manualMetaRequest.current += 1;
+      setManualLoading(false);
       setManualMeta(null);
     }
   }
@@ -446,6 +461,10 @@ export default function ImportEmploisDuTempsPage() {
     setClassQuery("");
     if (selectedSubjectId && value) {
       fetchManualMeta(selectedSubjectId, value);
+    } else {
+      manualMetaRequest.current += 1;
+      setManualLoading(false);
+      setManualMeta(null);
     }
   }
 
@@ -511,17 +530,9 @@ export default function ImportEmploisDuTempsPage() {
 
   const classScopedOccupancy = useMemo(() => {
     const selectedClassId = educationScope.classId;
-    if (!selectedClassId) return [] as TimetableOccupancy[];
     const source = manualMeta ? manualMeta.occupancy : meta?.occupancy || [];
-    return source.filter((row) => row.class_id === selectedClassId);
+    return source.filter((row) => !selectedClassId || row.class_id === selectedClassId);
   }, [educationScope.classId, manualMeta, meta]);
-
-  const visibleOccupancy = useMemo(() => {
-    if (!selectedTeacherId) return classScopedOccupancy;
-    return classScopedOccupancy.filter(
-      (row) => row.teacher_id === selectedTeacherId,
-    );
-  }, [classScopedOccupancy, selectedTeacherId]);
 
   function occupancyTeacherLabel(row: TimetableOccupancy) {
     if (row.teacher_name) return row.teacher_name;
@@ -540,7 +551,7 @@ export default function ImportEmploisDuTempsPage() {
   }
 
   function visibleOccupancyForCell(weekday: number, periodId: string) {
-    return visibleOccupancy.filter(
+    return classScopedOccupancy.filter(
       (row) => row.weekday === weekday && row.period_id === periodId,
     );
   }
@@ -590,12 +601,6 @@ export default function ImportEmploisDuTempsPage() {
 
   function handleCellClick(weekday: number, period: MetaPeriod | undefined) {
     if (!period) return;
-    if (!selectedSubjectId || !selectedTeacherId) {
-      setManualError(
-        "Sélectionnez d’abord une matière puis un enseignant pour éditer le tableau."
-      );
-      return;
-    }
     setManualError(null);
     setActiveCell({ weekday, period_id: period.id });
   }
@@ -630,7 +635,7 @@ export default function ImportEmploisDuTempsPage() {
   }
 
   async function handleSaveManual() {
-    if (!selectedSubjectId || !selectedTeacherId) {
+    if (!canEditManual) {
       setSaveManualError(
         "Sélectionnez une matière et un enseignant avant d’enregistrer."
       );
@@ -796,7 +801,68 @@ export default function ImportEmploisDuTempsPage() {
   }, [classesForSelectedTeacher, classQuery]);
 
   const canEditManual =
-    educationScopeReady && !!selectedSubjectId && !!selectedTeacherId;
+    educationScopeReady && !!selectedSubjectId && !!selectedTeacherId &&
+    manualMeta?.subject_id === selectedSubjectId && !manualLoading && !savingManual;
+
+  const hasUnsavedChanges = useMemo(() => {
+    if (!manualMeta || !selectedTeacherId) return false;
+    const original = new Set(manualMeta.existing.map((row) =>
+      `${row.weekday}_${row.period_id}_${row.class_id}`,
+    ));
+    const selected = new Set(Object.entries(cellSelection).flatMap(([key, classIds]) =>
+      classIds.map((classId) => `${key}_${classId}`),
+    ));
+    return original.size !== selected.size || [...original].some((key) => !selected.has(key));
+  }, [manualMeta, selectedTeacherId, cellSelection]);
+
+  function handleEditCourse(row: TimetableOccupancy) {
+    if (manualLoading || savingManual || hasUnsavedChanges) return;
+    if (row.subject_id === selectedSubjectId && row.teacher_id === selectedTeacherId && canEditManual) return;
+    setSelectedSubjectId(row.subject_id);
+    setSelectedTeacherId(row.teacher_id);
+    setSaveManualMessage(null);
+    setSaveManualError(null);
+    setClassQuery("");
+    void fetchManualMeta(row.subject_id, row.teacher_id);
+  }
+
+  const activeCourses = activeCell
+    ? visibleOccupancyForCell(activeCell.weekday, activeCell.period_id)
+    : [];
+  const activeCoursesPanel = activeCell ? (
+    <div className="space-y-2 rounded-xl border border-sky-200 bg-sky-50/60 p-3">
+      <h3 className="text-xs font-semibold text-slate-800">Cours enregistrés sur ce créneau</h3>
+      {activeCourses.length === 0 ? (
+        <p className="text-xs text-slate-600">Aucun cours enregistré dans ce périmètre.</p>
+      ) : (
+        <ul className="space-y-2">
+          {activeCourses.map((row) => (
+            <li key={`${row.class_id}_${row.subject_id}_${row.teacher_id}`} className="rounded-lg border border-sky-100 bg-white p-2 text-xs">
+              <div className="font-semibold text-slate-900">{occupancySubjectLabel(row)}</div>
+              <div className="mt-1 text-slate-700">{occupancyTeacherLabel(row)} · {row.class_label}</div>
+              <button
+                type="button"
+                disabled={manualLoading || savingManual || hasUnsavedChanges}
+                onClick={() => handleEditCourse(row)}
+                className="mt-2 rounded-lg border border-sky-300 px-2 py-1 font-medium text-sky-900 hover:bg-sky-50 disabled:opacity-50"
+              >
+                {canEditManual && row.subject_id === selectedSubjectId && row.teacher_id === selectedTeacherId
+                  ? "Cours sélectionné pour modification"
+                  : "Modifier ce cours"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {hasUnsavedChanges ? (
+        <p className="text-xs text-amber-900">Enregistrez les modifications en cours avant de choisir un autre cours.</p>
+      ) : canEditManual ? (
+        <p className="text-xs text-slate-600">Décochez la classe pour retirer ce cours du créneau, puis cochez le créneau souhaité et enregistrez pour ce professeur.</p>
+      ) : (
+        <p className="text-xs text-slate-600">Choisissez un cours à modifier, ou une matière et un professeur pour ajouter un cours.</p>
+      )}
+    </div>
+  ) : null;
 
   return (
     <main className="min-h-screen bg-slate-50/80 p-4 md:p-6 space-y-6">
@@ -851,7 +917,7 @@ export default function ImportEmploisDuTempsPage() {
         allowAllEducationTypes={false}
         showLevel
         showClass
-        disabled={metaLoading}
+        disabled={metaLoading || savingManual}
         title="Périmètre de l'emploi du temps"
         classLabel="Classe précise (facultatif)"
       />
@@ -1136,7 +1202,7 @@ export default function ImportEmploisDuTempsPage() {
                   <Select
                     value={selectedSubjectId}
                     onChange={handleChangeSubject}
-                    disabled={!educationScopeReady || metaLoading}
+                    disabled={!educationScopeReady || metaLoading || savingManual}
                   >
                     <option value="">— Sélectionnez une matière —</option>
                     {meta?.subjects.map((s) => (
@@ -1157,7 +1223,7 @@ export default function ImportEmploisDuTempsPage() {
                     disabled={
                       !educationScopeReady ||
                       !selectedSubjectId ||
-                      manualLoading
+                      manualLoading || savingManual
                     }
                   >
                     <option value="">
@@ -1222,12 +1288,7 @@ export default function ImportEmploisDuTempsPage() {
                   <Button
                     type="button"
                     onClick={handleSaveManual}
-                    disabled={
-                      !educationScopeReady ||
-                      savingManual ||
-                      !selectedSubjectId ||
-                      !selectedTeacherId
-                    }
+                    disabled={!canEditManual}
                   >
                     {savingManual ? (
                       <>
@@ -1332,8 +1393,9 @@ export default function ImportEmploisDuTempsPage() {
                               <td key={`${wd}_${periodNo}`}>
                                 <button
                                   type="button"
-                                  disabled={disabled || !selectedSubjectId || !selectedTeacherId}
+                                  disabled={disabled}
                                   onClick={() => handleCellClick(wd, period)}
+                                  aria-pressed={selected}
                                   title={
                                     hasConflict
                                       ? `${cellLabel} — ${conflictMessages.join(" ")}`
@@ -1362,6 +1424,17 @@ export default function ImportEmploisDuTempsPage() {
                                       <div className="text-[10px] text-slate-500">
                                         {cellLabel}
                                       </div>
+                                      {occupiedRows.length > 0 ? (
+                                        <span className="mt-2 block space-y-2 text-left text-[11px]">
+                                          {occupiedRows.map((row) => (
+                                            <span key={`${row.class_id}_${row.subject_id}_${row.teacher_id}`} className="block break-words">
+                                              <span className="block font-semibold">{occupancySubjectLabel(row)}</span>
+                                              <span className="mt-0.5 block">{occupancyTeacherLabel(row)}</span>
+                                              <span className="block text-[10px] text-slate-600">{row.class_label}</span>
+                                            </span>
+                                          ))}
+                                        </span>
+                                      ) : null}
                                       <div className="mt-1 text-[10px]">
                                         {(() => {
                                           if (selectedIds.length > 0) {
@@ -1377,26 +1450,7 @@ export default function ImportEmploisDuTempsPage() {
                                             return `${selectedIds.length} classe(s)`;
                                           }
 
-                                          if (occupiedRows.length > 0) {
-                                            if (selectedTeacherId) {
-                                              const labels = occupiedRows.map((row) =>
-                                                occupancySubjectLabel(row),
-                                              );
-                                              return labels.length > 1
-                                                ? `${labels.length} cours de ce prof`
-                                                : labels[0];
-                                            }
-                                            const labels = occupiedRows.map(
-                                              (row) =>
-                                                `${occupancyTeacherLabel(row)} · ${occupancySubjectLabel(row)}`,
-                                            );
-                                            const joined = labels.join(", ");
-                                            return joined.length > 28
-                                              ? `${labels.length} cours occupé(s)`
-                                              : joined;
-                                          }
-
-                                          return "Aucun cours";
+                                          return occupiedRows.length > 0 ? null : "Aucun cours";
                                         })()}
                                       </div>
                                       {hasConflict ? (
@@ -1421,12 +1475,12 @@ export default function ImportEmploisDuTempsPage() {
                   {!selectedSubjectId || !selectedTeacherId ? (
                     <p className="mt-2 text-[11px] text-slate-500">
                       {educationScope.classId
-                        ? "Les créneaux déjà occupés de cette classe sont visibles en bleu. Sélectionnez ensuite une matière et un professeur pour modifier l’emploi du temps."
-                        : "Sélectionnez une matière et un professeur pour activer le tableau."}
+                        ? "Les créneaux déjà occupés de cette classe indiquent la matière et le professeur. Cliquez sur une case puis sur « Modifier ce cours »."
+                        : "Cliquez sur un créneau pour consulter ses cours, ou choisissez une classe pour limiter l’affichage."}
                     </p>
                   ) : educationScope.classId ? (
                     <p className="mt-2 text-[11px] text-slate-500">
-                      La grille affiche maintenant uniquement les créneaux déjà occupés par ce professeur dans la classe choisie. Les occupations déjà présentes sont précisées en orange, sans bloquer la saisie.
+                      La grille conserve tous les cours de la classe choisie, quel que soit le professeur sélectionné. Cliquez sur une case pour consulter les cours et choisir celui à modifier.
                     </p>
                   ) : (
                     <p className="mt-2 text-[11px] text-slate-500">
@@ -1458,7 +1512,7 @@ export default function ImportEmploisDuTempsPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-sm font-semibold text-slate-800">
-                      Classes à cocher
+                      Cours et classes
                     </div>
                     <div className="text-xs text-slate-500">
                       {activeCell ? (
@@ -1472,7 +1526,7 @@ export default function ImportEmploisDuTempsPage() {
                       ) : canEditManual ? (
                         "Cliquez d’abord sur une cellule du tableau."
                       ) : (
-                        "Choisissez une matière + un professeur."
+                        "Cliquez sur un créneau pour consulter ses cours."
                       )}
                     </div>
                   </div>
@@ -1489,6 +1543,8 @@ export default function ImportEmploisDuTempsPage() {
                     </button>
                   )}
                 </div>
+
+                {activeCoursesPanel}
 
                 {canEditManual && (
                   <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
@@ -1627,11 +1683,11 @@ export default function ImportEmploisDuTempsPage() {
 
           {activeCell && (
             <div className="lg:hidden fixed inset-x-3 bottom-3 z-50">
-              <div className="rounded-2xl border border-slate-200 bg-white shadow-lg p-3 space-y-3">
+              <div className="max-h-[80vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-lg p-3 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-sm font-semibold text-slate-800">
-                      Classes —{" "}
+                      Cours et classes —{" "}
                       {WEEKDAY_LABELS[activeCell.weekday] ??
                         `Jour ${activeCell.weekday}`}{" "}
                       · {activePeriodLabel}
@@ -1652,6 +1708,8 @@ export default function ImportEmploisDuTempsPage() {
                     Fermer
                   </button>
                 </div>
+
+                {activeCoursesPanel}
 
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />

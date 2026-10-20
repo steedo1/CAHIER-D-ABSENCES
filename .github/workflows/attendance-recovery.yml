@@ -1,0 +1,42 @@
+name: Attendance receipt and automatic close recovery
+on:
+  pull_request:
+    branches: [reprise-propre-5418ce7-20260729]
+    paths:
+      - 'src/**'
+      - 'public/moncahier-sw.js'
+      - 'test/**'
+      - '.github/workflows/attendance-recovery.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  attendance-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Receipt, replay, suspension, ownership and matrix regression
+        run: >-
+          node --import tsx --test --test-concurrency=2
+          test/attendance-1a-recovery.test.mjs
+          test/attendance-auto-close.test.ts
+          test/csca-attendance-reliability.test.mjs
+          test/teacher-attendance-bulk-offline-route.test.mjs
+          test/class-device-completion-proof.test.mjs
+          test/supabase-consumption-regression.test.mjs
+          test/class-device-attendance-recovery.test.ts
+          test/offline-outbox-ordering.test.ts
+          test/admin-attendance-monitor.test.ts
+          test/admin-attendance-monitor-fetch.test.ts
+          test/admin-attendance-slot-status-simplification.test.mjs
+          test/class-device-offline-lifecycle-wiring.test.mjs
+          test/timetable-course-editor.test.mjs
+          test/timetable-course-meta.test.mjs

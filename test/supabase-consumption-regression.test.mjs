@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -66,6 +67,7 @@ function routeFixture({ authorized = true, authenticated = true, failSessions = 
   const route = load("src/app/api/class/sync/reconcile-v2/route.ts", {
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/supabase-server": { getSupabaseServerClient: async () => ({ auth: { getUser: async () => ({ data: { user: authenticated ? { id: "phone" } : null } }) } }) },
+    "@/lib/server/attendance-receipt-proof": load("src/lib/server/attendance-receipt-proof.ts", { "node:crypto": crypto }),
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => service },
     "@/lib/class-device-identity": { classDeviceMayAccessClass: async () => authorized },
     "@/lib/class-device-cloud-session": { classDeviceCloudSessionId: ({ operationId }) => ids[Number(operationId.slice(-2))] },

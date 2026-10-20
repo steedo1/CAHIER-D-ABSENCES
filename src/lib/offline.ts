@@ -44,6 +44,7 @@ type OutboxRow = {
    * operation_id. Elles peuvent être rejouées une seule fois après mise à jour.
    */
   ackContractVersion?: number;
+  attendanceReceiptRecoveryVersion?: number;
 };
 
 export type OfflineOutboxEntry = {
@@ -1241,7 +1242,7 @@ export async function putDurableAttendanceRecord<T extends {
   await completed;
 }
 
-async function acknowledgeOutboxRow(row: OutboxRow, sessionId: string | null) {
+async function acknowledgeOutboxRow(row: OutboxRow, sessionId: string | null, receiptOperationId?: string | null) {
   const db = await openDB();
   const tx = db.transaction(["outbox", "kv"], "readwrite");
   const completed = txDone(tx);
@@ -1264,6 +1265,13 @@ async function acknowledgeOutboxRow(row: OutboxRow, sessionId: string | null) {
       });
       kv.put({ ...stored, value, updatedAt: Date.now() });
     }
+  }
+  if (kind === "attendance" && receiptOperationId) {
+    tx.objectStore("kv").put({ key: `attendance:cloud-receipt:v1:${row.operationId}`, updatedAt: Date.now(), value: {
+      operation_id: row.operationId, session_id: sessionId,
+      institution_id: institutionId, receipt_operation_id: receiptOperationId,
+      confirmed_at: new Date().toISOString(),
+    } });
   }
   // The ACK and removal commit together. A restart cannot resurrect a draft
   // whose outbox row was already accepted by the Cloud or the worker.
@@ -1709,6 +1717,17 @@ async function flushOutboxInternal(
       });
     }
 
+    // One exact-payload receipt check through the protected bulk route after
+    // upgrading. Never release other 409s or alter IDs, captures or marks.
+    if (row.state === "blocked" && operationType === "attendance" &&
+        ["attendance_operation_ambiguous", "session_closed"].includes(row.lastError || "") &&
+        !row.attendanceReceiptRecoveryVersion) {
+      row.state = "pending";
+      row.lastAttemptAt = undefined;
+      row.attendanceReceiptRecoveryVersion = 1;
+      await outboxUpdate(row.id, { state: "pending", lastAttemptAt: undefined, attendanceReceiptRecoveryVersion: 1 });
+    }
+
     // Une ouverture ou un appel bloqué ne doit jamais être dépassé par la
     // fermeture de la même séance. Les cours indépendants restent rejouables.
     if (row.state === "blocked") {
@@ -1898,7 +1917,7 @@ async function flushOutboxInternal(
         classId: String(row?.meta?.classId || "").trim() || null,
         status: res.status,
       });
-      await acknowledgeOutboxRow(row, resolvedSessionId);
+      await acknowledgeOutboxRow(row, resolvedSessionId, j?.receipt_operation_id);
       flushed += 1;
       if (flushed >= maxAcknowledgements) break;
     } catch (error: any) {

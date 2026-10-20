@@ -108,7 +108,7 @@ test("un redémarrage ne restaure pas une séance déjà terminée localement", 
   assert.match(page, /snapshotAlreadyFinished/);
   assert.match(
     lifecycle,
-    /record\.kind === "close" &&\s+record\.session_id === normalizedSessionId/,
+    /record\.kind === "close" && references\.has\(record\.session_id\)/,
   );
 });
 

@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-10-15-statistics-average-filters-v1";
+const VERSION = "2026-10-20-attendance-receipt-recovery-v1";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -284,7 +284,7 @@ async function patchAttendanceOutboxRow(id, patch) {
   }
 }
 
-async function deleteAttendanceOutboxRow(id, row, sessionId) {
+async function deleteAttendanceOutboxRow(id, row, sessionId, receiptOperationId) {
   const db = await openOfflineDbForAttendance();
   try {
     if (!db.objectStoreNames.contains(OFFLINE_OUTBOX_STORE)) return;
@@ -310,6 +310,13 @@ async function deleteAttendanceOutboxRow(id, row, sessionId) {
         });
         kv.put({ ...stored, value, updatedAt: Date.now() });
       }
+    }
+    if (kind === "attendance" && receiptOperationId) {
+      transaction.objectStore(OFFLINE_KV_STORE).put({ key: `attendance:cloud-receipt:v1:${row.operationId}`, updatedAt: Date.now(), value: {
+        operation_id: row.operationId, session_id: sessionId,
+        institution_id: institutionId, receipt_operation_id: receiptOperationId,
+        confirmed_at: new Date().toISOString(),
+      } });
     }
     transaction.objectStore(OFFLINE_OUTBOX_STORE).delete(id);
     await completed;
@@ -511,6 +518,16 @@ async function replayAttendanceOutboxFromWorkerInternal() {
     const dependency = attendanceDependencyKey(row, body);
     const normalizedDependency = canonicalDependency(dependency);
 
+    // The API only acknowledges a duplicate after exact receipt proof. One
+    // recovery attempt per upgraded row, with its immutable original payload.
+    if (row?.state === "blocked" && operationType === "attendance" &&
+        ["attendance_operation_ambiguous", "session_closed"].includes(row.lastError || "") &&
+        !row.attendanceReceiptRecoveryVersion) {
+      row.state = "pending";
+      row.attendanceReceiptRecoveryVersion = 1;
+      await patchAttendanceOutboxRow(row.id, { state: "pending", attendanceReceiptRecoveryVersion: 1 });
+    }
+
     // Un appel déjà bloqué lors d'une passe antérieure continue de protéger sa
     // fermeture. On ne doit jamais certifier une fin de séance si l'ouverture
     // ou les présences de cette même séance sont encore en conflit.
@@ -689,7 +706,7 @@ async function replayAttendanceOutboxFromWorkerInternal() {
       }
     }
 
-    await deleteAttendanceOutboxRow(row.id, row, attendanceResponseSessionId(payload) || body?.session_id);
+    await deleteAttendanceOutboxRow(row.id, row, attendanceResponseSessionId(payload) || body?.session_id, payload?.receipt_operation_id);
     flushed += 1;
   }
 

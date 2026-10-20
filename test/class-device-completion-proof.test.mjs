@@ -31,6 +31,7 @@ function fixture() {
   const route = evaluate("src/app/api/class/sync/reconcile-v2/route.ts", {
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/supabase-server": { getSupabaseServerClient: async () => ({ auth: { getUser: async () => ({ data: { user: authenticated ? { id: "phone" } : null } }) } }) },
+    "@/lib/server/attendance-receipt-proof": evaluate("src/lib/server/attendance-receipt-proof.ts", { "node:crypto": crypto }),
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => service },
     "@/lib/class-device-identity": { classDeviceMayAccessClass: async () => authorized },
     "@/lib/class-device-cloud-session": evaluate("src/lib/class-device-cloud-session.ts", { "node:crypto": crypto }),
