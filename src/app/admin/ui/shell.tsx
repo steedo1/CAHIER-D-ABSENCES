@@ -534,7 +534,7 @@ export default function AdminShell({
           </header>
 
           {/* Contenu principal */}
-          <main className="mx-auto max-w-7xl px-4 py-6 pb-20 md:pb-8">
+          <main className={`mx-auto max-w-7xl px-4 pb-20 md:pb-8 ${pathname === "/admin/dashboard" ? "pt-2" : "pt-6"}`}>
             <AdminRoleContext.Provider value={role}>
               {children}
             </AdminRoleContext.Provider>
