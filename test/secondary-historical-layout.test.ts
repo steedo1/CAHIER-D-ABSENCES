@@ -40,6 +40,8 @@ test("le même vrai bulletin historique affiche deux enseignements sans mélange
   assert.deepEqual(french[0].subjects.map(row => row.subject_id), ["fr-only"]);
   assert.deepEqual(arabic[0].subjects.map(row => row.subject_id), ["ar-only", "ar-reading"]);
   assert.equal(french[0].item.general_avg, 14.2375);
+  assert.equal(french[0].program.historicalSecondary?.conductAverage, 16, "official historical conduct remains intact");
+  assert.equal(arabic[0].program.historicalSecondary, undefined, "no French conduct leaks into Arabic");
   assert.equal(arabic[0].item.general_avg, 16, "normalisation d'affichage /10 -> /20");
   assert.equal(arabic[0].item.per_subject[0].avg20, 0, "une vraie note zéro demeure 0");
   assert.equal(arabic[0].item.per_subject[1].avg20, 20);
@@ -85,4 +87,15 @@ test("historical metadata, administrative NC and group results reach the origina
   assert.equal(view.subjectGroups[0].annual_coeff, 2);
   assert.equal(view.subjectGroups[0].items[0].subject_id, "fr-only");
   assert.equal(view.item.general_avg, null, "never restore a computed mean over administrative NC");
+});
+
+test("Correspondant fichier sends historical conduct to the real bulletin card only in French secondary", async () => {
+  const { readFileSync } = await import("node:fs");
+  const page = readFileSync("src/app/admin/bulletins/page.tsx", "utf8");
+  assert.match(page, /officialConductAverage=\{selectedSecondaryTrack === "french"/);
+  assert.match(page, /row\.program\.historicalSecondary\?\.conductAverage \?\? null : null/);
+  assert.match(page, /officialConductAverage !== undefined \? officialConductAverage : rawConductTotal/);
+  assert.doesNotMatch(page, /conduct=\{null\} signaturesEnabled=\{false\}/);
+  assert.match(page, /conduct=\{selectedSecondaryTrack === "french"/);
+  assert.match(page, /conductRank=\{selectedSecondaryTrack === "french"/);
 });
