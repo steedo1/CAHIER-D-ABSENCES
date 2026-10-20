@@ -86,3 +86,25 @@ test("historical metadata, administrative NC and group results reach the origina
   assert.equal(view.subjectGroups[0].items[0].subject_id, "fr-only");
   assert.equal(view.item.general_avg, null, "never restore a computed mean over administrative NC");
 });
+
+
+test("le bulletin secondaire français restitue la conduite calculée par le moteur historique", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync("src/app/admin/bulletins/page.tsx", "utf8");
+  // Seul le bulletin spécialisé français reçoit la conduite historique.
+  assert.match(source, /historicalConductAverage=\{selectedSecondaryTrack === "french"/);
+  assert.match(source, /row\.program\.historicalSecondary\?\.conductAverage \?\? null/);
+  // Ne jamais convertir une absence de résultat en zéro.
+  assert.match(source, /Number\.isFinite\(historicalConductAverage\)/);
+  assert.match(source, /historicalConductAverage !== undefined/);
+  // Le parcours classique reste alimenté par son ancienne source.
+  assert.match(source, /conduct && typeof conduct\.total === "number" \? conduct\.total : null/);
+});
+
+test("l'adaptateur historique conserve une vraie conduite zéro, ou son absence", () => {
+  const original = fixture();
+  original.documents[0].document.french!.historicalSecondary!.conductAverage = 0;
+  assert.equal(historicalSecondaryViews(original, "french")[0].program.historicalSecondary?.conductAverage, 0);
+  original.documents[0].document.french!.historicalSecondary!.conductAverage = null;
+  assert.equal(historicalSecondaryViews(original, "french")[0].program.historicalSecondary?.conductAverage, null);
+});

@@ -1385,6 +1385,9 @@ type StudentBulletinCardProps = {
   institution: InstitutionSettings | null;
   stats: ClassStats;
   conduct?: ConductItem | null;
+  /** Provenance officielle du moteur historique français uniquement.
+   * undefined laisse le parcours classique inchangé, null reste absent. */
+  historicalConductAverage?: number | null;
   conductLabel?: string | null;
   conductTeacherName?: string | null;
   conductRank?: number | null;
@@ -1410,6 +1413,7 @@ function StudentBulletinCard({
   institution,
   stats,
   conduct,
+  historicalConductAverage,
   conductLabel,
   conductTeacherName,
   conductRank,
@@ -1553,11 +1557,14 @@ function StudentBulletinCard({
 
   const photoUrl = item.photo_url || (item as any).student_photo_url || null;
 
-  const rawConductTotal =
-    conduct && typeof conduct.total === "number" ? conduct.total : null;
-  const conductNoteOn20 = clampTo20(
-    rawConductTotal !== null ? Number(rawConductTotal) : null
-  );
+  // L'enseignement français franco-arabe doit afficher la valeur officielle
+  // déjà calculée par le moteur historique, sans en fabriquer une depuis l'arabe.
+  // Les bulletins classiques gardent leur source de conduite existante.
+  const rawConductTotal = historicalConductAverage !== undefined
+    ? (typeof historicalConductAverage === "number" && Number.isFinite(historicalConductAverage)
+        ? historicalConductAverage : null)
+    : conduct && typeof conduct.total === "number" ? conduct.total : null;
+  const conductNoteOn20 = clampTo20(rawConductTotal);
 
   // ✅ ANNUEL (affiché seulement si l’API le remplit = dernière période)
   const annualAvgOn20 = clampTo20(
@@ -4111,7 +4118,11 @@ function BulletinsPageContent() {
                     institution_head_name: row.program.directorName || institution.institution_head_name,
                   } : null}
                   stats={secondaryStatistics}
-                  conduct={null} signaturesEnabled={false}
+                  conduct={null}
+                  historicalConductAverage={selectedSecondaryTrack === "french"
+                    ? row.program.historicalSecondary?.conductAverage ?? null
+                    : null}
+                  signaturesEnabled={false}
                   disableLocalQr previewZoomForMeasure={previewZoom}
                 />
               ))}
