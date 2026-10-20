@@ -53,12 +53,42 @@
   color: #0d1d3a;
   font-weight: 750;
 }
+/* Bandeau local : carrousel continu, sans appel réseau ni tâche de fond. */
+.premium-school-quotes-track {
+  display: flex;
+  width: max-content;
+  animation: premium-school-quotes-scroll 72s linear infinite;
+}
+.premium-school-quotes-set {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2rem;
+  padding-right: 2rem;
+}
+.premium-school-quote {
+  flex: none;
+  color: #e4f7f1;
+  white-space: nowrap;
+  font-size: .8rem;
+  font-weight: 500;
+}
+.premium-school-quotes-viewport:hover .premium-school-quotes-track,
+.premium-school-quotes-viewport:focus-within .premium-school-quotes-track {
+  animation-play-state: paused;
+}
+@keyframes premium-school-quotes-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
 @media (max-width: 640px) {
   .premium-school-dashboard .premium-school-hero { min-height: 230px; }
   .premium-school-dashboard .premium-school-hero::before { inset: 0 0 0 25%; opacity: .36; }
   .premium-school-dashboard .premium-school-hero::after { background: linear-gradient(90deg,#078b69 0%,rgba(8,134,100,.9) 65%,rgba(8,131,96,.5) 100%); }
 }
 @media (prefers-reduced-motion: reduce) {
+  .premium-school-quotes-track { animation: none; }
   .premium-school-dashboard section > [class*="rounded-2xl"],
   .premium-school-dashboard section > [class*="rounded-xl"] { transition: none; }
   .premium-school-dashboard section > [class*="rounded-2xl"]:hover,
