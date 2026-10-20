@@ -16,6 +16,7 @@ import {
   UserRoundCheck,
   GraduationCap,
   CalendarClock,
+  BookOpen,
   AlarmClock,
   RefreshCw,
   ChevronRight,
@@ -70,6 +71,88 @@ type InstitutionInfo = {
   name: string;
   logo_url: string | null;
 };
+
+/**
+ * Citations originales non attribuées, embarquées avec l'application.
+ * Aucun accès réseau, API, serveur ou base de données.
+ */
+const EDUCATION_QUOTES = [
+  "Chaque enfant mérite une chance d’apprendre et de réussir.",
+  "La curiosité est le premier pas vers la connaissance.",
+  "L’éducation ouvre des portes sur l’avenir.",
+  "Enseigner, c’est aider chaque talent à grandir.",
+  "La réussite se construit chaque jour, pas à pas.",
+  "Apprendre aujourd’hui, c’est préparer demain.",
+  "Une école qui encourage fait naître la confiance.",
+  "Le savoir grandit lorsqu’on le partage.",
+] as const;
+
+/** Heure civile ivoirienne, calculée uniquement dans le navigateur. */
+function SchoolClockAndQuotes() {
+  const [clock, setClock] = useState<{ date: string; time: string } | null>(null);
+
+  useEffect(() => {
+    const dateFormat = new Intl.DateTimeFormat("fr-FR", {
+      timeZone: "Africa/Abidjan",
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+    const timeFormat = new Intl.DateTimeFormat("fr-FR", {
+      timeZone: "Africa/Abidjan",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    const refreshClock = () => {
+      const now = new Date();
+      setClock({ date: dateFormat.format(now), time: timeFormat.format(now) });
+    };
+
+    refreshClock();
+    const timer = window.setInterval(refreshClock, 30_000);
+    document.addEventListener("visibilitychange", refreshClock);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshClock);
+    };
+  }, []);
+
+  return (
+    <div className="premium-school-insights flex min-w-0 flex-col gap-2 rounded-2xl border border-blue-900/30 bg-[#10243A] px-4 py-2.5 text-white shadow-sm sm:flex-row sm:items-center sm:gap-4">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-300 sm:text-xs">
+          <BookOpen className="h-4 w-4" aria-hidden="true" />
+          <span>Pensées éducatives</span>
+        </div>
+        <div className="premium-school-quotes-viewport min-w-0 flex-1 overflow-hidden" aria-label="Citations sur l’éducation">
+          <span className="sr-only">{EDUCATION_QUOTES.join(" ")}</span>
+          <div className="premium-school-quotes-track" aria-hidden="true">
+            {[0, 1].map((copy) => (
+              <div className="premium-school-quotes-set" key={copy}>
+                {EDUCATION_QUOTES.map((quote) => (
+                  <span className="premium-school-quote" key={quote}>« {quote} »</span>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/15 pt-2 text-xs sm:border-l sm:border-t-0 sm:py-0 sm:pl-4 sm:pt-0" aria-label="Date et heure en Côte d’Ivoire">
+        <span className="inline-flex items-center gap-1.5 text-slate-200">
+          <CalendarClock className="h-4 w-4 text-emerald-300" aria-hidden="true" />
+          <span className="capitalize">{clock?.date ?? "Date du jour"}</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5 font-semibold tabular-nums text-white">
+          <Clock4 className="h-4 w-4 text-emerald-300" aria-hidden="true" />
+          <span>{clock?.time ?? "--:--"}</span>
+          <span className="sr-only">heure d’Abidjan</span>
+        </span>
+      </div>
+    </div>
+  );
+}
 
 /* ─────────────────────────────
    Petites briques UI
@@ -467,6 +550,7 @@ export default function AdminDashboardClient() {
 
   return (
     <div className="premium-school-dashboard space-y-6">
+      <div className="space-y-2">
       {/* En-tête gradient (section héro) */}
       <div className="premium-school-hero relative overflow-hidden rounded-3xl p-5 text-white sm:p-6">
         <div
@@ -564,6 +648,8 @@ export default function AdminDashboardClient() {
               : "Erreur lors du chargement des métriques."}
           </div>
         )}
+      </div>
+      <SchoolClockAndQuotes />
       </div>
 
       {scoped && (
