@@ -1,8 +1,12 @@
 // Compare built servers locally with synthetic credentials and identical traffic.
-// Usage: node scripts/measure-runtime-memory.mjs label /tmp/result.json [requests=600] [concurrency=8] [next|standalone]
+// Usage: node scripts/measure-runtime-memory.mjs label /tmp/result.json [requests=600] [concurrency=8] [next|standalone|npm] [school]
+// npm mode measures the actual package start script. To test a heap candidate,
+// temporarily set that script on the isolated checkout, then restore it.
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import assert from 'node:assert/strict';
@@ -14,7 +18,8 @@ const heapMiB = Number(process.env.MON_CAHIER_BENCH_HEAP_MIB || 4096);
 assert(Number.isInteger(heapMiB) && heapMiB >= 128 && heapMiB <= 4096);
 assert(Number.isInteger(requests) && requests > 0 && requests <= 100_000);
 assert(Number.isInteger(concurrency) && concurrency > 0 && concurrency <= 32);
-assert(['next', 'standalone'].includes(mode));
+assert(['next', 'standalone', 'npm'].includes(mode));
+if (mode === 'npm') assert(process.env.MON_CAHIER_BENCH_NPM_CLI, 'Set MON_CAHIER_BENCH_NPM_CLI to the absolute npm-cli.js path');
 const root = fileURLToPath(new URL('../', import.meta.url));
 // Point this at a copy outside the repository to detect missing traced files
 // rather than accidentally resolving them from the root node_modules.
@@ -26,9 +31,15 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const samples = [], responses = [];
 let phase = 'startup', logs = '';
 const started = performance.now();
+const auditDir = mode === 'npm' ? await mkdtemp(join(tmpdir(), 'mon-cahier-npm-')) : null;
+const auditFile = auditDir && join(auditDir, 'memory.jsonl');
+const phases = [{ at: Date.now(), phase }];
+const setPhase = value => { phase = value; phases.push({ at: Date.now(), phase }); };
 const school = schoolMode === 'school'
   ? await (await import('./memory-school-fixture.mjs')).startMemorySchoolFixture() : null;
-const child = spawn(process.execPath, [
+const child = spawn(process.execPath, mode === 'npm' ? [
+  process.env.MON_CAHIER_BENCH_NPM_CLI, 'run', 'start', '--', '--hostname', '127.0.0.1', '--port', String(port),
+] : [
   `--max-old-space-size=${heapMiB}`,
   '--require', fileURLToPath(new URL('./runtime-memory-probe.cjs', import.meta.url)),
   ...(mode === 'standalone' ? ['server.js'] :
@@ -40,7 +51,10 @@ const child = spawn(process.execPath, [
     NODE_ENV: 'production',
     // Deliberately retain the build-size value to verify that the explicit
     // runtime flag takes precedence, as it would in the proposed Render command.
-    NODE_OPTIONS: '--max-old-space-size=4096',
+    NODE_OPTIONS: '--max-old-space-size=4096' + (mode === 'npm'
+      ? ` --require=${fileURLToPath(new URL('./runtime-memory-probe.cjs', import.meta.url))}` : ''),
+    PATH: dirname(process.execPath) + ':' + process.env.PATH,
+    ...(auditFile ? { MON_CAHIER_LOCAL_MEMORY_AUDIT_FILE: auditFile } : {}),
     NEXT_TELEMETRY_DISABLED: '1',
     MON_CAHIER_LOCAL_MEMORY_AUDIT: '1',
     PORT: String(port),
@@ -52,6 +66,9 @@ const child = spawn(process.execPath, [
     SUPABASE_SERVICE_ROLE_KEY: 'isolated-audit-service',
   },
   stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  // npm does not reliably forward SIGTERM to its shell/server child. Keep the
+  // entire local benchmark in its own process group so cleanup reaches both.
+  detached: mode === 'npm',
 });
 child.on('message', sample => { if (sample.type === 'memory') samples.push({ phase, ...sample }); });
 for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { logs = (logs + chunk).slice(-32_000); });
@@ -83,8 +100,12 @@ function stats(values) {
 async function stop() {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const exited = once(child, 'exit');
-  child.kill('SIGTERM');
-  const force = setTimeout(() => child.kill('SIGKILL'), 5_000);
+  const kill = signal => {
+    try { if (mode === 'npm') process.kill(-child.pid, signal); else child.kill(signal); }
+    catch (error) { if (error.code !== 'ESRCH') throw error; }
+  };
+  kill('SIGTERM');
+  const force = setTimeout(() => kill('SIGKILL'), 5_000);
   try { await exited; } finally { clearTimeout(force); }
 }
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { void stop(); });
@@ -96,8 +117,8 @@ try {
     await pause(100);
   }
   const readyMs = performance.now() - started;
-  phase = 'idle'; await pause(5_000);
-  phase = 'warmup';
+  setPhase('idle'); await pause(5_000);
+  setPhase('warmup');
   for (const route of paths) await request(...route);
   if (school) {
     // Load the main school modules too, without authorizing any business writes.
@@ -116,7 +137,7 @@ try {
     || html.match(/src="(\/_next\/static\/[^\"]+\.js)"/)?.[1];
   if (asset?.startsWith('/')) paths.push([asset, 200]);
   paths.push(['/_next/image?url=%2Fnexa-digital-logo.png&w=96&q=75', 200]);
-  phase = 'load';
+  setPhase('load');
   const loadStarted = performance.now();
   let next = 0;
   await Promise.all(Array.from({ length: concurrency }, async () => {
@@ -126,14 +147,22 @@ try {
     }
   }));
   const loadMs = performance.now() - loadStarted;
-  phase = 'settled'; await pause(10_000);
+  setPhase('settled'); await pause(10_000);
+  let npmSamples = [];
+  if (auditFile) {
+    const rows = (await readFile(auditFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    for (const row of rows) row.phase = phases.findLast(p => p.at <= row.at)?.phase || 'startup';
+    samples.push(...rows.filter(row => row.argv.some(arg => arg.endsWith('/next'))));
+    npmSamples = rows.filter(row => row.argv.some(arg => arg.endsWith('/npm-cli.js')));
+    assert(samples.length > 0 && npmSamples.length > 0, 'Missing Next/npm memory samples');
+  }
   const last = samples.at(-1);
   const firstLoad = samples.find(s => s.phase === 'load');
   const lastLoad = samples.findLast(s => s.phase === 'load');
   const cpuSeconds = firstLoad && lastLoad ? ((lastLoad.cpu.user + lastLoad.cpu.system) - (firstLoad.cpu.user + firstLoad.cpu.system)) / 1e6 : null;
   const summary = {
     label, node: process.version, next: JSON.parse(await readFile(root + 'node_modules/next/package.json')).version,
-    mode, heapMiB, requests, concurrency, readyMs, loadMs, cpuSeconds,
+    mode, heapMiB: mode === 'npm' ? null : heapMiB, requests, concurrency, readyMs, loadMs, cpuSeconds,
     schoolFixture: school ? { classes: 20, students: school.studentCount, requests: school.counts } : null,
     totalCpuSeconds: (last.cpu.user + last.cpu.system) / 1e6,
     osPeakRssMiB: last.maxRssKiB / 1024,
@@ -143,10 +172,18 @@ try {
     })),
     responseMs: stats(responses.filter(r => r.phase === 'load').map(r => r.ms)),
     last, allExpectedStatuses: true,
+    ...(npmSamples.length ? {
+      npmParentSettledRssMiB: npmSamples.at(-1).rss / 2 ** 20,
+      combinedSettledRssMiB: (last.rss + npmSamples.at(-1).rss) / 2 ** 20,
+      combinedPeakSampledRssMiB: Math.max(...samples.map(row => {
+        const parent = npmSamples.reduce((best, p) => Math.abs(p.at - row.at) < Math.abs(best.at - row.at) ? p : best);
+        return (row.rss + parent.rss) / 2 ** 20;
+      })),
+    } : {}),
   };
-  await writeFile(output, JSON.stringify({ summary, samples, responses }, null, 2) + '\n');
+  await writeFile(output, JSON.stringify({ summary, samples, npmSamples, responses }, null, 2) + '\n');
   process.stdout.write(JSON.stringify(summary, null, 2) + '\n');
 } catch (error) {
   await writeFile(output, JSON.stringify({ label, error: String(error), samples, serverLog: logs }, null, 2));
   throw error;
-} finally { await stop(); if (school) await school.close(); }
+} finally { await stop(); if (school) await school.close(); if (auditDir) await rm(auditDir, { recursive: true, force: true }); }

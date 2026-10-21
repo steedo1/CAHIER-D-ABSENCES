@@ -1601,5 +1601,230 @@
     "Read-only Render connector queries; no service changes or production load testing.",
     "Render container metrics are not process.memoryUsage RSS/heap values.",
     "No server_failed/server_restarted/service_suspended events were returned by the filtered query."
-  ]
+  ],
+  "predeploymentWindow": {
+    "resourceId": "srv-dbc291on74is73f4692g",
+    "timeRange": {
+      "start": "2026-10-21T06:35:00Z",
+      "end": "2026-10-21T06:55:00Z"
+    },
+    "metrics": [
+      {
+        "type": "memory_usage",
+        "data": [
+          {
+            "labels": [
+              {
+                "field": "service",
+                "value": "srv-dbc291on74is73f4692g"
+              },
+              {
+                "field": "resource",
+                "value": "srv-dbc291on74is73f4692g"
+              },
+              {
+                "field": "instance",
+                "value": "srv-dbc291on74is73f4692g-frthg"
+              }
+            ],
+            "unit": "bytes",
+            "values": [
+              {
+                "timestamp": "2026-10-21T06:35:00Z",
+                "value": 495964160
+              },
+              {
+                "timestamp": "2026-10-21T06:36:00Z",
+                "value": 492355600
+              },
+              {
+                "timestamp": "2026-10-21T06:37:00Z",
+                "value": 491069440
+              },
+              {
+                "timestamp": "2026-10-21T06:38:00Z",
+                "value": 499183600
+              },
+              {
+                "timestamp": "2026-10-21T06:39:00Z",
+                "value": 496848900
+              },
+              {
+                "timestamp": "2026-10-21T06:40:00Z",
+                "value": 495816700
+              },
+              {
+                "timestamp": "2026-10-21T06:41:00Z",
+                "value": 510316540
+              },
+              {
+                "timestamp": "2026-10-21T06:42:00Z",
+                "value": 503771140
+              },
+              {
+                "timestamp": "2026-10-21T06:43:00Z",
+                "value": 486780930
+              },
+              {
+                "timestamp": "2026-10-21T06:44:00Z",
+                "value": 491954180
+              },
+              {
+                "timestamp": "2026-10-21T06:45:00Z",
+                "value": 492040200
+              },
+              {
+                "timestamp": "2026-10-21T06:46:00Z",
+                "value": 487669760
+              },
+              {
+                "timestamp": "2026-10-21T06:47:00Z",
+                "value": 502243330
+              },
+              {
+                "timestamp": "2026-10-21T06:48:00Z",
+                "value": 502624260
+              },
+              {
+                "timestamp": "2026-10-21T06:49:00Z",
+                "value": 493907970
+              },
+              {
+                "timestamp": "2026-10-21T06:50:00Z",
+                "value": 494972930
+              },
+              {
+                "timestamp": "2026-10-21T06:51:00Z",
+                "value": 498544640
+              },
+              {
+                "timestamp": "2026-10-21T06:52:00Z",
+                "value": 498925570
+              },
+              {
+                "timestamp": "2026-10-21T06:53:00Z",
+                "value": 504905730
+              },
+              {
+                "timestamp": "2026-10-21T06:54:00Z",
+                "value": 504598530
+              },
+              {
+                "timestamp": "2026-10-21T06:55:00Z",
+                "value": 519122940
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "cpu_usage",
+        "data": [
+          {
+            "labels": [
+              {
+                "field": "instance",
+                "value": "srv-dbc291on74is73f4692g-frthg"
+              },
+              {
+                "field": "service",
+                "value": "srv-dbc291on74is73f4692g"
+              },
+              {
+                "field": "resource",
+                "value": "srv-dbc291on74is73f4692g"
+              }
+            ],
+            "unit": "cpu",
+            "values": [
+              {
+                "timestamp": "2026-10-21T06:35:00Z",
+                "value": 0.037097868
+              },
+              {
+                "timestamp": "2026-10-21T06:36:00Z",
+                "value": 0.05897065
+              },
+              {
+                "timestamp": "2026-10-21T06:37:00Z",
+                "value": 0.051261183
+              },
+              {
+                "timestamp": "2026-10-21T06:38:00Z",
+                "value": 0.049243584
+              },
+              {
+                "timestamp": "2026-10-21T06:39:00Z",
+                "value": 0.049270134
+              },
+              {
+                "timestamp": "2026-10-21T06:40:00Z",
+                "value": 0.034517
+              },
+              {
+                "timestamp": "2026-10-21T06:41:00Z",
+                "value": 0.0511472
+              },
+              {
+                "timestamp": "2026-10-21T06:42:00Z",
+                "value": 0.05685955
+              },
+              {
+                "timestamp": "2026-10-21T06:43:00Z",
+                "value": 0.038181633
+              },
+              {
+                "timestamp": "2026-10-21T06:44:00Z",
+                "value": 0.04101435
+              },
+              {
+                "timestamp": "2026-10-21T06:45:00Z",
+                "value": 0.041676868
+              },
+              {
+                "timestamp": "2026-10-21T06:46:00Z",
+                "value": 0.06343529
+              },
+              {
+                "timestamp": "2026-10-21T06:47:00Z",
+                "value": 0.05637325
+              },
+              {
+                "timestamp": "2026-10-21T06:48:00Z",
+                "value": 0.051609885
+              },
+              {
+                "timestamp": "2026-10-21T06:49:00Z",
+                "value": 0.074560836
+              },
+              {
+                "timestamp": "2026-10-21T06:50:00Z",
+                "value": 0.03898505
+              },
+              {
+                "timestamp": "2026-10-21T06:51:00Z",
+                "value": 0.0468507
+              },
+              {
+                "timestamp": "2026-10-21T06:52:00Z",
+                "value": 0.08663713
+              },
+              {
+                "timestamp": "2026-10-21T06:53:00Z",
+                "value": 0.10738
+              },
+              {
+                "timestamp": "2026-10-21T06:54:00Z",
+                "value": 0.14933343
+              },
+              {
+                "timestamp": "2026-10-21T06:55:00Z",
+                "value": 0.117959484
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
 }

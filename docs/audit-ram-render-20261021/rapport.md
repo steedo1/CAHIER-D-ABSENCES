@@ -10,6 +10,14 @@ Le candidat à 288 Mio de heap termine entre **394 et 412 Mio de RSS après 6 00
 
 Le candidat conserve un coût CPU supplémentaire. Il mérite une mise en production surveillée uniquement après accord ; il ne permet pas de promettre une optimisation sans aucun impact sur les performances.
 
+## Suite après accord de l’utilisateur
+
+L’utilisateur a autorisé la poursuite du déploiement contrôlé. **Aucune fusion et aucune modification du service actif n’ont encore été faites.** Le connecteur Render sait lire le service et déclencher un déploiement, mais ne propose pas la modification de ses commandes. L’environnement ne possède ni CLI authentifiée ni clé API Render. L’utilisation du tableau de bord dans le navigateur est donc nécessaire pour appliquer le démarrage direct prévu ; les règles d’accès de cet environnement exigent un accord avant ce recours au navigateur.
+
+Une solution conservant `npm run start` a été testée localement avant de l’écarter : le script `start` du seul checkout isolé a temporairement reçu l’argument Node de 288 Mio, puis a été restauré. Sur 6 000 requêtes à concurrence huit, Next termine à **396,2 Mio**, le parent npm à **68,6 Mio**, soit une somme des RSS de **464,8 Mio** ; p95 **65,4 ms**, CPU Next **33,4 s**, statuts et effectifs attendus vérifiés. Cette somme peut compter des pages partagées deux fois et n’est pas une mesure de conteneur Render. Elle démontre néanmoins le coût du parent npm et justifie de conserver le démarrage Node direct proposé. La sonde locale supporte désormais ce transport via fichier et l’arrêt de tout le groupe de processus du banc ; elle reste absente du démarrage de production.
+
+Dernière fenêtre Render relue avant toute action : entre 06 h 35 et 06 h 55 UTC, la mémoire du conteneur atteint **495,1 Mio** et le CPU atteint **0,149 cœur**. Ce sont toujours des mesures de l’ancienne version ; aucune baisse en production n’est annoncée.
+
 ## Production observée en lecture seule
 
 - Service : `srv-dbc291on74is73f4692g`, région Frankfurt, forfait `free`, une instance.
