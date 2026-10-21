@@ -2,6 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": {
+      "fix/render-bulletin-read-timeout-20261021": false,
       "fix/render-cron-auth-20261021": false,
       "audit/migration-integrale-render-20261021": false,
       "fix/csca-subjects-readiness-20261021": false,
