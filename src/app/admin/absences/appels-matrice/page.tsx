@@ -15,7 +15,9 @@ import {
 import { fetchAdminAttendanceMonitor, type LocalDataSource } from "@/lib/local-relay";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import {
-  adminAttendancePollDelay,
+  adminAttendanceMatrixPollDelay,
+  shouldStartAttendanceMatrixRefresh,
+  ADMIN_ATTENDANCE_MATRIX_CLOUD_TIMEOUT_MS,
   unconfirmedAttendanceMessage,
   adminAttendanceViewReducer,
   initialAdminAttendanceViewState,
@@ -209,6 +211,8 @@ export default function AppelsMatricePage() {
   const [pollCycle, setPollCycle] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
+  const activeRequestKeyRef = useRef<string | null>(null);
+  const lastRequestRef = useRef<{ key: string; at: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,12 +238,28 @@ export default function AppelsMatricePage() {
     };
   }, []);
 
-  const loadRows = useCallback(async (requestedAt = new Date()) => {
+  const loadRows = useCallback(async (requestedAt = new Date(), force = false) => {
+    const requestedDate = toLocalDateInputValue(requestedAt);
+    const requestKey = [requestedDate, educationScope.educationType,
+      educationScope.formationCode, educationScope.levelCode,
+      educationScope.classId].join("|");
+    const lastRequest = lastRequestRef.current;
+    if (!shouldStartAttendanceMatrixRefresh({
+      key: requestKey,
+      activeKey: activeRequestKeyRef.current,
+      lastKey: lastRequest?.key || null,
+      lastAt: lastRequest?.at || 0,
+      now: Date.now(),
+      force,
+    })) return;
+    // A scope change must cancel an old request; duplicate focus/online
+    // notifications must NOT restart an already-running request.
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    activeRequestKeyRef.current = requestKey;
+    lastRequestRef.current = { key: requestKey, at: Date.now() };
     setNow(requestedAt);
-    const requestedDate = toLocalDateInputValue(requestedAt);
 
     dispatchRows({ type: "begin" });
 
@@ -249,8 +269,14 @@ export default function AppelsMatricePage() {
         requestedDate,
         controller.signal,
         educationScope,
-        { includeExpectedStatuses: true },
+        {
+          includeExpectedStatuses: true,
+          cloudTimeoutMs: ADMIN_ATTENDANCE_MATRIX_CLOUD_TIMEOUT_MS,
+        },
       );
+      // A changed class filter may have aborted this request while awaiting
+      // the backend or relay/cache; never publish that stale result.
+      if (controller.signal.aborted) return;
       dispatchRows({
         type: "success",
         source: result.source,
@@ -269,6 +295,7 @@ export default function AppelsMatricePage() {
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;
+        activeRequestKeyRef.current = null;
       }
       if (!controller.signal.aborted) setPollCycle((value) => value + 1);
     }
@@ -278,7 +305,7 @@ export default function AppelsMatricePage() {
     void loadRows(new Date());
   }, [loadRows]);
 
-  const pollDelayMs = adminAttendancePollDelay(
+  const pollDelayMs = adminAttendanceMatrixPollDelay(
     dataSource,
     Boolean(rowsState.error),
   );
@@ -553,7 +580,7 @@ export default function AppelsMatricePage() {
 
             <button
               type="button"
-              onClick={() => void loadRows()}
+              onClick={() => void loadRows(new Date(), true)}
               disabled={rowsState.loading}
               className="mt-2 inline-flex items-center gap-1 self-end rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
             >
