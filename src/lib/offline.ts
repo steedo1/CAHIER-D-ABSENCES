@@ -730,6 +730,7 @@ function responseErrorMessage(payload: any, status: number) {
 
 const DEFAULT_MUTATION_TIMEOUT_MS = 6_000;
 const DEFAULT_READ_TIMEOUT_MS = 6_000;
+const ADMIN_BULLETIN_READ_TIMEOUT_MS = 30_000;
 const OUTBOX_REPLAY_TIMEOUT_MS = 8_000;
 
 async function fetchWithTimeout(
@@ -774,6 +775,7 @@ function outboxRetryDelayMs(attempts: number) {
  */
 export async function offlineGetJson<T = any>(url: string, cacheKey: string): Promise<T> {
   const scoped = isTeacherCacheKey(cacheKey);
+  const isAdminBulletin = /^\/api\/admin\/grades\/bulletin(?:\?|$)/.test(url);
   const actor = scoped ? await attendanceCacheActor() : null;
   const authGeneration = attendanceAuthGeneration();
   const before = scoped ? await teacherScope() : null;
@@ -798,7 +800,7 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
         cache: "no-store",
         headers: buildHeaders({ "Content-Type": "application/json" }),
       },
-      DEFAULT_READ_TIMEOUT_MS,
+      isAdminBulletin ? ADMIN_BULLETIN_READ_TIMEOUT_MS : DEFAULT_READ_TIMEOUT_MS,
     );
 
     if (!res.ok) {
@@ -848,6 +850,12 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
     }
     const cached = await fallback();
     if (cached != null) return cached;
+    if (isAdminBulletin) {
+      if (error instanceof Error && error.name === "TimeoutError") {
+        throw new Error("Le chargement du bulletin a dépassé 30 secondes. Réessayez.");
+      }
+      throw error instanceof Error ? error : new Error("Chargement du bulletin impossible.");
+    }
     throw new Error("Hors connexion : aucune donnée en cache pour cette page.");
   }
 }
