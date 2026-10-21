@@ -120,6 +120,21 @@ for (const [error, shouldRetry] of [["schedule_changed_during_read", true], ["HT
     else { await assert.rejects(download("url", "key")); assert.equal(calls, 1); assert.equal(writes, 0); }
   });
 }
+test("un créneau reçu en douze secondes termine la préparation sans nouvelle tentative", async () => {
+  let calls = 0;
+  const download = isolatedFunction("fetchClassPreparationAndCache", {
+    window: { setTimeout: (fn) => fn() }, retryableOfflinePreparationFailure: failures.retryableOfflinePreparationFailure,
+    fetchFreshJson: async (_url, timeout = 8_000) => {
+      calls++;
+      if (timeout < 12_000) throw new Error("Le serveur n’a pas répondu dans le délai prévu.");
+      return { items: ["cours prévu"] };
+    },
+    cacheSet: async () => {},
+  });
+  assert.deepEqual(await download("url", "key"), { items: ["cours prévu"] });
+  assert.equal(calls, 1);
+});
+
 test("un stockage plein ne redéclenche pas de téléchargements et ne produit pas une fausse réussite", async () => {
   let calls = 0;
   const download = isolatedFunction("fetchClassPreparationAndCache", {

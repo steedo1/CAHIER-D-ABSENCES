@@ -268,11 +268,11 @@ async function fetchAndCache<T = any>(url: string, key: string): Promise<T> {
 async function fetchClassPreparationAndCache<T>(url: string, key: string): Promise<T> {
   let payload: T;
   try {
-    payload = await fetchFreshJson<T>(url);
+    payload = await fetchFreshJson<T>(url, 20_000);
   } catch (error) {
     if (!retryableOfflinePreparationFailure(error)) throw error;
     await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
-    payload = await fetchFreshJson<T>(url);
+    payload = await fetchFreshJson<T>(url, 20_000);
   }
   // Un refus de stockage n'est jamais traité comme une erreur réseau.
   await cacheSet(key, payload);
