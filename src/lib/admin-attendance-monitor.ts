@@ -1,6 +1,19 @@
 export type AdminAttendanceDataSource = "cloud" | "relay" | "hybrid" | "cache";
 
 export const ADMIN_ATTENDANCE_CLOUD_TIMEOUT_MS = 4_000;
+// The class-slot matrix performs multiple independent reads. On Render a
+// 4-second client deadline can expire while valid data is still loading.
+export const ADMIN_ATTENDANCE_MATRIX_CLOUD_TIMEOUT_MS = 9_000;
+// Avoid duplicate full-monitor reads on focus + online + visibility events.
+export const ADMIN_ATTENDANCE_MATRIX_MIN_REFRESH_MS = 8_000;
+export const ADMIN_ATTENDANCE_MATRIX_POLL_MS = {
+  cloud: 35_000,
+  relay: 25_000,
+  hybrid: 25_000,
+  cache: 60_000,
+  error: 60_000,
+  initial: 60_000,
+} as const;
 export const ADMIN_ATTENDANCE_POLL_MS = {
   cloud: 20_000,
   relay: 10_000,
@@ -66,6 +79,29 @@ export function adminAttendancePollDelay(
   if (hasError) return ADMIN_ATTENDANCE_POLL_MS.error;
   if (!source) return ADMIN_ATTENDANCE_POLL_MS.initial;
   return ADMIN_ATTENDANCE_POLL_MS[source];
+}
+
+export function adminAttendanceMatrixPollDelay(
+  source: AdminAttendanceDataSource | null,
+  hasError: boolean,
+) {
+  if (hasError) return ADMIN_ATTENDANCE_MATRIX_POLL_MS.error;
+  if (!source) return ADMIN_ATTENDANCE_MATRIX_POLL_MS.initial;
+  return ADMIN_ATTENDANCE_MATRIX_POLL_MS[source];
+}
+
+/** Coalesce event bursts, but always allow a new school filter or explicit refresh. */
+export function shouldStartAttendanceMatrixRefresh(input: {
+  key: string;
+  activeKey: string | null;
+  lastKey: string | null;
+  lastAt: number;
+  now: number;
+  force?: boolean;
+}) {
+  if (input.activeKey === input.key) return false;
+  if (input.force || input.lastKey !== input.key) return true;
+  return input.now - input.lastAt >= ADMIN_ATTENDANCE_MATRIX_MIN_REFRESH_MS;
 }
 
 export function adminAttendanceCacheKeys(queryString: string, institutionId: string) {

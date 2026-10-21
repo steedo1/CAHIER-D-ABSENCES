@@ -15,7 +15,9 @@ import {
 import { fetchAdminAttendanceMonitor, type LocalDataSource } from "@/lib/local-relay";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import {
-  adminAttendancePollDelay,
+  adminAttendanceMatrixPollDelay,
+  shouldStartAttendanceMatrixRefresh,
+  ADMIN_ATTENDANCE_MATRIX_CLOUD_TIMEOUT_MS,
   unconfirmedAttendanceMessage,
   adminAttendanceViewReducer,
   initialAdminAttendanceViewState,
@@ -209,6 +211,8 @@ export default function AppelsMatricePage() {
   const [pollCycle, setPollCycle] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
+  const activeRequestKeyRef = useRef<string | null>(null);
+  const lastRequestRef = useRef<{ key: string; at: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,12 +238,28 @@ export default function AppelsMatricePage() {
     };
   }, []);
 
-  const loadRows = useCallback(async (requestedAt = new Date()) => {
+  const loadRows = useCallback(async (requestedAt = new Date(), force = false) => {
+    const requestedDate = toLocalDateInputValue(requestedAt);
+    const requestKey = [requestedDate, educationScope.educationType,
+      educationScope.formationCode, educationScope.levelCode,
+      educationScope.classId].join("|");
+    const lastRequest = lastRequestRef.current;
+    if (!shouldStartAttendanceMatrixRefresh({
+      key: requestKey,
+      activeKey: activeRequestKeyRef.current,
+      lastKey: lastRequest?.key || null,
+      lastAt: lastRequest?.at || 0,
+      now: Date.now(),
+      force,
+    })) return;
+    // A scope change must cancel an old request; duplicate focus/online
+    // notifications must NOT restart an already-running request.
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    activeRequestKeyRef.current = requestKey;
+    lastRequestRef.current = { key: requestKey, at: Date.now() };
     setNow(requestedAt);
-    const requestedDate = toLocalDateInputValue(requestedAt);
 
     dispatchRows({ type: "begin" });
 
@@ -249,8 +269,14 @@ export default function AppelsMatricePage() {
         requestedDate,
         controller.signal,
         educationScope,
-        { includeExpectedStatuses: true },
+        {
+          includeExpectedStatuses: true,
+          cloudTimeoutMs: ADMIN_ATTENDANCE_MATRIX_CLOUD_TIMEOUT_MS,
+        },
       );
+      // A changed class filter may have aborted this request while awaiting
+      // the backend or relay/cache; never publish that stale result.
+      if (controller.signal.aborted) return;
       dispatchRows({
         type: "success",
         source: result.source,
@@ -269,6 +295,7 @@ export default function AppelsMatricePage() {
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;
+        activeRequestKeyRef.current = null;
       }
       if (!controller.signal.aborted) setPollCycle((value) => value + 1);
     }
@@ -278,7 +305,7 @@ export default function AppelsMatricePage() {
     void loadRows(new Date());
   }, [loadRows]);
 
-  const pollDelayMs = adminAttendancePollDelay(
+  const pollDelayMs = adminAttendanceMatrixPollDelay(
     dataSource,
     Boolean(rowsState.error),
   );
@@ -450,6 +477,9 @@ export default function AppelsMatricePage() {
   ).length;
 
   const hasAnySlot = slots.length > 0;
+  // A cached empty response is not evidence that the school's timetable is empty.
+  const emptyCacheIsUnverified = dataSource === "cache" && rows.length === 0;
+  const displayCount = (count: number) => emptyCacheIsUnverified ? "—" : count;
   const savedAtLabel = useMemo(() => {
     if (!savedAt) return null;
     const value = new Date(savedAt);
@@ -553,7 +583,7 @@ export default function AppelsMatricePage() {
 
             <button
               type="button"
-              onClick={() => void loadRows()}
+              onClick={() => void loadRows(new Date(), true)}
               disabled={rowsState.loading}
               className="mt-2 inline-flex items-center gap-1 self-end rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
             >
@@ -582,7 +612,7 @@ export default function AppelsMatricePage() {
               </span>
               <CircleDashed className="h-5 w-5 text-slate-500" />
             </div>
-            <div className="text-2xl font-semibold text-slate-900">{totalNotStarted}</div>
+            <div className="text-2xl font-semibold text-slate-900">{displayCount(totalNotStarted)}</div>
             <p className="text-[11px] text-slate-700/80">
               Créneaux qui n’ont pas encore commencé.
             </p>
@@ -596,7 +626,7 @@ export default function AppelsMatricePage() {
               <CheckCircle2 className="h-5 w-5 text-emerald-600" />
             </div>
             <div className="text-2xl font-semibold text-emerald-900">
-              {totalPresent}
+              {displayCount(totalPresent)}
             </div>
             <p className="text-[11px] text-emerald-900/80">
               Appels commencés dans le délai prévu.
@@ -610,7 +640,7 @@ export default function AppelsMatricePage() {
               </span>
               <AlertTriangle className="h-5 w-5 text-slate-500" />
             </div>
-            <div className="text-2xl font-semibold text-slate-900">{totalMissing}</div>
+            <div className="text-2xl font-semibold text-slate-900">{displayCount(totalMissing)}</div>
             <p className="text-[11px] text-slate-700/80">
               Démarrage non confirmé. Vérifier la synchronisation.
             </p>
@@ -623,7 +653,7 @@ export default function AppelsMatricePage() {
               </span>
               <Clock className="h-5 w-5 text-amber-500" />
             </div>
-            <div className="text-2xl font-semibold text-amber-900">{totalLate}</div>
+            <div className="text-2xl font-semibold text-amber-900">{displayCount(totalLate)}</div>
             <p className="text-[11px] text-amber-900/80">
               Appels commencés après le délai prévu.
             </p>
@@ -636,7 +666,7 @@ export default function AppelsMatricePage() {
               </span>
               <Hourglass className="h-5 w-5 text-yellow-600" />
             </div>
-            <div className="text-2xl font-semibold text-yellow-900">{totalPending}</div>
+            <div className="text-2xl font-semibold text-yellow-900">{displayCount(totalPending)}</div>
             <p className="text-[11px] text-yellow-900/80">
               Justifications reçues à examiner.
             </p>
@@ -649,7 +679,7 @@ export default function AppelsMatricePage() {
               </span>
               <ShieldCheck className="h-5 w-5 text-blue-600" />
             </div>
-            <div className="text-2xl font-semibold text-blue-900">{totalJustified}</div>
+            <div className="text-2xl font-semibold text-blue-900">{displayCount(totalJustified)}</div>
             <p className="text-[11px] text-blue-900/80">
               Absences validées par l’administration.
             </p>
@@ -728,7 +758,9 @@ export default function AppelsMatricePage() {
             </div>
           ) : !hasAnySlot ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              Aucun créneau horaire n&apos;a été trouvé pour aujourd&apos;hui.
+              {emptyCacheIsUnverified
+                ? "Cloud indisponible : impossible de confirmer les créneaux du jour. Les zéros ne sont pas fiables. Réessayez."
+                : "Aucun créneau horaire n'a été trouvé pour aujourd'hui."}
             </div>
           ) : !activeSlot ? (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
