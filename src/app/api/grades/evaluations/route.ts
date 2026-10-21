@@ -1402,7 +1402,7 @@ export async function DELETE(req: NextRequest) {
         }
         const allowedSubjectIds = Array.from(new Set([
           String((evalRow as any).subject_id),
-          ...(subjectAliases || []).map(item => String(item.id)),
+          ...(subjectAliases || []).map((item: { id: string }) => String(item.id)),
         ]));
         const { data: assigned, error: assignmentError } = await srv
           .from("class_teachers").select("id")
