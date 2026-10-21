@@ -477,6 +477,9 @@ export default function AppelsMatricePage() {
   ).length;
 
   const hasAnySlot = slots.length > 0;
+  // A cached empty response is not evidence that the school's timetable is empty.
+  const emptyCacheIsUnverified = dataSource === "cache" && rows.length === 0;
+  const displayCount = (count: number) => emptyCacheIsUnverified ? "—" : count;
   const savedAtLabel = useMemo(() => {
     if (!savedAt) return null;
     const value = new Date(savedAt);
@@ -609,7 +612,7 @@ export default function AppelsMatricePage() {
               </span>
               <CircleDashed className="h-5 w-5 text-slate-500" />
             </div>
-            <div className="text-2xl font-semibold text-slate-900">{totalNotStarted}</div>
+            <div className="text-2xl font-semibold text-slate-900">{displayCount(totalNotStarted)}</div>
             <p className="text-[11px] text-slate-700/80">
               Créneaux qui n’ont pas encore commencé.
             </p>
@@ -623,7 +626,7 @@ export default function AppelsMatricePage() {
               <CheckCircle2 className="h-5 w-5 text-emerald-600" />
             </div>
             <div className="text-2xl font-semibold text-emerald-900">
-              {totalPresent}
+              {displayCount(totalPresent)}
             </div>
             <p className="text-[11px] text-emerald-900/80">
               Appels commencés dans le délai prévu.
@@ -637,7 +640,7 @@ export default function AppelsMatricePage() {
               </span>
               <AlertTriangle className="h-5 w-5 text-slate-500" />
             </div>
-            <div className="text-2xl font-semibold text-slate-900">{totalMissing}</div>
+            <div className="text-2xl font-semibold text-slate-900">{displayCount(totalMissing)}</div>
             <p className="text-[11px] text-slate-700/80">
               Démarrage non confirmé. Vérifier la synchronisation.
             </p>
@@ -650,7 +653,7 @@ export default function AppelsMatricePage() {
               </span>
               <Clock className="h-5 w-5 text-amber-500" />
             </div>
-            <div className="text-2xl font-semibold text-amber-900">{totalLate}</div>
+            <div className="text-2xl font-semibold text-amber-900">{displayCount(totalLate)}</div>
             <p className="text-[11px] text-amber-900/80">
               Appels commencés après le délai prévu.
             </p>
@@ -663,7 +666,7 @@ export default function AppelsMatricePage() {
               </span>
               <Hourglass className="h-5 w-5 text-yellow-600" />
             </div>
-            <div className="text-2xl font-semibold text-yellow-900">{totalPending}</div>
+            <div className="text-2xl font-semibold text-yellow-900">{displayCount(totalPending)}</div>
             <p className="text-[11px] text-yellow-900/80">
               Justifications reçues à examiner.
             </p>
@@ -676,7 +679,7 @@ export default function AppelsMatricePage() {
               </span>
               <ShieldCheck className="h-5 w-5 text-blue-600" />
             </div>
-            <div className="text-2xl font-semibold text-blue-900">{totalJustified}</div>
+            <div className="text-2xl font-semibold text-blue-900">{displayCount(totalJustified)}</div>
             <p className="text-[11px] text-blue-900/80">
               Absences validées par l’administration.
             </p>
@@ -755,7 +758,9 @@ export default function AppelsMatricePage() {
             </div>
           ) : !hasAnySlot ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              Aucun créneau horaire n&apos;a été trouvé pour aujourd&apos;hui.
+              {emptyCacheIsUnverified
+                ? "Cloud indisponible : impossible de confirmer les créneaux du jour. Les zéros ne sont pas fiables. Réessayez."
+                : "Aucun créneau horaire n'a été trouvé pour aujourd'hui."}
             </div>
           ) : !activeSlot ? (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
