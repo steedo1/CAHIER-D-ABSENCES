@@ -1,0 +1,33 @@
+name: Render attendance server closure regression
+on:
+  push:
+    branches: [fix/render-attendance-server-close-20261021]
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - src/lib/attendance-server-close.ts
+      - src/app/api/cron/attendance/close-overdue/route.ts
+      - test/attendance-server-close.test.mjs
+      - .github/workflows/render-attendance-close-regression-20261021.yml
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:1
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-build
+      SUPABASE_URL: http://127.0.0.1:1
+      SUPABASE_SERVICE_ROLE_KEY: isolated-build
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test --test-concurrency=2 test/attendance-server-close.test.mjs test/attendance-auto-close.test.ts test/teacher-attendance-delivery.test.ts test/class-device-cloud-session.test.ts test/class-device-rescheduled-session.test.mjs
+      - run: npm run build
