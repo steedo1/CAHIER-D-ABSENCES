@@ -40,5 +40,18 @@
     "pass": 51,
     "fail": 0,
     "note": "includes the 8 new infra/cron tests and 43 existing offline tests; do not sum twice"
+  },
+  "combined-security-infra": {
+    "tests": 55,
+    "pass": 55,
+    "fail": 0,
+    "build": "passed",
+    "note": "local combination of PR 197 and 199; contains overlapping tests from other suites"
+  },
+  "compiled-health-http": {
+    "status": 200,
+    "cache_control": "no-store",
+    "supabase": "unavailable loopback",
+    "result": "passed"
   }
 }

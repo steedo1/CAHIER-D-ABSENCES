@@ -93,6 +93,14 @@ Build de sécurité et typecheck avec heap 4 Gio réussis. Build infra réussi, 
 
 Non effectués : recette des comptes réels, SMS/push vers destinataires autorisés, impression et contrôle visuel des PDF réels, paiement réel, test de mise en veille/reprise/changement d'appareil en classe, pointe du lendemain 7 h 30, comparaison de consommation après déploiement. Aucun compte de test créé dans une école réelle.
 
+### Vérification de l'ensemble proposé
+
+Les arbres de code de #197 et #199 ont été combinés dans une copie locale isolée, sans fusion GitHub. Un conflit initial des exclusions vercel.json a été éliminé dans la proposition #199 ; la combinaison se fait désormais sans conflit. **55/55 tests ciblés** et **build complet de cette combinaison** réussis. Le client cron de #200 a été testé séparément depuis sa base main, 4/4, sans installation ni requête externe.
+
+Le serveur compilé du lot infra a aussi été démarré localement avec Supabase dirigé vers une adresse loopback indisponible : GET /api/health répond HTTP 200, JSON ok:true, Cache-Control:no-store. L'identifiant de build Render synthétique est retrouvé dans le JavaScript public compilé. Ce contrôle ne remplace pas l'installation PWA ni l'usage des comptes réels.
+
+Au dernier relevé d'événements Render de cette intervention, aucun server_failed ou server_restarted depuis 11:55:43 UTC. Les PR #197, #199 et #200 sont ouvertes en brouillon, individuellement fusionnables, sans fusion ni déploiement. Aucun statut CI distant n'est utilisé comme preuve des contrôles locaux.
+
 ## Activation proposée et retour arrière
 
 Demander validation explicite avant de modifier la configuration active, fusionner #197 ou déployer : ce service est la production et le rétablissement CRON/VAPID/Orange peut déclencher la livraison de messages existants.
