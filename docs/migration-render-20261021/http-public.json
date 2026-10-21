@@ -1,0 +1,57 @@
+[
+  {
+    "url": "https://www.mon-cahier.com/login",
+    "final_url": "https://www.mon-cahier.com/login",
+    "status": 200,
+    "seconds": 6.051,
+    "bytes": 13124,
+    "cache_control": "s-maxage=31536000",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "https://mon-cahier.com/login",
+    "final_url": "https://www.mon-cahier.com/login",
+    "status": 200,
+    "seconds": 6.05,
+    "bytes": 13124,
+    "cache_control": "s-maxage=31536000",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "https://www.mon-cahier.com/parents/login",
+    "final_url": "https://www.mon-cahier.com/parents/login",
+    "status": 200,
+    "seconds": 6.123,
+    "bytes": 13063,
+    "cache_control": "s-maxage=31536000",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "https://www.mon-cahier.com/manifest.webmanifest",
+    "final_url": "https://www.mon-cahier.com/manifest.webmanifest",
+    "status": 200,
+    "seconds": 6.115,
+    "bytes": 615,
+    "cache_control": "public, max-age=0, must-revalidate",
+    "content_type": "application/manifest+json"
+  },
+  {
+    "url": "https://www.mon-cahier.com/moncahier-sw.js",
+    "final_url": "https://www.mon-cahier.com/moncahier-sw.js",
+    "status": 200,
+    "seconds": 6.268,
+    "bytes": 37118,
+    "cache_control": "public, max-age=0",
+    "content_type": "application/javascript; charset=UTF-8"
+  },
+  {
+    "url": "https://www.mon-cahier.com/api/push/vapid",
+    "final_url": "https://www.mon-cahier.com/api/push/vapid",
+    "status": 200,
+    "seconds": 6.207,
+    "bytes": 10,
+    "cache_control": null,
+    "content_type": "application/json",
+    "public_key_present": false
+  }
+]

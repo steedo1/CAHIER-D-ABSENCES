@@ -1,0 +1,306 @@
+{
+  "ACADEMIC_YEAR_START_MONTH": [
+    "src/lib/academicYear.ts"
+  ],
+  "APP_URL": [
+    "src/lib/payments/providers/mock.ts",
+    "src/app/api/admin/grades/bulletin/route.ts",
+    "src/app/api/admin/exports/averages/route.ts"
+  ],
+  "ATTENDANCE_END_GRACE_MIN": [
+    "src/app/api/cron/attendance/monitor/route.ts"
+  ],
+  "ATTENDANCE_LATE_THRESHOLD_MIN": [
+    "src/app/api/admin/attendance/monitor/route.ts",
+    "src/app/api/admin/attendance/alerts/route.ts",
+    "src/app/api/cron/attendance/monitor/route.ts"
+  ],
+  "ATTENDANCE_MISSING_CONTROL_WINDOW_MIN": [
+    "src/app/api/admin/attendance/monitor/route.ts"
+  ],
+  "BULLETIN_EXPORT_CONCURRENCY": [
+    "src/app/api/admin/exports/averages/route.ts"
+  ],
+  "BULLETIN_EXPORT_FETCH_TIMEOUT_MS": [
+    "src/app/api/admin/exports/averages/route.ts"
+  ],
+  "BULLETIN_PUBLIC_VERIFY_ORIGIN": [
+    "src/app/api/admin/grades/bulletin/route.ts"
+  ],
+  "BULLETIN_QR_MODE": [
+    "src/app/api/admin/grades/bulletin/route.ts"
+  ],
+  "BULLETIN_QR_PNG_ECL": [
+    "src/app/api/admin/grades/bulletin/route.ts"
+  ],
+  "BULLETIN_QR_PNG_MARGIN": [
+    "src/app/api/admin/grades/bulletin/route.ts"
+  ],
+  "BULLETIN_QR_PNG_SIZE": [
+    "src/app/api/admin/grades/bulletin/route.ts"
+  ],
+  "BULLETIN_QR_SECRET": [
+    "src/lib/bulletin-qr-store.ts",
+    "src/lib/bulletin-qr.ts",
+    "src/app/api/admin/grades/bulletin/route.ts"
+  ],
+  "CRON_PUSH_SECRET": [
+    "src/lib/push-dispatch.ts",
+    "src/lib/sms-dispatch.ts",
+    "src/app/api/founder/daily-summary/route.ts",
+    "src/app/api/push/dispatch/route.ts",
+    "src/app/api/admin/attendance/alerts/route.ts",
+    "src/app/api/cron/attendance/monitor/route.ts",
+    "src/app/api/cron/finance/monthly-reminders/route.ts",
+    "src/app/api/sms/dispatch/route.ts"
+  ],
+  "CRON_SECRET": [
+    "src/lib/push-dispatch.ts",
+    "src/lib/sms-dispatch.ts",
+    "src/app/api/founder/daily-summary/route.ts",
+    "src/app/api/push/dispatch/route.ts",
+    "src/app/api/admin/attendance/alerts/route.ts",
+    "src/app/api/cron/whatsapp/send/route.ts",
+    "src/app/api/cron/whatsapp/prepare-absences/route.ts",
+    "src/app/api/cron/attendance/monitor/route.ts",
+    "src/app/api/cron/finance/monthly-reminders/route.ts",
+    "src/app/api/sms/dispatch/route.ts"
+  ],
+  "CRON_WHATSAPP_SECRET": [
+    "src/app/api/whatsapp/route.ts",
+    "src/app/api/whatsapp/aggregate/route.ts",
+    "src/app/api/whatsapp/dispatch/penalties/daily/route.ts"
+  ],
+  "DEFAULT_PHONE_PREFIX": [
+    "src/lib/phone.ts",
+    "src/app/api/admin/users/route.ts"
+  ],
+  "DEFAULT_TEMP_PASSWORD": [
+    "src/app/api/super/founders/route.ts",
+    "src/app/api/super/drenaets/route.ts",
+    "src/app/api/super/create-admin/route.ts",
+    "src/app/api/parent/login/route.tsx",
+    "src/app/api/admin/associations/route.ts",
+    "src/app/api/admin/classes/[id]/route.ts",
+    "src/app/api/admin/teachers/import/route.ts",
+    "src/app/api/admin/users/create/route.ts",
+    "src/app/api/admin/users/reset-password/route.ts",
+    "src/app/api/admin/users/create-file-correspondent/route.ts"
+  ],
+  "FCM_SERVER_KEY": [
+    "src/app/api/push/dispatch/route.ts"
+  ],
+  "ML_PREDICT_URL": [
+    "src/app/api/admin/grades/predict/route.ts",
+    "src/app/api/admin/notes/predictions/route.ts",
+    "src/app/api/admin/mon-cahier-ia/assistant/route.ts"
+  ],
+  "MON_CAHIER_AI_SERVICE_URL": [
+    "src/app/api/admin/mon-cahier-ia/assistant/route.ts"
+  ],
+  "MON_CAHIER_CLASS_DEVICE_AUTH_DOMAIN": [
+    "src/lib/class-device-identity.ts"
+  ],
+  "MON_CAHIER_OFFLINE_AUTH_SECRET": [
+    "src/middleware.ts",
+    "src/app/api/auth/role/route.ts"
+  ],
+  "NEXT_PUBLIC_APP_URL": [
+    "src/lib/sms-dispatch.ts",
+    "src/lib/payments/providers/mock.ts",
+    "src/app/api/admin/grades/bulletin/route.ts",
+    "src/app/api/admin/exports/averages/route.ts",
+    "src/app/v/[code]/page.tsx",
+    "src/app/v/distinction/[code]/page.tsx"
+  ],
+  "NEXT_PUBLIC_BASE_URL": [
+    "src/lib/push-dispatch.ts",
+    "src/lib/sms-dispatch.ts"
+  ],
+  "NEXT_PUBLIC_BULLETIN_VERIFY_ORIGIN": [
+    "src/app/api/admin/grades/bulletin/route.ts"
+  ],
+  "NEXT_PUBLIC_DEFAULT_PHONE_PREFIX": [
+    "src/lib/phone.ts",
+    "src/app/api/admin/users/route.ts"
+  ],
+  "NEXT_PUBLIC_MONCAHIER_OFFLINE_GRADE_WRITES_ENABLED": [
+    "src/lib/grade-write-capabilities.ts"
+  ],
+  "NEXT_PUBLIC_MONCAHIER_RELAY_URL": [
+    "src/lib/local-relay.ts"
+  ],
+  "NEXT_PUBLIC_MON_CAHIER_RELEASE": [
+    "src/lib/offline-release.ts"
+  ],
+  "NEXT_PUBLIC_SITE_URL": [
+    "src/app/api/super/admins/[uid]/password/route.ts",
+    "src/app/super/dashboard/page.tsx",
+    "src/app/v/[code]/page.tsx",
+    "src/app/v/distinction/[code]/page.tsx"
+  ],
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY": [
+    "src/lib/supabase-server.ts",
+    "src/lib/supabase-browser.ts",
+    "src/lib/auth/session-middleware.ts",
+    "src/app/api/debug/env/route.ts",
+    "src/app/api/auth/login/route.ts"
+  ],
+  "NEXT_PUBLIC_SUPABASE_URL": [
+    "src/middleware.ts",
+    "src/lib/supabase-server.ts",
+    "src/lib/supabase-browser.ts",
+    "src/lib/supabaseAdmin.ts",
+    "src/lib/auth/session-middleware.ts",
+    "src/components/auth/TrueLogoutButton.tsx",
+    "src/app/redirect/route.ts",
+    "src/app/api/debug/env/route.ts",
+    "src/app/api/auth/sync/route.ts",
+    "src/app/api/auth/login/route.ts",
+    "src/app/api/auth/signout/route.ts",
+    "src/app/api/admin/users/route.ts",
+    "src/app/api/admin/users/reset-password/route.ts"
+  ],
+  "NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA": [
+    "src/lib/offline-release.ts"
+  ],
+  "NODE_ENV": [
+    "src/lib/supabase-browser.ts",
+    "src/lib/admin-students-server.ts",
+    "src/lib/parent-session.ts",
+    "src/app/api/csrf/route.ts",
+    "src/app/api/auth/signout/route.ts",
+    "src/app/api/parent/children/attach/route.ts",
+    "src/app/api/admin/montage-emploi-du-temps/projects/[id]/generate/route.ts",
+    "src/app/admin/finance/payroll/page.tsx"
+  ],
+  "ONLINE_PAYMENTS_INTERNAL_TEST_CONFIRM_ENABLED": [
+    "src/app/api/payments/webhooks/internal-test/route.ts"
+  ],
+  "ONLINE_PAYMENTS_INTERNAL_TEST_SECRET": [
+    "src/app/api/payments/webhooks/internal-test/route.ts"
+  ],
+  "ONLINE_PAYMENTS_MOCK_ENABLED": [
+    "src/app/api/payments/webhooks/mock/route.ts"
+  ],
+  "ORANGE_AUTH_HEADER": [
+    "src/lib/sms/orange.ts"
+  ],
+  "ORANGE_CLIENT_ID": [
+    "src/lib/sms/orange.ts"
+  ],
+  "ORANGE_CLIENT_SECRET": [
+    "src/lib/sms/orange.ts"
+  ],
+  "ORANGE_MONEY_WEBPAY_ENABLED": [
+    "src/lib/payments/providers/orange.ts"
+  ],
+  "ORANGE_MONEY_WEBPAY_WEBHOOK_SECRET": [
+    "src/app/api/payments/webhooks/orange_money/route.ts"
+  ],
+  "ORANGE_OAUTH_URL": [
+    "src/lib/sms/orange.ts"
+  ],
+  "ORANGE_SMS_BASE_URL": [
+    "src/lib/sms/orange.ts"
+  ],
+  "ORANGE_SMS_SENDER": [
+    "src/lib/sms/orange.ts"
+  ],
+  "PARENT_JWT_SECRET": [
+    "src/lib/parent-session.ts"
+  ],
+  "PUBLIC_APP_URL": [
+    "src/app/api/admin/grades/bulletin/route.ts",
+    "src/app/api/admin/exports/averages/route.ts"
+  ],
+  "PUSH_MAX_ATTEMPTS": [
+    "src/app/api/push/dispatch/route.ts"
+  ],
+  "PUSH_SENDER_NAME": [
+    "src/app/api/push/test/route.ts"
+  ],
+  "PUSH_WAIT_STATUS": [
+    "src/lib/notifications.ts",
+    "src/lib/push/founder.ts",
+    "src/lib/push/grades.ts",
+    "src/app/api/push/dispatch/route.ts",
+    "src/app/api/admin/infirmary/route.ts",
+    "src/app/api/admin/communication/send/route.ts",
+    "src/app/api/admin/attendance/unjustified/route.ts",
+    "src/app/api/admin/attendance/alerts/route.ts",
+    "src/app/api/cron/attendance/monitor/route.ts",
+    "src/app/api/cron/finance/monthly-reminders/route.ts",
+    "src/app/api/sms/dispatch/route.ts"
+  ],
+  "RENDER_EXTERNAL_HOSTNAME": [
+    "src/app/redirect/route.ts"
+  ],
+  "RENDER_EXTERNAL_URL": [
+    "src/app/redirect/route.ts"
+  ],
+  "SMS_MAX_ATTEMPTS": [
+    "src/app/api/sms/dispatch/route.ts"
+  ],
+  "SMS_PROVIDER_ACCEPTED_PARTIAL_STATUS": [
+    "src/app/api/sms/dispatch/route.ts"
+  ],
+  "SMS_PROVIDER_ACCEPTED_STATUS": [
+    "src/app/api/sms/dispatch/route.ts"
+  ],
+  "SMS_WAIT_STATUS": [
+    "src/app/api/sms/dispatch/route.ts"
+  ],
+  "SUPABASE_ANON_KEY": [
+    "src/lib/supabase-server.ts",
+    "src/lib/auth/session-middleware.ts"
+  ],
+  "SUPABASE_SERVICE_ROLE_KEY": [
+    "src/middleware.ts",
+    "src/lib/bulletin-qr-store.ts",
+    "src/lib/supabaseAdmin.ts",
+    "src/app/redirect/route.ts",
+    "src/app/api/auth/role/route.ts",
+    "src/app/api/admin/users/route.ts",
+    "src/app/api/admin/grades/bulletin/route.ts",
+    "src/app/api/admin/users/reset-password/route.ts"
+  ],
+  "SUPABASE_URL": [
+    "src/lib/supabase-server.ts",
+    "src/lib/supabaseAdmin.ts",
+    "src/lib/auth/session-middleware.ts",
+    "src/app/api/debug/env/route.ts"
+  ],
+  "TWILIO_ACCOUNT_SID": [
+    "src/app/api/whatsapp/dispatch/penalties/daily/route.ts"
+  ],
+  "TWILIO_AUTH_TOKEN": [
+    "src/app/api/whatsapp/dispatch/penalties/daily/route.ts"
+  ],
+  "TWILIO_WHATSAPP_FROM": [
+    "src/app/api/whatsapp/dispatch/penalties/daily/route.ts"
+  ],
+  "VAPID_PRIVATE_KEY": [
+    "src/app/api/push/test/route.ts",
+    "src/app/api/push/dispatch/route.ts"
+  ],
+  "VAPID_PUBLIC_KEY": [
+    "src/app/api/push/vapid/route.ts",
+    "src/app/api/push/test/route.ts",
+    "src/app/api/push/public-key/route.ts",
+    "src/app/api/push/dispatch/route.ts"
+  ],
+  "VERBOSE_PUSH": [
+    "src/app/api/push/subscribe/route.ts"
+  ],
+  "VERCEL_URL": [
+    "src/lib/push-dispatch.ts",
+    "src/lib/sms-dispatch.ts",
+    "src/app/api/admin/exports/averages/route.ts",
+    "src/app/super/dashboard/page.tsx",
+    "src/app/v/[code]/page.tsx"
+  ],
+  "WHATSAPP_ENABLED": [
+    "src/app/api/whatsapp/dispatch/penalties/daily/route.ts"
+  ]
+}

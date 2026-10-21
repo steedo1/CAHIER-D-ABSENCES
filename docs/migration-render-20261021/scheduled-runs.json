@@ -1,0 +1,110 @@
+[
+  {
+    "id": 39605647673,
+    "name": "Dispatch SMS Cron",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "failure",
+    "created_at": "2026-10-21T13:10:20Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39605647673"
+  },
+  {
+    "id": 39585782283,
+    "name": "Attendance Alerts Cron",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "success",
+    "created_at": "2026-10-21T10:36:09Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39585782283"
+  },
+  {
+    "id": 39578102869,
+    "name": "Dispatch Push Cron (tests toutes les 5 min)",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "failure",
+    "created_at": "2026-10-21T09:35:09Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39578102869"
+  },
+  {
+    "id": 39562541847,
+    "name": "Dispatch SMS Cron",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "failure",
+    "created_at": "2026-10-21T07:31:08Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39562541847"
+  },
+  {
+    "id": 39550710663,
+    "name": "Attendance Alerts Cron",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "success",
+    "created_at": "2026-10-21T05:38:39Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39550710663"
+  },
+  {
+    "id": 39545131694,
+    "name": "Dispatch Push Cron (tests toutes les 5 min)",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "failure",
+    "created_at": "2026-10-21T04:38:19Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39545131694"
+  },
+  {
+    "id": 39530897360,
+    "name": "Dispatch SMS Cron",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "failure",
+    "created_at": "2026-10-21T02:03:51Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39530897360"
+  },
+  {
+    "id": 39523690804,
+    "name": "Attendance Alerts Cron",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "failure",
+    "created_at": "2026-10-21T00:50:04Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39523690804"
+  },
+  {
+    "id": 39519690520,
+    "name": "Dispatch Push Cron (tests toutes les 5 min)",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "failure",
+    "created_at": "2026-10-21T00:10:28Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39519690520"
+  },
+  {
+    "id": 39517076469,
+    "name": "Dispatch SMS Cron",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "failure",
+    "created_at": "2026-10-20T23:45:31Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39517076469"
+  },
+  {
+    "id": 39508276234,
+    "name": "Attendance Alerts Cron",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "success",
+    "created_at": "2026-10-20T22:27:45Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39508276234"
+  },
+  {
+    "id": 39503799438,
+    "name": "Dispatch Push Cron (tests toutes les 5 min)",
+    "head_branch": "main",
+    "head_sha": "c599e66f347a0badb7c4ae9cb4303846cd9e29bd",
+    "conclusion": "success",
+    "created_at": "2026-10-20T21:52:10Z",
+    "url": "https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/39503799438"
+  }
+]

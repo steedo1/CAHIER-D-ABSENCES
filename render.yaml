@@ -13,7 +13,7 @@ services:
     # Explicit runtime flag overrides any inherited NODE_OPTIONS=...4096.
     # This is a tested candidate, not a change to the active service.
     startCommand: node --max-old-space-size=288 node_modules/next/dist/bin/next start --hostname 0.0.0.0
-    healthCheckPath: /login
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
         value: "22"
