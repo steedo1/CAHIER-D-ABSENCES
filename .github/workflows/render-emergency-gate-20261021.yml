@@ -6,6 +6,7 @@ on:
       - fix/epc-primary-event-labels-20261021
       - fix/render-bulletin-read-timeout-20261021
       - fix/epc-primary-delete-subject-scope-20261021
+      - fix/epc-delete-visible-confirm-cache-20261021
   workflow_dispatch:
 
 permissions:
@@ -36,7 +37,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:primary-events
-        if: contains(github.ref, 'epc-primary-event-labels') || contains(github.ref, 'epc-primary-delete-subject-scope')
+        if: contains(github.ref, 'epc-primary-event-labels') || contains(github.ref, 'epc-primary-delete-subject-scope') || contains(github.ref, 'epc-delete-visible-confirm-cache')
       - run: node --import tsx --test test/render-bulletin-read-timeout.test.mjs
         if: contains(github.ref, 'render-bulletin-read-timeout')
+      - run: node --test test/epc-primary-grade-delete-pwa-ui.test.mjs
+        if: contains(github.ref, 'epc-delete-visible-confirm-cache')
       - run: npm run build
