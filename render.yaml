@@ -1,0 +1,22 @@
+# Essai isolé sur Render : aucune modification du déploiement Vercel de production.
+# Les valeurs sensibles doivent être saisies dans Render, jamais dans Git.
+services:
+  - type: web
+    name: mon-cahier-render-test
+    runtime: node
+    plan: free
+    autoDeployTrigger: off
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /login
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
