@@ -1,6 +1,6 @@
 # Mon Cahier — audit RAM Render du 21 octobre 2026
 
-**Statut : correction isolée, aucun déploiement effectué.** Le service `mon-cahier-test` est bien la production de `www.mon-cahier.com`. Aucune modification de service, de domaine, de DNS, de secret ou de donnée scolaire n’a été faite.
+**Statut actualisé : correction déployée après autorisation, le 21 octobre à 07:20:21 UTC / Abidjan.** Voir le [suivi de déploiement](deploiement.md) pour les commandes effectivement enregistrées, les événements OOM antérieurs et les mesures réelles après bascule. Le reste de ce rapport conserve les résultats de l’audit isolé et ses limites. Aucun domaine, DNS, secret ou donnée scolaire n’a été modifié.
 
 ## Résultat et limite principale
 
@@ -10,7 +10,7 @@ Le candidat à 288 Mio de heap termine entre **394 et 412 Mio de RSS après 6 00
 
 Le candidat conserve un coût CPU supplémentaire. Il mérite une mise en production surveillée uniquement après accord ; il ne permet pas de promettre une optimisation sans aucun impact sur les performances.
 
-## Suite après accord de l’utilisateur
+## Préparation après accord de l’utilisateur — historique avant déploiement
 
 L’utilisateur a autorisé la poursuite du déploiement contrôlé. **Aucune fusion et aucune modification du service actif n’ont encore été faites.** Le connecteur Render sait lire le service et déclencher un déploiement, mais ne propose pas la modification de ses commandes. L’environnement ne possède ni CLI authentifiée ni clé API Render. L’utilisation du tableau de bord dans le navigateur est donc nécessaire pour appliquer le démarrage direct prévu ; les règles d’accès de cet environnement exigent un accord avant ce recours au navigateur.
 

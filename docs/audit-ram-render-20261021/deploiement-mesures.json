@@ -1,0 +1,518 @@
+{
+  "before": {
+    "resourceId": "srv-dbc291on74is73f4692g",
+    "timeRange": {
+      "start": "2026-10-21T07:00:00Z"
+    },
+    "metrics": [
+      {
+        "type": "memory_usage",
+        "data": [
+          {
+            "labels": [
+              {
+                "field": "instance",
+                "value": "srv-dbc291on74is73f4692g-frthg"
+              },
+              {
+                "field": "service",
+                "value": "srv-dbc291on74is73f4692g"
+              },
+              {
+                "field": "resource",
+                "value": "srv-dbc291on74is73f4692g"
+              }
+            ],
+            "unit": "bytes",
+            "values": [
+              {
+                "timestamp": "2026-10-21T07:00:00Z",
+                "value": 510926850
+              },
+              {
+                "timestamp": "2026-10-21T07:01:00Z",
+                "value": 510058500
+              },
+              {
+                "timestamp": "2026-10-21T07:02:00Z",
+                "value": 514199550
+              },
+              {
+                "timestamp": "2026-10-21T07:03:00Z",
+                "value": 512008200
+              },
+              {
+                "timestamp": "2026-10-21T07:04:00Z",
+                "value": 517238800
+              },
+              {
+                "timestamp": "2026-10-21T07:05:00Z",
+                "value": 522690560
+              },
+              {
+                "timestamp": "2026-10-21T07:06:00Z",
+                "value": 529489920
+              },
+              {
+                "timestamp": "2026-10-21T07:07:00Z",
+                "value": 296755200
+              },
+              {
+                "timestamp": "2026-10-21T07:08:00Z",
+                "value": 521109500
+              },
+              {
+                "timestamp": "2026-10-21T07:09:00Z",
+                "value": 528846850
+              },
+              {
+                "timestamp": "2026-10-21T07:10:00Z",
+                "value": 534548480
+              },
+              {
+                "timestamp": "2026-10-21T07:12:00Z",
+                "value": 486649860
+              },
+              {
+                "timestamp": "2026-10-21T07:13:00Z",
+                "value": 513912830
+              },
+              {
+                "timestamp": "2026-10-21T07:14:00Z",
+                "value": 532729860
+              },
+              {
+                "timestamp": "2026-10-21T07:15:00Z",
+                "value": 485498880
+              },
+              {
+                "timestamp": "2026-10-21T07:16:00Z",
+                "value": 112513020
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "cpu_usage",
+        "data": [
+          {
+            "labels": [
+              {
+                "field": "instance",
+                "value": "srv-dbc291on74is73f4692g-frthg"
+              },
+              {
+                "field": "service",
+                "value": "srv-dbc291on74is73f4692g"
+              },
+              {
+                "field": "resource",
+                "value": "srv-dbc291on74is73f4692g"
+              }
+            ],
+            "unit": "cpu",
+            "values": [
+              {
+                "timestamp": "2026-10-21T07:00:00Z",
+                "value": 0.11423194
+              },
+              {
+                "timestamp": "2026-10-21T07:01:00Z",
+                "value": 0.14987782
+              },
+              {
+                "timestamp": "2026-10-21T07:02:00Z",
+                "value": 0.1397776
+              },
+              {
+                "timestamp": "2026-10-21T07:03:00Z",
+                "value": 0.13700187
+              },
+              {
+                "timestamp": "2026-10-21T07:04:00Z",
+                "value": 0.13811998
+              },
+              {
+                "timestamp": "2026-10-21T07:05:00Z",
+                "value": 0.117494516
+              },
+              {
+                "timestamp": "2026-10-21T07:06:00Z",
+                "value": 0.123475686
+              },
+              {
+                "timestamp": "2026-10-21T07:07:00Z",
+                "value": 0.079190165
+              },
+              {
+                "timestamp": "2026-10-21T07:08:00Z",
+                "value": 0.14464135
+              },
+              {
+                "timestamp": "2026-10-21T07:09:00Z",
+                "value": 0.09520403
+              },
+              {
+                "timestamp": "2026-10-21T07:10:00Z",
+                "value": 0.14025742
+              },
+              {
+                "timestamp": "2026-10-21T07:11:00Z",
+                "value": 0
+              },
+              {
+                "timestamp": "2026-10-21T07:12:00Z",
+                "value": 0.06683872
+              },
+              {
+                "timestamp": "2026-10-21T07:13:00Z",
+                "value": 0.12865704
+              },
+              {
+                "timestamp": "2026-10-21T07:14:00Z",
+                "value": 0.12276579
+              },
+              {
+                "timestamp": "2026-10-21T07:15:00Z",
+                "value": 0.10535018
+              },
+              {
+                "timestamp": "2026-10-21T07:16:00Z",
+                "value": 0.033129867
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "http_latency",
+        "data": []
+      },
+      {
+        "type": "http_request_count",
+        "data": []
+      }
+    ]
+  },
+  "oldOomEvents": [
+    {
+      "timestamp": "2026-10-21T07:15:46.361514Z",
+      "type": "server_available"
+    },
+    {
+      "timestamp": "2026-10-21T07:15:41.289843Z",
+      "type": "server_failed",
+      "instance": "srv-dbc291on74is73f4692g-frthg",
+      "reason": {
+        "evicted": false,
+        "oomKilled": {
+          "memoryLimit": "512Mi"
+        }
+      }
+    },
+    {
+      "timestamp": "2026-10-21T07:11:44.068452Z",
+      "type": "server_failed",
+      "instance": "srv-dbc291on74is73f4692g-frthg",
+      "reason": {
+        "evicted": false,
+        "oomKilled": {
+          "memoryLimit": "512Mi"
+        }
+      }
+    },
+    {
+      "timestamp": "2026-10-21T07:11:06.347097Z",
+      "type": "server_available"
+    },
+    {
+      "timestamp": "2026-10-21T07:07:58.169419Z",
+      "type": "server_failed",
+      "instance": "srv-dbc291on74is73f4692g-frthg",
+      "reason": {
+        "evicted": false,
+        "oomKilled": {
+          "memoryLimit": "512Mi"
+        }
+      }
+    }
+  ],
+  "httpChecks": {
+    "at": "2026-10-21T07:21:53.570000+00:00",
+    "checks": [
+      {
+        "path": "/login",
+        "status": 200,
+        "seconds": 13.919465,
+        "bytes": 13124,
+        "expected": 200
+      },
+      {
+        "path": "/manifest.webmanifest",
+        "status": 200,
+        "seconds": 5.951886,
+        "bytes": 615,
+        "expected": 200
+      },
+      {
+        "path": "/moncahier-sw.js",
+        "status": 200,
+        "seconds": 7.435405,
+        "bytes": 36867,
+        "expected": 200
+      },
+      {
+        "path": "/offline.html",
+        "status": 200,
+        "seconds": 8.829085,
+        "bytes": 3960,
+        "expected": 200
+      },
+      {
+        "path": "/class",
+        "status": 307,
+        "seconds": 5.898983,
+        "bytes": 23,
+        "expected": 307
+      },
+      {
+        "path": "/admin",
+        "status": 307,
+        "seconds": 6.388265,
+        "bytes": 23,
+        "expected": 307
+      },
+      {
+        "path": "/api/class/roster",
+        "status": 401,
+        "seconds": 6.906454,
+        "bytes": 24,
+        "expected": 401
+      }
+    ],
+    "allExpected": true,
+    "authenticatedBusinessChecks": false
+  },
+  "warmLoginCheck": {
+    "at": "2026-10-21T07:25:00Z",
+    "timeNote": "Request initiated shortly after 07:25; timestamp rounded to minute",
+    "path": "/login",
+    "status": 200,
+    "seconds": 6.180564
+  },
+  "after": {
+    "resourceId": "srv-dbc291on74is73f4692g",
+    "timeRange": {
+      "start": "2026-10-21T07:21:00Z"
+    },
+    "metrics": [
+      {
+        "type": "memory_usage",
+        "data": [
+          {
+            "labels": [
+              {
+                "field": "instance",
+                "value": "srv-dbc291on74is73f4692g-5qpld"
+              },
+              {
+                "field": "service",
+                "value": "srv-dbc291on74is73f4692g"
+              },
+              {
+                "field": "resource",
+                "value": "srv-dbc291on74is73f4692g"
+              }
+            ],
+            "unit": "bytes",
+            "values": [
+              {
+                "timestamp": "2026-10-21T07:21:00Z",
+                "value": 336637950
+              },
+              {
+                "timestamp": "2026-10-21T07:22:00Z",
+                "value": 435073020
+              },
+              {
+                "timestamp": "2026-10-21T07:23:00Z",
+                "value": 433528830
+              },
+              {
+                "timestamp": "2026-10-21T07:24:00Z",
+                "value": 436654080
+              },
+              {
+                "timestamp": "2026-10-21T07:25:00Z",
+                "value": 368394240
+              },
+              {
+                "timestamp": "2026-10-21T07:26:00Z",
+                "value": 413253630
+              },
+              {
+                "timestamp": "2026-10-21T07:27:00Z",
+                "value": 434470900
+              },
+              {
+                "timestamp": "2026-10-21T07:28:00Z",
+                "value": 425295870
+              },
+              {
+                "timestamp": "2026-10-21T07:29:00Z",
+                "value": 423010300
+              },
+              {
+                "timestamp": "2026-10-21T07:30:00Z",
+                "value": 430534660
+              },
+              {
+                "timestamp": "2026-10-21T07:31:00Z",
+                "value": 435769340
+              },
+              {
+                "timestamp": "2026-10-21T07:32:00Z",
+                "value": 440426500
+              },
+              {
+                "timestamp": "2026-10-21T07:33:00Z",
+                "value": 463466500
+              },
+              {
+                "timestamp": "2026-10-21T07:34:00Z",
+                "value": 433414140
+              },
+              {
+                "timestamp": "2026-10-21T07:35:00Z",
+                "value": 438493200
+              },
+              {
+                "timestamp": "2026-10-21T07:36:00Z",
+                "value": 490872830
+              },
+              {
+                "timestamp": "2026-10-21T07:37:00Z",
+                "value": 401346560
+              },
+              {
+                "timestamp": "2026-10-21T07:38:00Z",
+                "value": 447066100
+              },
+              {
+                "timestamp": "2026-10-21T07:39:00Z",
+                "value": 456761340
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "cpu_usage",
+        "data": [
+          {
+            "labels": [
+              {
+                "field": "instance",
+                "value": "srv-dbc291on74is73f4692g-5qpld"
+              },
+              {
+                "field": "service",
+                "value": "srv-dbc291on74is73f4692g"
+              },
+              {
+                "field": "resource",
+                "value": "srv-dbc291on74is73f4692g"
+              }
+            ],
+            "unit": "cpu",
+            "values": [
+              {
+                "timestamp": "2026-10-21T07:22:00Z",
+                "value": 0.1459988
+              },
+              {
+                "timestamp": "2026-10-21T07:23:00Z",
+                "value": 0.12503906
+              },
+              {
+                "timestamp": "2026-10-21T07:24:00Z",
+                "value": 0.1136865
+              },
+              {
+                "timestamp": "2026-10-21T07:25:00Z",
+                "value": 0.07021732
+              },
+              {
+                "timestamp": "2026-10-21T07:26:00Z",
+                "value": 0.1072569
+              },
+              {
+                "timestamp": "2026-10-21T07:27:00Z",
+                "value": 0.107898965
+              },
+              {
+                "timestamp": "2026-10-21T07:28:00Z",
+                "value": 0.15
+              },
+              {
+                "timestamp": "2026-10-21T07:29:00Z",
+                "value": 0.130276
+              },
+              {
+                "timestamp": "2026-10-21T07:30:00Z",
+                "value": 0.14013626
+              },
+              {
+                "timestamp": "2026-10-21T07:31:00Z",
+                "value": 0.097311236
+              },
+              {
+                "timestamp": "2026-10-21T07:32:00Z",
+                "value": 0.05018145
+              },
+              {
+                "timestamp": "2026-10-21T07:33:00Z",
+                "value": 0.06570585
+              },
+              {
+                "timestamp": "2026-10-21T07:34:00Z",
+                "value": 0.090921685
+              },
+              {
+                "timestamp": "2026-10-21T07:35:00Z",
+                "value": 0.10781667
+              },
+              {
+                "timestamp": "2026-10-21T07:36:00Z",
+                "value": 0.106427684
+              },
+              {
+                "timestamp": "2026-10-21T07:37:00Z",
+                "value": 0.04445465
+              },
+              {
+                "timestamp": "2026-10-21T07:38:00Z",
+                "value": 0.052525315
+              },
+              {
+                "timestamp": "2026-10-21T07:39:00Z",
+                "value": 0.07743385
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "http_latency",
+        "data": []
+      },
+      {
+        "type": "http_request_count",
+        "data": []
+      }
+    ]
+  },
+  "afterFailureEvents": [],
+  "afterFailureEventsCheckedAt": "2026-10-21T07:38:46Z"
+}
