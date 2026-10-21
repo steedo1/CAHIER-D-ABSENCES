@@ -1,0 +1,36 @@
+name: Render public origin regression
+on:
+  push:
+    branches: [fix/render-public-origin-20261021]
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - src/lib/request-origin.ts
+      - src/app/api/**/route.ts
+      - test/render-public-origin*.test.mjs
+      - .github/workflows/render-public-origin-regression-20261021.yml
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:1
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-build
+      SUPABASE_URL: http://127.0.0.1:1
+      SUPABASE_SERVICE_ROLE_KEY: isolated-build
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test --test-concurrency=2 test/render-public-origin.test.mjs test/render-public-origin-routes.test.mjs test/bulletin-qr-preview.test.mjs test/bulletin-qr-fallback.test.mjs test/bulletin-qr-consumption.test.mjs test/school-bulletin-model-choice-api.test.mjs test/render-cron-secret-auth.test.mjs
+      - run: npm run test:multicycle
+      - run: npm run build

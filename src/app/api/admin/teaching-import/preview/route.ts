@@ -1,3 +1,4 @@
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -28,8 +29,7 @@ export async function POST(req: NextRequest) {
   const service = getSupabaseServiceClient();
   const access = await requireInstitutionRole(client, service, ["admin"]);
   if ("error" in access) return reply({ error: access.error }, access.error === "unauthorized" ? 401 : 403);
-  const origin = req.headers.get("origin");
-  if (origin && origin !== req.nextUrl.origin) return reply({ error: "invalid_origin" }, 403);
+  if (!isTrustedAppOrigin(req)) return reply({ error: "invalid_origin" }, 403);
   if (!req.headers.get("content-type")?.includes("application/json")) return reply({ error: "expected_json" }, 415);
   const raw = await req.text();
   if (Buffer.byteLength(raw, "utf8") > 1024 * 1024) return reply({ error: "import_too_large" }, 413);

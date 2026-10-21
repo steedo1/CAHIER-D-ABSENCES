@@ -1,3 +1,4 @@
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -30,8 +31,7 @@ export async function PATCH(req: NextRequest) {
   if ("error" in access) {
     return response({ ok: false, error: access.error }, access.error === "unauthorized" ? 401 : 403);
   }
-  const origin = req.headers.get("origin");
-  if (origin && origin !== req.nextUrl.origin) return response({ ok: false, error: "invalid_origin" }, 403);
+  if (!isTrustedAppOrigin(req)) return response({ ok: false, error: "invalid_origin" }, 403);
   if (!req.headers.get("content-type")?.includes("application/json")) {
     return response({ ok: false, error: "expected_json" }, 415);
   }

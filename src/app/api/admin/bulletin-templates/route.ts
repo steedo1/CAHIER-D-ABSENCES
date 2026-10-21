@@ -1,3 +1,4 @@
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -87,8 +88,7 @@ export async function GET() {
 export async function PUT(req: NextRequest) {
   const auth = await schoolAdmin();
   if ("error" in auth) return auth.error;
-  const origin = req.headers.get("origin");
-  if (origin && origin !== req.nextUrl.origin) return json({ error: "invalid_origin" }, 403);
+  if (!isTrustedAppOrigin(req)) return json({ error: "invalid_origin" }, 403);
   if (!req.headers.get("content-type")?.includes("application/json")) return json({ error: "expected_json" }, 415);
 
   const body = await req.json().catch(() => null);
@@ -161,8 +161,7 @@ export async function PUT(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const auth = await schoolAdmin();
   if ("error" in auth) return auth.error;
-  const origin = req.headers.get("origin");
-  if (origin && origin !== req.nextUrl.origin) return json({ error: "invalid_origin" }, 403);
+  if (!isTrustedAppOrigin(req)) return json({ error: "invalid_origin" }, 403);
   if (!req.headers.get("content-type")?.includes("application/json")) {
     return json({ error: "expected_json" }, 415);
   }
