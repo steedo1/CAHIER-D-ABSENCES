@@ -47,6 +47,8 @@ test("matrix keeps data-source warning and does not certify six zeros from empty
   const fetcher = readFileSync(new URL("../src/lib/local-relay.ts", import.meta.url), "utf8");
   assert.match(matrix, /cloudTimeoutMs: ADMIN_ATTENDANCE_MATRIX_CLOUD_TIMEOUT_MS/);
   assert.match(matrix, /shouldStartAttendanceMatrixRefresh\(/);
+  assert.match(matrix, /onClick=\{\(\) => void loadRows\(new Date\(\), true\)\}/);
+  assert.match(matrix, /activeRequestKeyRef\.current = null/);
   assert.match(matrix, /activeRequestKeyRef\.current = requestKey/);
   assert.match(matrix, /if \(controller\.signal\.aborted\) return/);
   assert.match(matrix, /adminAttendanceMatrixPollDelay\(/);
