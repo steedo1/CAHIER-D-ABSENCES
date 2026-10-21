@@ -541,7 +541,9 @@ async function run(req: Request) {
       "id,institution_id,parent_id,student_id,profile_id,channels,payload,title,body,status,attempts,created_at,meta"
     )
     .eq("status", WAIT_STATUS)
-    .contains("channels", ["sms"])
+    // channels est JSONB : un tableau JS devient un littéral PostgreSQL
+    // {sms} dans le SDK, qui n'est pas du JSON. Fournir le JSON explicitement.
+    .contains("channels", JSON.stringify(["sms"]))
     .order("created_at", { ascending: true })
     .limit(400);
 
