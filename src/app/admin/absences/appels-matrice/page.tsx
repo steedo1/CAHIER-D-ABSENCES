@@ -486,6 +486,8 @@ export default function AppelsMatricePage() {
   const totalJustified = classCells.filter(
     (c) => c.status === "justified_absence"
   ).length;
+  const totalUnconfirmed = classCells.filter((c) => c.status === "unconfirmed").length;
+  const showCounter = (count: number) => monitorUnverified ? "—" : count;
 
   const hasAnySlot = slots.length > 0;
   const savedAtLabel = useMemo(() => {
@@ -620,7 +622,7 @@ export default function AppelsMatricePage() {
               </span>
               <CircleDashed className="h-5 w-5 text-slate-500" />
             </div>
-            <div className="text-2xl font-semibold text-slate-900">{totalNotStarted}</div>
+            <div className="text-2xl font-semibold text-slate-900">{showCounter(totalNotStarted)}</div>
             <p className="text-[11px] text-slate-700/80">
               Créneaux qui n’ont pas encore commencé.
             </p>
@@ -634,7 +636,7 @@ export default function AppelsMatricePage() {
               <CheckCircle2 className="h-5 w-5 text-emerald-600" />
             </div>
             <div className="text-2xl font-semibold text-emerald-900">
-              {totalPresent}
+              {showCounter(totalPresent)}
             </div>
             <p className="text-[11px] text-emerald-900/80">
               Appels commencés dans le délai prévu.
@@ -648,7 +650,7 @@ export default function AppelsMatricePage() {
               </span>
               <AlertTriangle className="h-5 w-5 text-slate-500" />
             </div>
-            <div className="text-2xl font-semibold text-slate-900">{totalMissing}</div>
+            <div className="text-2xl font-semibold text-slate-900">{showCounter(totalMissing)}</div>
             <p className="text-[11px] text-slate-700/80">
               Démarrage non confirmé. Vérifier la synchronisation.
             </p>
@@ -661,7 +663,7 @@ export default function AppelsMatricePage() {
               </span>
               <Clock className="h-5 w-5 text-amber-500" />
             </div>
-            <div className="text-2xl font-semibold text-amber-900">{totalLate}</div>
+            <div className="text-2xl font-semibold text-amber-900">{showCounter(totalLate)}</div>
             <p className="text-[11px] text-amber-900/80">
               Appels commencés après le délai prévu.
             </p>
@@ -674,7 +676,7 @@ export default function AppelsMatricePage() {
               </span>
               <Hourglass className="h-5 w-5 text-yellow-600" />
             </div>
-            <div className="text-2xl font-semibold text-yellow-900">{totalPending}</div>
+            <div className="text-2xl font-semibold text-yellow-900">{showCounter(totalPending)}</div>
             <p className="text-[11px] text-yellow-900/80">
               Justifications reçues à examiner.
             </p>
@@ -687,7 +689,7 @@ export default function AppelsMatricePage() {
               </span>
               <ShieldCheck className="h-5 w-5 text-blue-600" />
             </div>
-            <div className="text-2xl font-semibold text-blue-900">{totalJustified}</div>
+            <div className="text-2xl font-semibold text-blue-900">{showCounter(totalJustified)}</div>
             <p className="text-[11px] text-blue-900/80">
               Absences validées par l’administration.
             </p>
@@ -730,12 +732,25 @@ export default function AppelsMatricePage() {
                   <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-blue-600" />
                   Justifiée
                 </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-3 w-3 rounded-sm bg-slate-300" />
+                  À vérifier
+                </span>
               </div>
 
             </div>
           </div>
 
-          {dataSource === "cache" && filteredRows.length > 0 && (
+          {monitorUnverified && (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+              {totalUnconfirmed > 0
+                ? `${totalUnconfirmed} classe(s) avec cours prévu(s) — état des appels NON VÉRIFIÉ. Les couleurs et les compteurs ne peuvent pas être certifiés.`
+                : "Surveillance des appels non vérifiée. Vérifiez la connexion ou actualisez."}
+              {" "}Aucun appel ni aucune absence ne sont déduits de cette liste d'emploi du temps.
+            </div>
+          )}
+
+          {!monitorUnverified && dataSource === "cache" && filteredRows.length > 0 && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
               {relayEnabled
                 ? "Cloud et relais indisponibles : la dernière vue locale valide reste affichée"
@@ -765,8 +780,10 @@ export default function AppelsMatricePage() {
               {rowsState.error}
             </div>
           ) : !hasAnySlot ? (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              Aucun créneau horaire n&apos;a été trouvé pour aujourd&apos;hui.
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              {scheduleVerifiedEmpty
+                ? "Aucun cours programmé dans le contexte choisi pour aujourd’hui, d’après l’emploi du temps."
+                : "Aucun créneau ne peut être confirmé. Vérifiez l’actualisation des données de surveillance."}
             </div>
           ) : !activeSlot ? (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
@@ -785,7 +802,7 @@ export default function AppelsMatricePage() {
                   key={cell.class_id || cell.class_label}
                   className={[
                     "relative flex flex-col rounded-2xl border px-3 py-3 text-xs",
-                    cell.status === "not_started" || cell.status === "missing" ? "" : "mc-blink",
+                    cell.status === "not_started" || cell.status === "missing" || cell.status === "unconfirmed" ? "" : "mc-blink",
                     cellColorClasses(cell.status),
                   ].join(" ")}
                 >
@@ -794,7 +811,9 @@ export default function AppelsMatricePage() {
                       {cell.class_label}
                     </span>
                     <span className="shrink-0 whitespace-nowrap rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-semibold uppercase">
-                      {cell.status === "not_started"
+                      {cell.status === "unconfirmed"
+                        ? "À VÉRIFIER"
+                        : cell.status === "not_started"
                         ? "À VENIR"
                         : cell.status === "missing"
                         ? "NON REÇU"
