@@ -1388,13 +1388,32 @@ export async function DELETE(req: NextRequest) {
         if (!(evalRow as any).subject_id || !parsePrimaryEventTitle((evalRow as any).title)) {
           return NextResponse.json({ ok: false, error: "primary_evaluation_not_authorized" }, { status: 403 });
         }
+        // grade_evaluations stores the canonical subjects.id. School staff
+        // assignments often store institution_subjects.id instead. Accept only
+        // institution-scoped aliases for that exact subject; never broaden the
+        // class-device permission to every discipline in the class.
+        const { data: subjectAliases, error: aliasError } = await srv
+          .from("institution_subjects").select("id")
+          .eq("institution_id", profile.institution_id)
+          .eq("subject_id", (evalRow as any).subject_id)
+          .limit(200);
+        if (aliasError) {
+          return NextResponse.json({ ok: false, error: "class_device_subject_lookup_failed" }, { status: 503 });
+        }
+        const allowedSubjectIds = Array.from(new Set([
+          String((evalRow as any).subject_id),
+          ...(subjectAliases || []).map((item: { id: string }) => String(item.id)),
+        ]));
         const { data: assigned, error: assignmentError } = await srv
           .from("class_teachers").select("id")
           .eq("institution_id", profile.institution_id)
           .eq("class_id", evalRow.class_id)
-          .eq("subject_id", (evalRow as any).subject_id)
+          .in("subject_id", allowedSubjectIds)
           .is("end_date", null).limit(1);
-        if (assignmentError || !assigned?.length) {
+        if (assignmentError) {
+          return NextResponse.json({ ok: false, error: "class_device_subject_lookup_failed" }, { status: 503 });
+        }
+        if (!assigned?.length) {
           return NextResponse.json({ ok: false, error: "class_device_subject_forbidden" }, { status: 403 });
         }
         // A previously published (even since unpublished) grade retains a

@@ -327,6 +327,38 @@ test("EPC class-device can remove an unused opened primary note, but cannot eras
 });
 
 
+test("EPC class-device deletion maps institution_subjects ids to canonical subjects ids safely", async () => {
+  const db = setup("CP1", true);
+  const classDevice = "dddddddd-dddd-4ddd-8ddd-cccccccccccc";
+  db.users.set(classDevice, { user: db.user(classDevice, "scoped-delete@example.invalid") });
+  db.tables.profiles.push({ id: classDevice, institution_id: db.legacyId });
+  db.tables.user_roles.push({ profile_id: classDevice, institution_id: db.legacyId, role: "class_device" });
+  db.tables.classes[0].class_device_auth_user_id = classDevice;
+  const route = createFixtureRouteLoader(db, classDevice)("src/app/api/grades/evaluations/route.ts");
+  const remove = id => route.DELETE(req("/api/grades/evaluations", { evaluation_id: id }, "DELETE"));
+
+  const opened = await create(db, "NIV1", "french");
+  const matchingAlias = db.tables.institution_subjects.find(row =>
+    row.institution_id === db.legacyId && row.subject_id === math);
+  assert.ok(matchingAlias);
+  assert.notEqual(matchingAlias.id, math, "teacher assignment uses institution subject id");
+  db.tables.class_teachers[0].subject_id = matchingAlias.id;
+  const deleted = await remove(opened.id);
+  assert.equal(deleted.status, 200, JSON.stringify(await deleted.clone().json()));
+  assert.equal(db.tables.grade_evaluations.length, 0);
+
+  // Another discipline's assignment must never authorize deletion.
+  db.tables.class_teachers[0].subject_id = math;
+  const foreignSubject = db.tables.subjects.find(row => row.id !== math);
+  assert.ok(foreignSubject);
+  const wrong = await create(db, "NIV2", "french");
+  db.tables.grade_evaluations.find(row => row.id === wrong.id).subject_id = foreignSubject.id;
+  const blocked = await remove(wrong.id);
+  assert.equal(blocked.status, 403);
+  assert.equal((await blocked.json()).error, "class_device_subject_forbidden");
+  assert.equal(db.tables.grade_evaluations.length, 1);
+});
+
 test("EPC primary teacher corrects a published note without unpublishing or deleting history", async () => {
   const db = setup("CP1", true);
   const evaluation = await publish(db, "DEC", "french", 0.7);
