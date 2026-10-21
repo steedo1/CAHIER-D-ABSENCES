@@ -2,7 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": {
-      "audit/render-infra-20261021": false,
       "fix/csca-subjects-readiness-20261021": false,
       "optimisation-ram-render-20261021-b2cad912": false,
       "fix/correspondant-primary-bulletins-20261019": false,
@@ -11,7 +10,8 @@
       "fix/directions-listes-titre-20261018": false,
       "fix/bulletins-primaire-listes-20261018": false,
       "fix/franco-arabe-sous-matieres-20261018": false,
-      "fix/epc-primaire-baremes-par-matiere-20261018": false
+      "fix/epc-primaire-baremes-par-matiere-20261018": false,
+      "audit/render-infra-20261021": false
     }
   }
 }

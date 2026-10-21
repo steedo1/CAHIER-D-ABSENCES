@@ -84,12 +84,12 @@ Files de notifications : 100 pending au relevé ; 42 706 error historiques dont 
 ## Correctifs préparés et validation
 
 1. **PR #197**, branche `fix/render-cron-auth-20261021`, nouveau commit `5de22546a23518130daa1c3743a02b5f6218c3c9` : couvre les cinq routes actives vulnérables et les deux routes WhatsApp, avec contrôle du dispatcher SMS déjà protégé. Toujours en brouillon, non fusionnée, non déployée.
-2. **Branche audit/render-infra-20261021** : /api/health sans accès base, secret ou notification ; release PWA raccordée à Render au build ; configuration Next du webhook alias Orange rendue explicite ; outil local d'audit des variables sans valeurs. Blueprint seulement proposé, non appliqué sur le service manuel.
-3. **Planificateurs** : helper et tests préparés séparément pour main ; aucun changement des tâches actives avant validation coordonnée avec la configuration Render.
+2. **PR #199**, branche `audit/render-infra-20261021` : /api/health sans accès base métier, secret ou notification ; release PWA raccordée à Render au build ; configuration Next du webhook alias Orange rendue explicite ; outil local d'audit des variables sans valeurs. Blueprint seulement proposé, non appliqué sur le service manuel.
+3. **PR #200**, branche `fix/render-scheduled-jobs-20261021`, commit `85285f36f8251d500e147d5a62c2c726c985cd07` : helper, tests et trois workflows préparés séparément pour **main** ; aucun changement des tâches actives avant validation coordonnée avec la configuration Render. Les trois fichiers YAML sont vérifiés et le lancement manuel reste sans réseau par défaut.
 
 Résultats détaillés dans `tests.json` : 327/327 tests multicycle de la version actuelle ; 91/91 tests parents ; 112/112 appels/reprise/QR ; 8/8 gardes de sécurité ; 4/4 tests release/health/préflight ; 4/4 tests du client cron unique. Certaines suites ont des scénarios qui se recoupent : ne pas vendre leur somme comme autant de fonctions distinctes vérifiées.
 
-Build de sécurité et typecheck avec heap 4 Gio réussis. Build infra réussi, /api/health inclus ; avertissement historique Edge/Supabase restant. Le défaut d'analyse de dynamic/runtime sur l'alias webhook Orange est corrigé dans ce lot. Le build ignore ESLint par configuration existante : compilation réussie ne signifie pas lint passé.
+Build de sécurité et typecheck avec heap 4 Gio réussis. Build infra réussi, /api/health inclus ; avertissement historique Edge/Supabase restant. Le défaut d'analyse de dynamic/runtime sur l'alias webhook Orange est corrigé dans ce lot. Le build ignore ESLint par configuration existante ; un **lint ciblé séparé** des fichiers modifiés du lot infra et du client cron a réussi sans erreur ni avertissement. La suite ciblée infra/offline passe 51/51, dont 43 scénarios offline existants et huit tests infra/cron.
 
 Non effectués : recette des comptes réels, SMS/push vers destinataires autorisés, impression et contrôle visuel des PDF réels, paiement réel, test de mise en veille/reprise/changement d'appareil en classe, pointe du lendemain 7 h 30, comparaison de consommation après déploiement. Aucun compte de test créé dans une école réelle.
 
