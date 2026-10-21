@@ -1,0 +1,41 @@
+name: Render emergency corrections gate
+
+on:
+  push:
+    branches:
+      - fix/epc-primary-event-labels-20261021
+      - fix/render-bulletin-read-timeout-20261021
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-emergency-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: EPC / bulletin regression and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-build-anon
+      SUPABASE_URL: http://127.0.0.1:54321
+      SUPABASE_SERVICE_ROLE_KEY: isolated-build-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:primary-events
+        if: contains(github.ref, 'epc-primary-event-labels')
+      - run: node --import tsx --test test/render-bulletin-read-timeout.test.mjs
+        if: contains(github.ref, 'render-bulletin-read-timeout')
+      - run: npm run build

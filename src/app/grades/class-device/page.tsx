@@ -17,7 +17,7 @@ import {
   FileText,
 } from "lucide-react";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
-import type { PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
+import { primaryEventDisplayLabel, type PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
   gradesClassesKey,
@@ -117,6 +117,7 @@ type Evaluation = {
   subject_component_id?: string | null;
   grading_period_id?: string | null;
   eval_date: string; // yyyy-mm-dd
+  title?: string | null;
   eval_kind: EvalKind;
   scale: number;
   coeff: number;
@@ -1368,16 +1369,24 @@ export default function ClassDeviceNotesPage() {
 
       const created = j?.item as Evaluation;
       logInfo("addEvaluation -> évaluation créée", created);
+      // The primary event endpoint returns reused:true when this dated
+      // evaluation already exists. Never render a duplicate column or erase
+      // scores already loaded for it.
       setEvaluations((prev) => {
+        if (prev.some((item) => item.id === created.id)) return prev;
         const next = [...prev, created];
         next.sort((a, b) => a.eval_date.localeCompare(b.eval_date));
         return next;
       });
-      setGrades((prev) => ({ ...prev, [created.id]: {} }));
+      if (j?.reused !== true) {
+        setGrades((prev) => ({ ...prev, [created.id]: {} }));
+      }
 
-      // Sur mobile, on se place tout de suite sur cette nouvelle note
+      // Sur mobile, ouvrir la colonne existante ou nouvellement créée.
       setActiveEvalId(created.id);
-      setMsg("NOTE ajoutée ✅ (colonne active sur mobile)");
+      setMsg(j?.reused === true
+        ? "Évaluation déjà créée : colonne existante sélectionnée ✅"
+        : "NOTE ajoutée ✅ (colonne active sur mobile)");
     } catch (e: any) {
       logError("addEvaluation -> exception", e);
       setMsg(e?.message || "Échec d’ajout de la note.");
@@ -1914,6 +1923,13 @@ export default function ClassDeviceNotesPage() {
     };
     const map: Record<string, string> = {};
     for (const ev of evaluations) {
+      const eventLabel = isPrimaryProgram && primaryCatalogEnabled
+        ? primaryEventDisplayLabel(ev.title, primaryEvents)
+        : null;
+      if (eventLabel) {
+        map[ev.id] = eventLabel;
+        continue;
+      }
       const kind = ev.eval_kind as EvalKind;
       counters[kind] = (counters[kind] ?? 0) + 1;
       const idx = counters[kind];
@@ -1926,7 +1942,7 @@ export default function ClassDeviceNotesPage() {
     }
     logInfo("labelByEvalId -> map labels", map);
     return map;
-  }, [evaluations]);
+  }, [evaluations, isPrimaryProgram, primaryCatalogEnabled, primaryEvents]);
 
   async function exportToCsv() {
     if (!selected) {
