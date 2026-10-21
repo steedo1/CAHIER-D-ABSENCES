@@ -146,6 +146,16 @@ export function parsePrimaryEventTitle(title: unknown): { kind: PrimaryEventKind
   return { kind, code: match[2], ...(match[3] ? { track: match[3] as PrimaryTrack } : {}) };
 }
 
+/** Resolve a human-readable event title for the mobile grade column.
+ * Never treat a dated primary level evaluation as an ordinary homework.
+ */
+export function primaryEventDisplayLabel(title: unknown, events: readonly PrimaryEvent[]): string | null {
+  const marker = parsePrimaryEventTitle(title);
+  if (!marker || marker.kind === "homework") return null;
+  const event = events.find(item => item.code === marker.code && item.kind === marker.kind);
+  return event?.label || null;
+}
+
 /** Annual passage formula, all inputs must be on the same scale. */
 export function primaryPassageAverage(
   ordinaryCompositionAverages: readonly number[],

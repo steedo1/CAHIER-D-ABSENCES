@@ -6,7 +6,7 @@ import {
 import assert from "node:assert/strict";
 import {
   readPrimaryEventsCatalog, validatePrimaryEvents, primaryEventsForClass,
-  primaryPassageAverage, primaryEventTitle, parsePrimaryEventTitle,
+  primaryPassageAverage, primaryEventTitle, parsePrimaryEventTitle, primaryEventDisplayLabel,
   PRIMARY_EVENTS_SETTINGS_KEY,
 } from "../src/lib/grades/primary-evaluation-events.ts";
 
@@ -93,4 +93,18 @@ test("the existing cycle selector isolates primary events from other period edit
     assert.equal(isVisibleGradingPeriodCycle(cycle, "preschool", true), cycle === "preschool");
     assert.equal(isVisibleGradingPeriodCycle(cycle, "all", true), cycle !== "primary");
   }
+});
+
+test("mobile primary note columns display the real event name, never DEVOIR1 for a level evaluation", () => {
+  const dated = { ...internal, code: "E_24D93FC92F3A4CB4", date: "2026-10-22" };
+  assert.equal(
+    primaryEventDisplayLabel(primaryEventTitle(dated, "french"), [dated]),
+    "Évaluation de niveau",
+  );
+  assert.equal(
+    primaryEventDisplayLabel(primaryEventTitle(official, "french"), [dated, official]),
+    "Composition de décembre",
+  );
+  assert.equal(primaryEventDisplayLabel("MCPE:D:DEVOIR:french", [dated]), null);
+  assert.equal(primaryEventDisplayLabel("MCPE:I:UNKNOWN:french", [dated]), null);
 });
