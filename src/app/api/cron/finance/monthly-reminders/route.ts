@@ -84,7 +84,7 @@ function okAuth(req: NextRequest) {
   const auth = (req.headers.get("authorization") || "").trim();
   const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
   const fromVercelCron = req.headers.has("x-vercel-cron");
-  return fromVercelCron || (!!secret && (xCron === secret || bearer === secret));
+  return !!secret && (xCron === secret || bearer === secret);
 }
 
 function isInternatLabel(label: string) {
