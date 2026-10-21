@@ -1,3 +1,4 @@
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 //src/app/api/admin/settings/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -32,8 +33,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const auth = await context();
   if ("error" in auth) return auth.error;
-  const origin = req.headers.get("origin");
-  if (origin && origin !== req.nextUrl.origin) return reply({ error: "invalid_origin" }, 403);
+  if (!isTrustedAppOrigin(req)) return reply({ error: "invalid_origin" }, 403);
   if (!req.headers.get("content-type")?.includes("application/json")) return reply({ error: "expected_json" }, 415);
   const body = await req.json().catch(() => null);
   const next = mergeGeneralSchoolSettings(auth.previous, body?.settings_json);

@@ -1,3 +1,4 @@
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 // src/app/api/super/institutions/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -17,8 +18,7 @@ export async function PATCH(
 ) {
   const access = await requireSuperAdminAccess();
   if ("error" in access) return access.error;
-  const origin = req.headers.get("origin");
-  if (origin && origin !== req.nextUrl.origin) {
+  if (!isTrustedAppOrigin(req)) {
     return NextResponse.json({ error: "invalid_origin" }, { status: 403 });
   }
   const { id } = await context.params;

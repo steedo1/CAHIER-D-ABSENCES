@@ -26,6 +26,7 @@ function load(name, dependencies = {}) {
   return compiledModule.exports;
 }
 const official = load("official-documents", { "@/lib/supabase-server": {} });
+const { isTrustedAppOrigin } = load("request-origin");
 const qr = load("bulletin-qr");
 const store = load("bulletin-qr-store", { "@/lib/official-documents": official });
 const { prepareBulletinPreviewShortCodes } = load("bulletin-qr-preview", {
@@ -214,11 +215,11 @@ function postHandler(context) {
   const compiled = ts.transpileModule(post, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
   const counts = { auth: 0, prepare: 0, print: 0 };
   const invoke = new Function("exports", "NextResponse", "getAdminAndInstitution", "getSupabaseServerClient",
-    "prepareBulletinPreviewShortCodes", "getSupabaseServiceClient", "pickPublicOrigin", "attachQrPng", "loadBulletin",
+    "prepareBulletinPreviewShortCodes", "getSupabaseServiceClient", "pickPublicOrigin", "attachQrPng", "loadBulletin", "isTrustedAppOrigin",
     compiled + "\nreturn POST;")({}, { json: (body, options) => ({ body, status: options?.status ?? 200 }) },
     async () => { counts.auth++; return context; }, async () => ({}),
     async () => { counts.prepare++; return []; }, () => ({}), (value) => value, async (items) => items,
-    async (_request, create) => { assert.equal(create, true); counts.print++; return "print"; });
+    async (_request, create) => { assert.equal(create, true); counts.print++; return "print"; }, isTrustedAppOrigin);
   return { invoke, counts };
 }
 function request(headers = {}, body = { action: "prepare_preview_qr", tokens: ["signed"] }) {

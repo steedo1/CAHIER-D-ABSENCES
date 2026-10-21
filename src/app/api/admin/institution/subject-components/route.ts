@@ -1,3 +1,4 @@
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 import { scopedSubjectComponents } from "@/lib/server/scoped-subject-components-api";
 import { isProgramComponentLevel } from "@/lib/school-subject-components";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
@@ -332,8 +333,7 @@ export async function PUT(req: NextRequest) {
     return error(g.error, status);
   }
 
-  const origin = req.headers.get("origin");
-  if (origin && origin !== req.nextUrl.origin) return error("invalid_origin", 403);
+  if (!isTrustedAppOrigin(req)) return error("invalid_origin", 403);
   if (!req.headers.get("content-type")?.includes("application/json")) return error("expected_json", 415);
   const rawBody = await req.json().catch(() => ({}));
   const scoped = await scopedSubjectComponents(req, srv, g.instId, rawBody);

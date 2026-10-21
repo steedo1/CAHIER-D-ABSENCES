@@ -1,3 +1,4 @@
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
 // src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -4299,8 +4300,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   // Émission réservée à une action explicite sur le même site. L'authentification
   // et le contrôle d'établissement restent dans loadBulletin.
-  const origin = req.headers.get("origin");
-  if (origin && origin !== req.nextUrl.origin) {
+  if (!isTrustedAppOrigin(req)) {
     return NextResponse.json({ ok: false, error: "FORBIDDEN_ORIGIN" }, { status: 403 });
   }
   if (req.headers.get("content-type")?.includes("application/json")) {

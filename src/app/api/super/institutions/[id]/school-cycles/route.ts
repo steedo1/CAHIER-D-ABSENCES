@@ -1,3 +1,4 @@
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 import { NextRequest, NextResponse } from "next/server";
 import { requireSuperAdminAccess } from "@/lib/super-admin-access";
 import { mergeSchoolCycleProvisioning, readSchoolCycleProvisioning } from "@/lib/school-cycle-provisioning";
@@ -175,8 +176,7 @@ export async function PUT(req: NextRequest, context: Params) {
   if ("error" in access) return access.error;
 
   // Same-origin browser requests only (defense against cross-site mutations).
-  const origin = req.headers.get("origin");
-  if (origin && origin !== req.nextUrl.origin) {
+  if (!isTrustedAppOrigin(req)) {
     return reply({ error: "invalid_origin" }, 403);
   }
   if (!req.headers.get("content-type")?.includes("application/json")) {
