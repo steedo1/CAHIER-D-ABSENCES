@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-10-20-attendance-receipt-recovery-v1";
+const VERSION = "2026-10-21-class-subjects-timeout-v1";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -760,7 +760,11 @@ async function classDeviceSubjectsResponse(request, url) {
 
   let networkResponse = null;
   try {
-    networkResponse = await fetchWithTimeout(request, 2500);
+    // Match the page's bounded read budget. Cutting healthy reads at 2.5 s
+    // returned a synthetic 503 before the caller's own deadline on Render.
+    const timeoutMs = url.searchParams.get("offline_preparation") === "v1"
+      ? 20_000 : 8_000;
+    networkResponse = await fetchWithTimeout(request, timeoutMs);
     // Les erreurs métier explicites restent l'autorité du Cloud. Seules les
     // pannes temporaires (5xx) basculent vers la préparation PWA du créneau.
     if (networkResponse.status < 500) return networkResponse;
