@@ -529,7 +529,7 @@ export async function fetchAdminAttendanceMonitor<T extends Record<string, any>>
   to: string,
   signal?: AbortSignal,
   educationScope?: EducationScopeValue,
-  options: { includeExpectedStatuses?: boolean } = {},
+  options: { includeExpectedStatuses?: boolean; cloudTimeoutMs?: number } = {},
 ): Promise<LocalReadResult<{ rows: T[] }>> {
   const includeExpectedStatuses = options.includeExpectedStatuses === true;
   const query = adminAttendanceMonitorQuery(
@@ -593,7 +593,9 @@ export async function fetchAdminAttendanceMonitor<T extends Record<string, any>>
     const cloud = await cloudJson<MonitorPayload>(
       `/api/admin/attendance/monitor?${queryString}`,
       signal,
-      ADMIN_ATTENDANCE_CLOUD_TIMEOUT_MS,
+      options.cloudTimeoutMs === undefined
+        ? ADMIN_ATTENDANCE_CLOUD_TIMEOUT_MS
+        : Math.max(ADMIN_ATTENDANCE_CLOUD_TIMEOUT_MS, Math.min(12_000, options.cloudTimeoutMs)),
     );
     const cloudInstitutionId = String(
       cloud.institution_id || institutionId || "",
