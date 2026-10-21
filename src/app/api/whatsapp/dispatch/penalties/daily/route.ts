@@ -13,8 +13,7 @@ const waDisabled = () => {
 function reqOk(req: NextRequest) {
   const sec = (process.env.CRON_WHATSAPP_SECRET || "").trim();
   const hdr = (req.headers.get("x-cron-secret") || "").trim();
-  const fromVercelCron = req.headers.has("x-vercel-cron");
-  return fromVercelCron || (!!sec && hdr === sec);
+  return !!sec && hdr === sec;
 }
 
 async function getTwilioClient() {
