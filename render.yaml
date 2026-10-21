@@ -1,14 +1,18 @@
-# Migration candidate built from ac615564; do not apply this blueprint to production.
-# This file documents a test service. The existing manually configured Render service
-# must be updated separately; blueprint creation could create another service.
+# RAM candidate based on b2cad912; do not apply this blueprint automatically.
+# mon-cahier-test now serves www.mon-cahier.com and is PRODUCTION.
+# The service is configured manually. Only apply the proposed commands after
+# explicit owner approval; creating a blueprint could create another service.
 services:
   - type: web
     name: mon-cahier-test
     runtime: node
     plan: free
     autoDeployTrigger: off
-    buildCommand: npm ci && npm run build
-    startCommand: npm run start
+    # Compilation needs a larger heap, scoped to the build command only.
+    buildCommand: npm ci && NODE_OPTIONS=--max-old-space-size=4096 npm run build
+    # Explicit runtime flag overrides any inherited NODE_OPTIONS=...4096.
+    # This is a tested candidate, not a change to the active service.
+    startCommand: node --max-old-space-size=288 node_modules/next/dist/bin/next start --hostname 0.0.0.0
     healthCheckPath: /login
     envVars:
       - key: NODE_VERSION
