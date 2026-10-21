@@ -38,8 +38,41 @@ function loginRedirect(url: URL, book?: Book) {
   return withNoStore(NextResponse.redirect(loginUrl));
 }
 
+// Render can pass an internal URL (http://localhost:10000) through its proxy.
+// Build browser redirects from a trusted public origin, never the internal one.
+function publicRequestUrl(req: Request): URL {
+  const incoming = new URL(req.url);
+  const host = (req.headers.get("x-forwarded-host") || req.headers.get("host") || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  const renderHost = process.env.RENDER_EXTERNAL_HOSTNAME?.trim().toLowerCase();
+
+  if (
+    host === "www.mon-cahier.com" ||
+    host === "mon-cahier.com" ||
+    (renderHost && host === renderHost)
+  ) {
+    return new URL(incoming.pathname + incoming.search, `https://${host}`);
+  }
+
+  const renderUrl = process.env.RENDER_EXTERNAL_URL;
+  if (renderUrl) {
+    try {
+      const external = new URL(renderUrl);
+      if (external.protocol === "https:") {
+        return new URL(incoming.pathname + incoming.search, external);
+      }
+    } catch {
+      // Outside Render: keep Next.js's incoming URL.
+    }
+  }
+
+  return incoming;
+}
+
 export async function GET(req: Request) {
-  const url = new URL(req.url);
+  const url = publicRequestUrl(req);
   const jar = await cookies();
 
   const rawBook = url.searchParams.get("book");
