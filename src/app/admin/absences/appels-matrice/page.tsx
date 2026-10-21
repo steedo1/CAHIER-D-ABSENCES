@@ -22,6 +22,7 @@ import {
 } from "@/lib/admin-attendance-monitor";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import type { EducationType } from "@/lib/education-organization";
+import { buildEducationScopeSearchParams } from "@/lib/education-scope";
 import {
   classMatchesEducationScope,
   DEFAULT_EDUCATION_SCOPE,
@@ -37,7 +38,8 @@ type MonitorStatus =
   | "late"
   | "ok"
   | "pending_absence"
-  | "justified_absence";
+  | "justified_absence"
+  | "unconfirmed";
 
 type MonitorRow = {
   id: string;
@@ -147,6 +149,7 @@ function statusHint(
   reason?: string | null,
   comment?: string | null
 ): string {
+  if (s === "unconfirmed") return "Cours prévu. État de l’appel non vérifiable : ne pas conclure à une absence.";
   if (s === "not_started") {
     return "Ce créneau n’a pas encore commencé.";
   }
@@ -173,6 +176,7 @@ function statusHint(
 }
 
 function cellColorClasses(s: MonitorStatus): string {
+  if (s === "unconfirmed") return "bg-slate-200 text-slate-800 border-slate-300";
   if (s === "not_started") {
     return "bg-slate-500 text-white border-slate-300 shadow-lg shadow-slate-300/40";
   }
@@ -207,6 +211,8 @@ export default function AppelsMatricePage() {
     EducationScopedClass[]
   >([]);
   const [pollCycle, setPollCycle] = useState(0);
+  const [monitorUnverified, setMonitorUnverified] = useState(false);
+  const [scheduleVerifiedEmpty, setScheduleVerifiedEmpty] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -242,6 +248,38 @@ export default function AppelsMatricePage() {
     const requestedDate = toLocalDateInputValue(requestedAt);
 
     dispatchRows({ type: "begin" });
+    setScheduleVerifiedEmpty(false);
+
+    const loadTimetablePreview = async (cloud?: { data: { rows: MonitorRow[] }; source: LocalDataSource; saved_at: string }) => {
+      const params = buildEducationScopeSearchParams(educationScope);
+      params.set("date", requestedDate);
+      try {
+        const response = await fetch(`/api/admin/attendance/schedule-preview?${params}`, {
+          cache: "no-store", credentials: "include", signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        if (!Array.isArray(payload?.rows)) throw new Error("schedule_preview_incomplete");
+        if (controller.signal.aborted) return;
+        setMonitorUnverified(true);
+        setScheduleVerifiedEmpty(payload.rows.length === 0);
+        dispatchRows({
+          type: "success", data: payload.rows, source: cloud?.source || "cache",
+          savedAt: new Date().toISOString(),
+        });
+      } catch {
+        if (controller.signal.aborted) return;
+        setMonitorUnverified(true);
+        // Cached receipts are historical evidence, never proof of a current call.
+        if (cloud?.data?.rows?.length) {
+          dispatchRows({ type: "success", source: "cache", savedAt: cloud.saved_at,
+            data: cloud.data.rows.map((r) => ({ ...r, status: "unconfirmed" as const })) });
+        } else {
+          dispatchRows({ type: "failure",
+            error: "Surveillance indisponible et emploi du temps non chargé. Aucune absence ne peut être conclue. Réessayez." });
+        }
+      }
+    };
 
     try {
       const result = await fetchAdminAttendanceMonitor<MonitorRow>(
@@ -251,21 +289,21 @@ export default function AppelsMatricePage() {
         educationScope,
         { includeExpectedStatuses: true },
       );
-      dispatchRows({
-        type: "success",
-        source: result.source,
-        savedAt: result.saved_at,
-        data: result.data.rows || [],
-      });
+      if (result.source !== "cache" && (result.data.rows || []).length > 0) {
+        setMonitorUnverified(false);
+        dispatchRows({
+          type: "success", source: result.source, savedAt: result.saved_at,
+          data: result.data.rows || [],
+        });
+      } else {
+        await loadTimetablePreview(result);
+      }
     } catch (e: any) {
       if (e?.name === "AbortError") {
         return;
       }
 
-      dispatchRows({
-        type: "failure",
-        error: e?.message || "Erreur lors du chargement des données.",
-      });
+      await loadTimetablePreview();
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;
