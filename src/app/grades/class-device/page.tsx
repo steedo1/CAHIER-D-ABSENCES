@@ -17,7 +17,7 @@ import {
   FileText,
 } from "lucide-react";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
-import type { PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
+import { primaryEventDisplayLabel, type PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
   gradesClassesKey,
@@ -117,6 +117,7 @@ type Evaluation = {
   subject_component_id?: string | null;
   grading_period_id?: string | null;
   eval_date: string; // yyyy-mm-dd
+  title?: string | null;
   eval_kind: EvalKind;
   scale: number;
   coeff: number;
@@ -1914,6 +1915,13 @@ export default function ClassDeviceNotesPage() {
     };
     const map: Record<string, string> = {};
     for (const ev of evaluations) {
+      const eventLabel = isPrimaryProgram && primaryCatalogEnabled
+        ? primaryEventDisplayLabel(ev.title, primaryEvents)
+        : null;
+      if (eventLabel) {
+        map[ev.id] = eventLabel;
+        continue;
+      }
       const kind = ev.eval_kind as EvalKind;
       counters[kind] = (counters[kind] ?? 0) + 1;
       const idx = counters[kind];
@@ -1926,7 +1934,7 @@ export default function ClassDeviceNotesPage() {
     }
     logInfo("labelByEvalId -> map labels", map);
     return map;
-  }, [evaluations]);
+  }, [evaluations, isPrimaryProgram, primaryCatalogEnabled, primaryEvents]);
 
   async function exportToCsv() {
     if (!selected) {
