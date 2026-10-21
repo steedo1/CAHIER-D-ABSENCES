@@ -14,7 +14,8 @@
       "fix/bulletins-primaire-listes-20261018": false,
       "fix/franco-arabe-sous-matieres-20261018": false,
       "fix/epc-primaire-baremes-par-matiere-20261018": false,
-      "audit/render-infra-20261021": false
+      "audit/render-infra-20261021": false,
+      "fix/render-bulletin-read-timeout-20261021": false
     }
   }
 }
