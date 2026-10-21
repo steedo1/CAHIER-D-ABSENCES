@@ -17,6 +17,7 @@ import {
   FileText,
 } from "lucide-react";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
+import { cacheDeleteByPrefixes } from "@/lib/offline";
 import { primaryEventDisplayLabel, type PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
@@ -630,6 +631,8 @@ export default function ClassDeviceNotesPage() {
   /* -------- Publication + suppression panel -------- */
   const [showPublishPanel, setShowPublishPanel] = useState(false);
   const [publishBusy, setPublishBusy] = useState<Record<string, boolean>>({});
+  const [deleteTarget, setDeleteTarget] = useState<Evaluation | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   /* -------- Champs "nouvelle note" -------- */
   const [newDate, setNewDate] = useState<string>(() =>
@@ -1471,6 +1474,11 @@ export default function ClassDeviceNotesPage() {
     }
   }
 
+  function requestDeleteEvaluation(ev: Evaluation) {
+    setDeleteError(null);
+    setDeleteTarget(ev);
+  }
+
   async function deleteEvaluation(ev: Evaluation) {
     // Primary evaluation columns may be removed while still draft.
     // Published official grades remain protected by the existing workflow.
@@ -1493,16 +1501,8 @@ export default function ClassDeviceNotesPage() {
       return;
     }
 
-    if (
-      !window.confirm(
-        "Supprimer définitivement cette colonne de notes ?\nToutes les notes associées seront perdues."
-      )
-    ) {
-      logInfo("deleteEvaluation -> action annulée par l’utilisateur.");
-      return;
-    }
-
     setMsg(null);
+    setDeleteError(null);
     setPublishBusy((prev) => ({ ...prev, [ev.id]: true }));
     try {
       logInfo("deleteEvaluation -> DELETE /api/grades/evaluations", {
@@ -1510,6 +1510,8 @@ export default function ClassDeviceNotesPage() {
       });
       const r = await fetch("/api/grades/evaluations", {
         method: "DELETE",
+        credentials: "include",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ evaluation_id: ev.id }),
       });
@@ -1522,7 +1524,19 @@ export default function ClassDeviceNotesPage() {
         logError("deleteEvaluation -> JSON parse error", err);
       }
       if (!r.ok || !j?.ok)
-        throw new Error(j?.error || "Échec de suppression.");
+        throw new Error(j?.message || j?.error || `Suppression refusée (HTTP ${r.status}).`);
+
+      // Purge only this gradebook cache after a confirmed server deletion.
+      if (selected) {
+        const evaluationCacheKey = gradesEvaluationsKey(
+          "class-device", selected.class_id, selected.subject_id,
+          (isPrimaryProgram ? "primary:" + selected.teaching_track : selectedPeriodId) || null,
+        );
+        await cacheDeleteByPrefixes([
+          evaluationCacheKey,
+          gradesScoresKey("class-device", ev.id),
+        ]).catch((error) => logError("deleteEvaluation -> cache invalidation", error));
+      }
 
       setEvaluations((prev) => prev.filter((e) => e.id !== ev.id));
       setGrades((prev) => {
@@ -1535,11 +1549,15 @@ export default function ClassDeviceNotesPage() {
         delete next[ev.id];
         return next;
       });
-
-      setMsg("Colonne de note supprimée ✅");
+      setActiveEvalId((prev) => prev === ev.id ? null : prev);
+      setDeleteTarget(null);
+      setDeleteError(null);
+      setMsg("Colonne supprimée du serveur ✅");
     } catch (e: any) {
       logError("deleteEvaluation -> exception", e);
-      setMsg(e?.message || "Échec de suppression de la colonne de note.");
+      const errorText = e?.message || "Échec de suppression de la colonne de note.";
+      setDeleteError(errorText);
+      setMsg(errorText);
     } finally {
       setPublishBusy((prev) => {
         const copy = { ...prev };
@@ -3112,7 +3130,7 @@ export default function ClassDeviceNotesPage() {
             isEvaluationDeletable(currentActiveEval) && (
             <button
               type="button"
-              onClick={() => deleteEvaluation(currentActiveEval)}
+              onClick={() => requestDeleteEvaluation(currentActiveEval)}
               disabled={!isOnline || !!publishBusy[currentActiveEval.id]}
               aria-label="Supprimer la note ouverte"
               className="mb-3 inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
@@ -3167,7 +3185,7 @@ export default function ClassDeviceNotesPage() {
                             <div className="flex flex-col gap-1">
                               <button
                                 type="button"
-                                onClick={() => deleteEvaluation(ev)}
+                                onClick={() => requestDeleteEvaluation(ev)}
                                 disabled={
                                   !isOnline ||
                                   !!publishBusy[ev.id] ||
@@ -3822,7 +3840,7 @@ export default function ClassDeviceNotesPage() {
                               <GhostButton
                                 tone="red"
                                 type="button"
-                                onClick={() => deleteEvaluation(ev)}
+                                onClick={() => requestDeleteEvaluation(ev)}
                                 disabled={
                                   !isOnline ||
                                   !!publishBusy[ev.id] ||
@@ -3845,6 +3863,36 @@ export default function ClassDeviceNotesPage() {
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {/* Confirmation intégrée : évite les boîtes de dialogue PWA natives non fiables. */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/65 p-4" role="presentation">
+          <div role="dialog" aria-modal="true" aria-labelledby="confirm-grade-delete-title" className="w-full max-w-md space-y-4 rounded-2xl bg-white p-5 shadow-2xl">
+            <h2 id="confirm-grade-delete-title" className="text-lg font-bold text-slate-950">Confirmer la suppression</h2>
+            <p className="text-sm text-slate-700">
+              Supprimer la colonne <strong>{labelByEvalId[deleteTarget.id] || "Note"}</strong>
+              {" "}du {formatDateFr(deleteTarget.eval_date)} ?
+              Les notes éventuellement associées ne pourront pas être récupérées.
+            </p>
+            {deleteError && (
+              <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                Suppression non effectuée : {deleteError}
+              </p>
+            )}
+            <div className="flex flex-wrap justify-end gap-3">
+              <button type="button" className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800"
+                disabled={!!publishBusy[deleteTarget.id]}
+                onClick={() => { setDeleteTarget(null); setDeleteError(null); }}>
+                Annuler
+              </button>
+              <button type="button" className="rounded-xl bg-red-700 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+                disabled={!!publishBusy[deleteTarget.id]}
+                onClick={() => void deleteEvaluation(deleteTarget)}>
+                {publishBusy[deleteTarget.id] ? "Suppression…" : "Confirmer la suppression"}
+              </button>
+            </div>
           </div>
         </div>
       )}
