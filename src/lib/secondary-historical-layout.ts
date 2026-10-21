@@ -74,6 +74,14 @@ export function historicalSecondaryViews(payload: SpecializedBulletinPayload, tr
       is_assigned: null,
     };
     const item = { ...fallbackItem, ...program.historicalSecondary?.sourceItem } as typeof fallbackItem;
+    // Keep every historical result verbatim. Only append the configured,
+    // currently ungraded preview rows absent from the historical response.
+    const originalSubjects = program.historicalSecondary?.sourceItem?.per_subject;
+    if (Array.isArray(originalSubjects)) {
+      const existingIds = new Set(originalSubjects.map(subject => subject.subject_id));
+      item.per_subject = [...originalSubjects, ...fallbackItem.per_subject.filter(subject =>
+        !existingIds.has(subject.subject_id))];
+    }
     const subjectGroups = (program.historicalSecondary?.groups || []).map((group, index) => ({
       id: group.id, code: group.id, label: group.label, short_label: null,
       order_index: index + 1, is_active: true, annual_coeff: group.coefficient ?? 1,

@@ -18,6 +18,7 @@ import SpecializedBulletinPanel from "@/components/bulletins/SpecializedBulletin
 import { usePrimaryBulletinCalendar } from "@/hooks/usePrimaryBulletinCalendar";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
 import { historicalSecondaryViews } from "@/lib/secondary-historical-layout";
+import { bulletinPreparationMessages } from "@/lib/bulletin-preparation-messages";
 import type { BulletinTrack } from "@/components/bulletins/FrancoArabicBulletin";
 import { useAdminRole } from "@/app/admin/ui/admin-role-context";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
@@ -4090,12 +4091,15 @@ function BulletinsPageContent() {
               </Button>
             </div>
             {(!secondaryPrintReady || errorMsg) && (
-              <p role="alert" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 print:hidden">
-                {errorMsg || "Bulletins incomplets : vérifiez les notes publiées, les périodes et le barème de cet enseignement avant impression."}
-              </p>
+              <div role="alert" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 print:hidden">
+                <p>{errorMsg || "Bulletins en préparation : les matières et enseignants restent visibles. Les résultats incomplets ne peuvent pas être imprimés."}</p>
+                <ul className="mt-2 list-disc pl-5">{bulletinPreparationMessages(specializedBulletins.documents.flatMap(row =>
+                  row.problemsByProgram?.[selectedSecondaryTrack] || row.problems)).map(message => <li key={message}>{message}</li>)}</ul>
+              </div>
             )}
-            <div className="preview-pages flex flex-col gap-6 pb-6">
-              {secondaryPrintReady && secondaryViews.map((row, index) => (
+            <div className="specialized-print-denied">Impression indisponible : les bulletins de cet enseignement sont incomplets.</div>
+            <div className={`preview-pages flex flex-col gap-6 pb-6 ${!secondaryPrintReady || errorMsg ? "specialized-print-blocked" : ""}`}>
+              {secondaryViews.map((row, index) => (
                 <StudentBulletinCard key={selectedSecondaryTrack + ":" + row.studentId}
                   index={index} total={secondaryViews.length}
                   item={row.item} subjects={row.subjects}

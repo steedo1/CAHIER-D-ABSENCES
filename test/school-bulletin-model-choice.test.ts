@@ -91,7 +91,8 @@ test("model selection route saves only presentation and uses revision/role guard
   assert.match(real, /format: selectedBulletinFormat\(reports, cycle\)/);
   const panel = read("src/components/bulletins/SpecializedBulletinPanel.tsx");
   assert.ok(panel.includes('data.cycle === "secondary" ? "separate" : data.format'));
-  assert.doesNotMatch(ui, /DemoBulletinClient/);
+  assert.match(ui, /données de démonstration clairement identifiées/);
+  assert.doesNotMatch(real, /DemoBulletinClient/);
   assert.match(ui, /Correspondant Fichier → Bulletins/);
   assert.match(ui, /item === "primary" \|\| item === "preschool"/);
   assert.match(route, /secondary_uses_historical_bulletin/);
@@ -100,7 +101,7 @@ test("model selection route saves only presentation and uses revision/role guard
   assert.doesNotMatch(tab, /<SchoolBulletinSettings\s*\/>/);
 });
 
-test("the example remains internal but is no longer exposed as a real bulletin", () => {
+test("the model preview remains a labeled sample and real bulletin routes never use examples", () => {
   const preview = readFileSync("src/app/admin/bulletins/modeles/DemoBulletinClient.tsx", "utf8");
   assert.match(preview, /FrancoArabicBulletin/);
   assert.match(preview, /PreschoolBookletDemo/);

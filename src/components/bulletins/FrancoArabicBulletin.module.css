@@ -72,6 +72,8 @@
 }
 .documentTitle { text-transform: uppercase; font-size: 14.5pt; font-weight: 700; letter-spacing: .055em; }
 .documentPeriod { margin-top: 1mm; font-size: 8.5pt; letter-spacing: .08em; }
+.evaluationTitle { margin-top: 1mm; font-size: 12pt; font-weight: 700; }
+.documentYear { margin-top: .5mm; font-size: 8pt; }
 .body { padding: 4.2mm 10mm 7mm; }
 .sampleTag {
   font: 700 7pt/1.5 Arial, Helvetica, sans-serif;
@@ -251,6 +253,9 @@
 .primaryPage .panelHeading h2 { font-size: 12pt; }
 .primaryPage .marks th, .primaryPage .marks td { padding: 1.7mm 1.5mm; }
 .primaryPage .marks { font-size: 8.4pt; }
+.primaryPage .marksWithTeachers th, .primaryPage .marksWithTeachers td { padding-top: .65mm; padding-bottom: .65mm; }
+.primaryPage .marks td.subjectCell .subjectTeacher { font-size: 6.5pt; line-height: 1.1; margin-top: .3mm; }
+.programTeacher { padding: 1mm 3mm; color: #164e47; background: #eaf4f0; font: 7pt/1.25 Arial, sans-serif; }
 .primaryPage .summary { grid-template-columns: 1.2fr 1.2fr .85fr 1fr; gap: 1.5mm; margin: 2mm 3mm 0; }
 .primaryPage .summaryMetric { padding: 2mm 1mm; }
 .primaryPage .summaryMetric strong { font-size: 14pt; }
@@ -272,6 +277,7 @@
 .passagePage .body { padding-top: 2mm; padding-bottom: 3mm; }
 .passagePage .panels { margin-top: 2mm; }
 .passagePage .marks th, .passagePage .marks td { padding-top: 1.05mm; padding-bottom: 1.05mm; }
+.passagePage.combinedPage .marks th, .passagePage.combinedPage .marks td { padding-top: .75mm; padding-bottom: .75mm; }
 .passagePage .panelHeading { padding-top: 1.4mm; padding-bottom: 1.4mm; }
 .passagePage .historicalDetails { margin: 1.5mm 2mm; gap: 1mm; }
 .passagePage .historicalLine { padding: 1.2mm 1.5mm; border-radius: 1mm; }

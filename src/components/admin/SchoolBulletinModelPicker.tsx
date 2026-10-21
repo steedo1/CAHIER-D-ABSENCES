@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import type { ReportFormat, FrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
 import type { SchoolCycle, TeachingTrack } from "@/lib/school-cycles";
+
+const DemoBulletinClient = dynamic(() => import("@/app/admin/bulletins/modeles/DemoBulletinClient"), {
+  loading: () => <p>Chargement de l’aperçu A4…</p>,
+});
 
 type Configuration = {
   enabled: boolean;
@@ -35,6 +40,7 @@ export default function SchoolBulletinModelPicker() {
   const [draftFormats, setDraftFormats] = useState<Partial<Record<SchoolCycle, ReportFormat>>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [schoolIdentity, setSchoolIdentity] = useState({ name: "Établissement", code: "" });
 
   useEffect(() => {
     let alive = true;
@@ -52,6 +58,7 @@ export default function SchoolBulletinModelPicker() {
         setConfig(body.configuration);
         setReport(body.reporting);
         setRevision(body.revision || "");
+        setSchoolIdentity({ name: body.institution?.name || "Établissement", code: body.institution?.code || "" });
         // Le secondaire garde sa présentation historique.
         const available = body.configuration.enabledCycles.filter(item =>
           item === "primary" || item === "preschool");
@@ -72,6 +79,7 @@ export default function SchoolBulletinModelPicker() {
   const tracks = config?.teachingTracksByCycle[cycle] || [];
   const bilingual = tracks.includes("french") && tracks.includes("arabic");
   const onlyArabic = tracks.includes("arabic") && !tracks.includes("french");
+  const hasArabicSchool = config?.enabledCycles.some(item => config.teachingTracksByCycle[item]?.includes("arabic"));
   const chosen = bilingual ? (draftFormats[cycle] || report?.format || "separate") : "separate";
   const saved = bilingual ? (report?.formatsByCycle?.[cycle] || report?.format || "separate") : "separate";
   const changed = chosen !== saved;
@@ -139,7 +147,7 @@ export default function SchoolBulletinModelPicker() {
       <p className="mt-2 text-sm text-slate-600">
         Choisissez la présentation du primaire ou du préscolaire, puis enregistrez-la.
         Les véritables notes et les calculs se consultent dans Correspondant Fichier → Bulletins.
-        Aucun résultat fictif n'est présenté ici.
+        {hasArabicSchool && " L’aperçu A4 ci-dessous présente le modèle avec des données de démonstration clairement identifiées."}
       </p>
       <label className="mt-4 block text-sm font-semibold text-slate-800">
         Cycle scolaire
@@ -178,6 +186,11 @@ export default function SchoolBulletinModelPicker() {
       ))}
     </div>
 
+    {config.enabled && hasArabicSchool &&
+      <DemoBulletinClient key={cycle + ":" + chosen} embedded previewCycle={cycle} previewFormat={chosen}
+        hasArabic schoolName={schoolIdentity.name} schoolCode={schoolIdentity.code}
+        enabledCycles={availableCycles} tracksByCycle={config.teachingTracksByCycle} />}
+
     <div className="rounded-2xl border bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -200,7 +213,7 @@ export default function SchoolBulletinModelPicker() {
       {notice && <p role="status" className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
       {!active && !isPreschool && <p className="mt-3 text-sm text-amber-900">
         Pour utiliser ce modèle dans les bulletins réels, activez les règles de calcul spécialisées
-        dans l'onglet <a className="font-semibold underline"
+        dans l’onglet <a className="font-semibold underline"
           href="/admin/parametres?tab=coefficients">Coefficients & sous-matières</a>.
         Cette opération est séparée du choix de présentation pour protéger les notes existantes.
       </p>}
@@ -209,9 +222,9 @@ export default function SchoolBulletinModelPicker() {
     <div className="rounded-2xl border bg-white p-5">
       <h3 className="font-bold text-slate-900">Vérifier les vrais bulletins et leurs calculs</h3>
       <p className="mt-2 text-sm text-slate-700">
-        Ouvrez Correspondant Fichier → Bulletins, sélectionnez l'année scolaire,
+        Ouvrez Correspondant Fichier → Bulletins, sélectionnez l’année scolaire,
         la période et la classe. Les matières, les notes, les moyennes et les rangs
-        proviennent des données officielles de l'établissement, jamais d'une maquette.
+        proviennent des données officielles de l’établissement, jamais d’une maquette.
       </p>
       <div className="mt-4 flex flex-wrap gap-3">
         <a href="/admin/bulletins"

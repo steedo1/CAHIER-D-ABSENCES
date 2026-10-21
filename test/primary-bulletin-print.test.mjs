@@ -11,7 +11,7 @@ const logo = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.
 const names = ["Coran (récitation et mémorisation)","Langue arabe","Écriture et dictée","Expression orale","Expression écrite","Mathématiques","Lecture","Histoire","Géographie","Éducation islamique","Sciences","Poème"];
 const css = readFileSync("src/components/bulletins/FrancoArabicBulletin.module.css", "utf8") + readFileSync("src/app/admin/bulletins/modeles/print.css", "utf8");
 function model(index, annual = false) {
-  const common = { cycle: "Primaire", level: "CM1", className: "CM1", year: "2026-2027", period: "Évaluation de novembre",
+  const common = { cycle: "Primaire", level: "CM1", className: "CM1", year: "2026-2027", period: annual ? "Composition de passage" : "Évaluation de niveau",
     denominator: 10, primarySubjectScores: true, generalAverage: 8, rank: index+1, classSize: 48,
     ...(annual ? { primaryAnnual: { ordinary: ["Composition de décembre", "Composition de février", "Composition d’avril"].map(label => ({ label, average: 7 })),
       ordinaryAverage: 7, passageAverage: 8, annualAverage: 7.67, decision: "ADMIS" } } : {}),
@@ -25,10 +25,11 @@ function model(index, annual = false) {
       birthDate: "2015-10-08", birthPlace: "Dimbokro", photoUrl: logo },
     french: { ...common, track: "french", ciPrimaryFrench: true, subjects: CI_PRIMARY_FRENCH_REFERENCE.map(row => {
       const denominator = ciPrimaryFrenchDenominator("CM1", row.code);
-      return { id: row.code, name: row.label, denominator, average: denominator*0.8, coefficient: null };
+      return { id: row.code, name: row.label, denominator, average: denominator*0.8, coefficient: null,
+        teacherName: "INSTITUTEUR FRANÇAIS DE DÉMONSTRATION" };
     }) },
     arabic: { ...common, track: "arabic", subjects: names.map((name,i) => ({ id: `arabic-${i}`, name, denominator: i%2?20:50,
-      average: (i%2?20:50)*0.8, coefficient: null })) },
+      average: (i%2?20:50)*0.8, coefficient: null, teacherName: "INSTITUTEUR ARABE DE DÉMONSTRATION" })) },
   };
 }
 test("primary bulletins print the school logo and real metadata on one A4 per pupil, including combined teachings", async t => {

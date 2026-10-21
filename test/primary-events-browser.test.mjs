@@ -3,7 +3,7 @@ import test from "node:test";
 import { build } from "esbuild";
 import { chromium } from "playwright";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server.js";
@@ -12,7 +12,7 @@ import { createFixtureRouteLoader } from "./helpers/multicycle-fixture.mjs";
 
 // Mount the actual TSX screens in Chromium, with the existing API handlers and
 // an isolated in-memory Supabase transport. No production session or data writes.
-for (const bulletinRole of ["admin", "file_correspondent"]) test(`browser: administrator calendar → teacher entry/publication → ${bulletinRole} bulletin screen`, { timeout: 120000 }, async () => {
+for (const bulletinRole of ["admin", "file_correspondent"]) test(`browser: administrator calendar → teacher entry/publication → ${bulletinRole} bulletin screen`, { timeout: 180000 }, async () => {
   const db = setup();
   const settings = db.tables.institutions[0].settings_json;
   settings.school_teaching_signatories_v1 = { version: 1, french: { name: "DIRECTEUR FRANÇAIS TEST" }, arabic: { name: "DIRECTEUR ARABE TEST" } };
@@ -52,8 +52,9 @@ for (const bulletinRole of ["admin", "file_correspondent"]) test(`browser: admin
   };
   const output = await build({ stdin: { contents: `import React from "react";import{createRoot}from"react-dom/client";
     import Calendar from "./src/components/admin/PrimaryEvaluationEventsEditor";
+    import Models from "./src/components/admin/SchoolBulletinModelPicker";
     import Grades from "./src/app/grades/page";import Bulletins from "./src/app/admin/bulletins/page";
-    createRoot(document.getElementById('root')).render(location.pathname==='/calendar'?<Calendar academicYear="${year}"/>:location.pathname==='/grades'?<Grades/>:<Bulletins/>);`,
+    createRoot(document.getElementById('root')).render(location.pathname==='/models'?<Models/>:location.pathname==='/calendar'?<Calendar academicYear="${year}"/>:location.pathname==='/grades'?<Grades/>:<Bulletins/>);`,
     resolveDir: process.cwd(), loader: "tsx" }, bundle: true, jsx: "automatic", write: false, outdir: temp, entryNames: "app", minify: true,
     define: { "process.env.NODE_ENV": '"production"', "process.env": "{}" }, plugins: [{ name: "isolated-shell", setup(builder) {
       builder.onResolve({filter: /.*/}, args => Object.hasOwn(mocks,args.path) ? {path:args.path,namespace:"fixture"}:undefined);
@@ -92,6 +93,14 @@ for (const bulletinRole of ["admin", "file_correspondent"]) test(`browser: admin
   const page=await browser.newPage({viewport:{width:1440,height:1100}}), errors=[];
   page.on("pageerror",error=>errors.push(error.stack || error.message));
   try {
+    await page.goto(base+"/models");
+    await page.getByText("Aperçu A4 du modèle sélectionné", { exact: true }).waitFor();
+    await page.getByLabel("Évaluation de démonstration", { exact: true }).selectOption("Évaluation de niveau");
+    await page.getByText("Évaluation de niveau", { exact: true }).last().waitFor();
+    assert.ok(await page.getByText("MAQUETTE · DONNÉES FICTIVES", { exact: true }).count());
+    assert.ok(await page.locator("article").count());
+    await page.getByLabel("Évaluation de démonstration", { exact: true }).selectOption("Composition de passage");
+    await page.getByText("Moyenne générale annuelle", { exact: true }).first().waitFor();
     await page.goto(base+"/calendar");
     await page.getByRole("button",{name:"Enregistrer les évaluations",exact:true}).waitFor();
     await page.getByRole("button",{name:"+ Évaluation interne",exact:true}).click();

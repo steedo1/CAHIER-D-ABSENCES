@@ -21,7 +21,8 @@ for (const level of ["CP1", "CP2", "CE1", "CE2", "CM1", "CM2"]) test(`${level}: 
   assert.equal(student.document.arabic.classSize, 1);
   assert.equal(student.document.french.classSize, 2);
   assert.equal(student.document.french.rank, 1); assert.equal(student.document.arabic.rank, 1);
-  assert.equal(student.document.arabic.subjects.length, 1, "ungraded subjects omitted");
+  assert.equal(student.document.arabic.subjects.length, 2, "configured subjects stay visible, blanks do not affect the average");
+  assert.equal(student.document.arabic.subjects.filter(subject => subject.average !== null).length, 1);
   assert.equal(student.document.french.primaryAnnual, undefined);
   assert.equal(result.specialized.documents.find(d => d.studentId === pupil1).document.arabic, undefined);
   assert.equal((await report(db, "NIV2")).specialized.documents[0].document.arabic.generalAverage, 0, "a real zero remains graded");
