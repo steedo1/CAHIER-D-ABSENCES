@@ -78,8 +78,7 @@ function okAuth(req: Request) {
     ? auth.slice(7).trim()
     : "";
   const fromVercelCron = req.headers.has("x-vercel-cron");
-  const allowed =
-    fromVercelCron || (!!secret && (xCron === secret || bearer === secret));
+  const allowed = !!secret && (xCron === secret || bearer === secret);
   console.info("[attendance/alerts] auth", {
     fromVercelCron,
     xCronPresent: !!xCron,

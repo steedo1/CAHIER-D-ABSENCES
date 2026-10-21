@@ -5,13 +5,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /* ─────────────────────────────────────────
-   Auth Cron (inchangé)
+   Auth Cron (secret obligatoire, y compris pour cette route désactivée)
 ────────────────────────────────────────── */
 function okFromCron(req: NextRequest) {
   const sec = (process.env.CRON_WHATSAPP_SECRET || "").trim();
   const hdr = (req.headers.get("x-cron-secret") || "").trim();
-  const fromVercel = req.headers.has("x-vercel-cron");
-  return fromVercel || (!!sec && hdr === sec);
+  return !!sec && hdr === sec;
 }
 
 /* ─────────────────────────────────────────
