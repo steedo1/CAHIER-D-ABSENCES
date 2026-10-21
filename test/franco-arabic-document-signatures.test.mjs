@@ -94,6 +94,24 @@ test("A4 : une attestation par élève avec les deux directeurs des études, san
   assert.doesNotMatch(html, /DG authentifié|Proviseur|Je soussigné/);
 });
 
+test("attestation Render : la photo privée utilise le domaine de la session connectée", () => {
+  const photoId = "12345678-1234-4abc-9876-123456789abc";
+  const html = generateActualAttestationHtml({
+    cfg: { institution_name: "École de test", settings_json: {} },
+    academicYear: "2026-2027",
+    rows: [{
+      id: photoId, last_name: "ÉLÈVE", first_name: "Test",
+      class_label: "CM1",
+      photo_url: `https://mon-cahier-test.onrender.com/api/media/student-photo/${photoId}?v=1761033600000`,
+    }],
+    fallbackClassLabel: "CM1",
+    classEducationTypes: new Map(),
+    selectedEducationType: "general_secondary",
+  });
+  assert.match(html, new RegExp(`src="https://www\\.mon-cahier\\.com/api/media/student-photo/${photoId}\\?v=1761033600000"`));
+  assert.doesNotMatch(html, /src="https:\/\/mon-cahier-test\.onrender\.com/);
+});
+
 test("bulletins : un directeur par enseignement séparé, un seul administrateur général pour le combiné", () => {
   const load = createFixtureRouteLoader(createMulticycleFixture(), "actor-does-not-matter");
   const component = load("src/components/bulletins/FrancoArabicBulletin.tsx").default;

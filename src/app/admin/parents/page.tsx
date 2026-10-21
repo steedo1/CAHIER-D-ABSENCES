@@ -13,6 +13,7 @@ import {
 } from "react";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import { resolveAttestationSignatories } from "@/lib/franco-arabic-document-signatories";
+import { attestationPhotoUrlForCurrentOrigin } from "@/lib/attestation-photo-url";
 import {
   DEFAULT_EDUCATION_SCOPE,
   getClassLevelCode,
@@ -332,7 +333,10 @@ function buildAttestationHtml(args: {
         : "boursier / non boursier";
 
     const photoUrl =
-      (student.photo_url || student.student_photo_url || "").trim() || "";
+      attestationPhotoUrlForCurrentOrigin(
+        student.photo_url || student.student_photo_url,
+        window.location.origin,
+      ) || "";
 
     const ref = `AF-${safeSlug(academicYear).toUpperCase()}-${safeSlug(
       classLabel
@@ -827,14 +831,50 @@ function buildAttestationHtml(args: {
 <body>
   ${pages.join("\n")}
   <script>
-    window.addEventListener("load", function () {
-      setTimeout(function () {
+    (function () {
+      // A blob: print document must wait for the protected photos to finish.
+      // DOMContentLoaded does not guarantee that external images are decoded.
+      function imageReady(img) {
+        if (img.complete) {
+          return img.naturalWidth > 0 && img.decode
+            ? img.decode().catch(function () {})
+            : Promise.resolve();
+        }
+        return new Promise(function (resolve) {
+          var finished = false;
+          var timeout;
+          function done() {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timeout);
+            resolve();
+          }
+          timeout = setTimeout(done, 12000);
+          img.addEventListener("load", done, { once: true });
+          img.addEventListener("error", done, { once: true });
+          if (img.complete) done();
+        }).then(function () {
+          return img.naturalWidth > 0 && img.decode
+            ? img.decode().catch(function () {})
+            : undefined;
+        });
+      }
+      window.addEventListener("DOMContentLoaded", async function () {
+        var photos = Array.from(document.querySelectorAll(".student-photo-img"));
+        await Promise.all(photos.map(imageReady));
+        photos.forEach(function (img) {
+          if (img.naturalWidth > 0) return;
+          var placeholder = document.createElement("div");
+          placeholder.className = "student-photo-placeholder";
+          placeholder.textContent = "PHOTO";
+          img.replaceWith(placeholder);
+        });
         try {
           window.focus();
           window.print();
         } catch (e) {}
-      }, 500);
-    });
+      }, { once: true });
+    })();
   </script>
 </body>
 </html>
