@@ -1,0 +1,57 @@
+{
+  "multicycle-baseline": {
+    "tests": 327,
+    "pass": 327,
+    "fail": 0
+  },
+  "parents": {
+    "tests": 91,
+    "pass": 91,
+    "fail": 0
+  },
+  "attendance-qr": {
+    "tests": 112,
+    "pass": 112,
+    "fail": 0
+  },
+  "security-guards": {
+    "tests": 8,
+    "pass": 8,
+    "fail": 0,
+    "source_commit": "5de22546a23518130daa1c3743a02b5f6218c3c9"
+  },
+  "infra-release-health": {
+    "tests": 2,
+    "pass": 2,
+    "fail": 0
+  },
+  "infra-env-preflight": {
+    "tests": 2,
+    "pass": 2,
+    "fail": 0
+  },
+  "cron-caller": {
+    "tests": 4,
+    "pass": 4,
+    "fail": 0
+  },
+  "infra-offline-suite": {
+    "tests": 51,
+    "pass": 51,
+    "fail": 0,
+    "note": "includes the 8 new infra/cron tests and 43 existing offline tests; do not sum twice"
+  },
+  "combined-security-infra": {
+    "tests": 55,
+    "pass": 55,
+    "fail": 0,
+    "build": "passed",
+    "note": "local combination of PR 197 and 199; contains overlapping tests from other suites"
+  },
+  "compiled-health-http": {
+    "status": 200,
+    "cache_control": "no-store",
+    "supabase": "unavailable loopback",
+    "result": "passed"
+  }
+}
