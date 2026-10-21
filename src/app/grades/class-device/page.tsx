@@ -1369,16 +1369,24 @@ export default function ClassDeviceNotesPage() {
 
       const created = j?.item as Evaluation;
       logInfo("addEvaluation -> évaluation créée", created);
+      // The primary event endpoint returns reused:true when this dated
+      // evaluation already exists. Never render a duplicate column or erase
+      // scores already loaded for it.
       setEvaluations((prev) => {
+        if (prev.some((item) => item.id === created.id)) return prev;
         const next = [...prev, created];
         next.sort((a, b) => a.eval_date.localeCompare(b.eval_date));
         return next;
       });
-      setGrades((prev) => ({ ...prev, [created.id]: {} }));
+      if (j?.reused !== true) {
+        setGrades((prev) => ({ ...prev, [created.id]: {} }));
+      }
 
-      // Sur mobile, on se place tout de suite sur cette nouvelle note
+      // Sur mobile, ouvrir la colonne existante ou nouvellement créée.
       setActiveEvalId(created.id);
-      setMsg("NOTE ajoutée ✅ (colonne active sur mobile)");
+      setMsg(j?.reused === true
+        ? "Évaluation déjà créée : colonne existante sélectionnée ✅"
+        : "NOTE ajoutée ✅ (colonne active sur mobile)");
     } catch (e: any) {
       logError("addEvaluation -> exception", e);
       setMsg(e?.message || "Échec d’ajout de la note.");
