@@ -28,7 +28,7 @@ test("EPC deletion clears only class-device evaluation and score caches after cl
 });
 
 test("Mobile class-device gradebook keeps deletion visible for secondary and primary columns", () => {
-  assert.match(page, /\{isMobile && currentActiveEval && !isPreschoolProgram && \(/);
+  assert.match(page, /\{isMobile && currentActiveEval && selected\?\.school_cycle !== "preschool" && \(/);
   assert.doesNotMatch(page, /isMobile && isPrimaryProgram && primaryCatalogEnabled && currentActiveEval &&/);
   assert.match(page, /disabled=\{!isOnline \|\| selectedPeriodClosed \|\| !isEvaluationDeletable\(currentActiveEval\)/);
   assert.match(page, /Suppression bloquée : note soumise ou publiée/);
