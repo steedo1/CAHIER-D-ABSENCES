@@ -1,3 +1,5 @@
+import { RELAY_GLOBAL_STANDBY } from "@/lib/relay-standby";
+
 const RELAY_CAPABILITY_PREFIX = "moncahier:relay-capability:v1:";
 
 export type RelayCapabilityRecord = {
@@ -25,7 +27,7 @@ export function rememberRelayCapability(input: {
   const record: RelayCapabilityRecord = {
     version: 1,
     institution_id: institutionId,
-    relay_enabled: input.relayEnabled === true,
+    relay_enabled: !RELAY_GLOBAL_STANDBY && input.relayEnabled === true,
     confirmed_at: new Date().toISOString(),
   };
   try {
@@ -53,7 +55,8 @@ export function readRelayCapability(
     ) {
       return null;
     }
-    return parsed;
+    // Un opt-in conservé dans un ancien navigateur ne réactive jamais le Relais.
+    return RELAY_GLOBAL_STANDBY ? { ...parsed, relay_enabled: false } : parsed;
   } catch {
     return null;
   }
@@ -66,5 +69,5 @@ export function readRelayCapability(
 export function relayEnabledForInstitution(
   institutionId: string | null | undefined,
 ) {
-  return readRelayCapability(institutionId)?.relay_enabled === true;
+  return !RELAY_GLOBAL_STANDBY && readRelayCapability(institutionId)?.relay_enabled === true;
 }

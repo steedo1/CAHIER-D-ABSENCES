@@ -1547,6 +1547,8 @@ export default function ClassDevicePage() {
     if (isOnline && pendingSync > 0) {
       setMsg("Synchronisation en cours…");
       await syncNow();
+      // Ne jamais laisser le libellé de synchronisation affiché après retour.
+      setMsg(null);
     }
 
     // 2) le rejeu de l'ouverture mémorise client:* -> UUID serveur.
@@ -1566,7 +1568,10 @@ export default function ClassDevicePage() {
 
     // 3) même si pendingSync==0, on tente un refresh serveur.
     const srv = await refreshServerOpenSession();
-    if (srv && srv.id && !isClientSessionId(srv.id)) return srv;
+    if (srv && srv.id && !isClientSessionId(srv.id)) {
+      setMsg(null);
+      return srv;
+    }
 
     await refreshPending();
     setMsg(
@@ -2688,8 +2693,6 @@ export default function ClassDevicePage() {
             period_id: activeConfiguredSlot.id,
           }).catch(() => undefined);
         }
-        applyList(((autoResp?.items || []) as Subject[]) ?? [], "auto");
-
         if (
           currentPreparedRevision !== responseRevision &&
           selectedClass?.institution_id &&
@@ -2717,7 +2720,13 @@ export default function ClassDevicePage() {
           }
         }
 
-        applyList(((autoResp?.items || []) as Subject[]) ?? [], "auto");
+        const cloudSubjects = ((autoResp?.items || []) as Subject[]) ?? [];
+        applyList(cloudSubjects, cloudSubjects.length ? "auto" : "empty");
+        if (!cloudSubjects.length) {
+          setSubjectScheduleIssue(
+            "Aucune matière n’est enregistrée dans le Cloud pour ce créneau. Si un cours est prévu, vérifiez sa publication dans l’emploi du temps puis actualisez la tablette.",
+          );
+        }
         return;
       }
 
@@ -2730,6 +2739,9 @@ export default function ClassDevicePage() {
       // scheduled slot. It remains available only through the explicit manual
       // exceptional-course flow.
       applyList([], "empty");
+      setSubjectScheduleIssue(
+        "Le planning de ce créneau n’a pas pu être vérifié sur le Cloud et aucune copie locale valide n’est disponible. Reconnectez puis actualisez la préparation.",
+      );
     })();
 
     return () => {

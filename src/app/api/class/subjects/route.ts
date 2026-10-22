@@ -453,7 +453,7 @@ export async function GET(req: NextRequest) {
       actor_profile_id: user.id,
       schedule_revision: scheduleRevision,
     };
-    async function scheduleJson(items: SubjectItem[]) {
+    async function scheduleJson(items: SubjectItem[], extra: Record<string, unknown> = {}) {
       if (preparingOffline) {
         const initial = {
           schedule_revision: scheduleRevision,
@@ -463,14 +463,77 @@ export async function GET(req: NextRequest) {
         if (!attendancePreparationSnapshotsMatch(initial, final)) {
           return NextResponse.json({ error: "schedule_changed_during_read" }, { status: 409 });
         }
-        return NextResponse.json({ ...scheduleMeta, ...final, items }, {
+        return NextResponse.json({ ...scheduleMeta, ...final, ...extra, items }, {
           headers: { "Cache-Control": "private, no-store, max-age=0" },
         });
       } else if (scheduleRevision !== await readAttendanceScheduleRevision(srv, institutionId)) {
         return NextResponse.json({ error: "schedule_changed_during_read" }, { status: 409 });
       }
-      return NextResponse.json({ ...scheduleMeta, items }, {
+      return NextResponse.json({ ...scheduleMeta, ...extra, items }, {
         headers: { "Cache-Control": "private, no-store, max-age=0" },
+      });
+    }
+
+    // Préparation groupée : une seule lecture EDT + un seul référentiel matières.
+    // Les requêtes individuelles par créneau restent disponibles à l'appel réel.
+    if (url.searchParams.get("all_slots") === "v1") {
+      const { data: timetable, error: timetableError } = await srv
+        .from("teacher_timetables")
+        .select("period_id,subject_id")
+        .eq("institution_id", institutionId)
+        .eq("class_id", class_id);
+      if (timetableError) {
+        return NextResponse.json({ error: timetableError.message }, { status: 400 });
+      }
+      const subjectIds = uniq(
+        (timetable || []).map((row) => String(row.subject_id || "").trim()),
+      );
+      if ((timetable || []).some((row) => !row.period_id || !row.subject_id)) {
+        return NextResponse.json({ error: "timetable_subject_or_period_missing" }, { status: 409 });
+      }
+      const mapped = await mapSubjectIdsToItems(srv, institutionId, subjectIds);
+      const mappedById = new Map(mapped.map((subject) => [subject.id, subject]));
+      // Certaines anciennes affectations utilisent subjects.id au lieu de
+      // institution_subjects.id : conserver la même traduction que la route unitaire.
+      const unresolved = subjectIds.filter((id) => !mappedById.has(id));
+      const canonicalToInstitution = new Map<string, string>();
+      if (unresolved.length) {
+        const { data: aliases, error: aliasesError } = await srv
+          .from("institution_subjects")
+          .select("id,subject_id")
+          .eq("institution_id", institutionId)
+          .in("subject_id", unresolved);
+        if (aliasesError) {
+          return NextResponse.json({ error: aliasesError.message }, { status: 400 });
+        }
+        for (const alias of aliases || []) {
+          const canonical = String(alias.subject_id || "").trim();
+          const local = String(alias.id || "").trim();
+          if (canonical && local && !canonicalToInstitution.has(canonical)) {
+            canonicalToInstitution.set(canonical, local);
+          }
+        }
+      }
+      const mappedSubject = (id: string) =>
+        mappedById.get(id) || mappedById.get(canonicalToInstitution.get(id) || "");
+      if (subjectIds.some((subjectId) => !mappedSubject(subjectId))) {
+        return NextResponse.json({ error: "timetable_subject_mapping_incomplete" }, { status: 409 });
+      }
+      const grouped = new Map<string, Map<string, SubjectItem>>();
+      for (const row of timetable || []) {
+        const periodId = String(row.period_id || "").trim();
+        const subjectId = String(row.subject_id || "").trim();
+        const subject = mappedSubject(subjectId);
+        if (!periodId || !subject) continue;
+        if (!grouped.has(periodId)) grouped.set(periodId, new Map());
+        grouped.get(periodId)!.set(subject.id, subject);
+      }
+      return scheduleJson([], {
+        bulk_version: 1,
+        slots: Array.from(grouped.entries()).map(([period_id, subjects]) => ({
+          period_id,
+          items: Array.from(subjects.values()),
+        })),
       });
     }
 

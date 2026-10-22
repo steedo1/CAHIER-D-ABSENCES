@@ -1,3 +1,4 @@
+import { RELAY_GLOBAL_STANDBY } from "@/lib/relay-standby";
 "use client";
 import { attendanceCacheActor, knownScheduleRevision, observeScheduleRevision } from "@/lib/attendance-cache-identity";
 import { scheduleIsCurrent } from "@/lib/attendance-cache-contract";
@@ -826,7 +827,7 @@ export async function assessTeacherOfflineReadiness(
   const actorProfileId = String(basics?.actor_profile_id || "").trim();
   const readinessInstitutionId = String(initial?.institution_id || "").trim();
   const readinessActorProfileId = String(initial?.actor_profile_id || "").trim();
-  const relayPolicy = basics?.attendance_presence || {};
+  const relayPolicy = RELAY_GLOBAL_STANDBY ? {} : basics?.attendance_presence || {};
   if (
     !institutionId ||
     !actorProfileId ||
@@ -1112,7 +1113,9 @@ export function classDeviceAccessDiagnosticMessage(value: unknown) {
     class_id_missing:
       "L’identifiant de la classe autorisée est absent.",
     relay_policy_missing:
-      "La politique d’accès au relais est absente pour cet établissement.",
+      "Le Relais local n’est pas configuré pour cet établissement.",
+    relay_policy_unavailable:
+      "La configuration du Relais local est momentanément indisponible.",
     relay_disabled:
       "L’accès au relais est désactivé pour cet établissement.",
     relay_local_access_disabled:
@@ -1271,60 +1274,82 @@ async function buildClassDeviceScheduleFromCloud(input: {
   }
 
   input.onProgress("Téléchargement de la liste des élèves…");
-  const roster = await fetchClassPreparationAndCache<{ items?: Array<Record<string, unknown>> }>(
+  const roster = await fetchFreshJson<{ items?: Array<Record<string, unknown>> }>(
     `/api/class/roster?class_id=${encodeURIComponent(input.classId)}`,
-    `classDevice:roster:${input.classId}`,
+    20_000,
   );
   const rosterItems = Array.isArray(roster?.items) ? roster.items : [];
 
-  const slots: Array<RelayTeacherOfflineSchedule["slots"][number] | null> =
-    Array.from({ length: periods.length }, () => null);
-  await mapLimit(periods, 4, async (period, index) => {
-    if (
-      index === 0 ||
-      (index + 1) % 5 === 0 ||
-      index + 1 === periods.length
-    ) {
-      input.onProgress(`Créneaux d’appel ${index + 1}/${periods.length}…`);
+  // Un seul téléchargement du planning réel de la classe : évite plusieurs
+  // dizaines de requêtes successives sur chaque tablette lors de la préparation.
+  // La réponse groupée est strictement bornée à l'établissement, l'appareil et
+  // la révision, puis recoupée avec les créneaux institutionnels fraîchement lus.
+  input.onProgress("Vérification des matières et de tous les créneaux…");
+  const bulk = await fetchFreshJson<{
+    bulk_version?: number;
+    institution_id?: string;
+    class_id?: string;
+    actor_profile_id?: string;
+    schedule_revision?: number;
+    preparation_revision?: number | null;
+    slots?: Array<{ period_id?: string | null; items?: ClassDeviceSubjectItem[] }>;
+  }>(
+    `/api/class/subjects?class_id=${encodeURIComponent(input.classId)}&all_slots=v1&offline_preparation=v1`,
+    20_000,
+  );
+  const bulkRevision = safeRevision(bulk.schedule_revision);
+  const bulkPreparationRevision = safeRevision(bulk.preparation_revision);
+  if (
+    bulk.bulk_version !== 1 ||
+    bulk.institution_id !== input.institutionId ||
+    bulk.class_id !== input.classId ||
+    bulk.actor_profile_id !== input.actorProfileId ||
+    bulkRevision === null || bulkRevision < input.scheduleRevision ||
+    (input.preparationRevision == null
+      ? bulkRevision !== input.scheduleRevision
+      : bulkPreparationRevision !== input.preparationRevision) ||
+    !Array.isArray(bulk.slots)
+  ) {
+    throw new Error("schedule_changed_during_prepare");
+  }
+
+  const periodsById = new Map(
+    periods.map((period) => [String(period.id || "").trim(), period]),
+  );
+  const scheduledByPeriod = new Map<string, ClassDeviceSubjectItem[]>();
+  for (const entry of bulk.slots) {
+    const periodId = String(entry.period_id || "").trim();
+    if (!periodsById.has(periodId) || scheduledByPeriod.has(periodId) ||
+        !Array.isArray(entry.items) || entry.items.length === 0 ||
+        entry.items.some((subject) => !String(subject?.id || "").trim())) {
+      throw new Error(classDeviceReadinessMessage("class_data_missing"));
     }
-    const key = classDevicePeriodKey(period);
+    scheduledByPeriod.set(periodId, entry.items);
+  }
+  const preparedSlots: RelayTeacherOfflineSchedule["slots"] = periods.flatMap((period) => {
     const periodId = String(period.id || "").trim();
-    if (!key || !periodId) return;
-    const params = new URLSearchParams({
-      class_id: input.classId,
-      slot: key,
-      period_id: periodId,
-      offline_preparation: "v1",
-    });
-    const subjects = await fetchClassPreparationAndCache<{ items?: ClassDeviceSubjectItem[] }>(
-      `/api/class/subjects?${params.toString()}`,
-      `classDevice:subjects:${input.classId}:${key}`,
-    );
-    const items = (Array.isArray(subjects?.items) ? subjects.items : [])
-      .map((subject) => ({
-        class_id: input.classId,
-        class_label: String(input.selectedClass.label || "Classe").trim() || "Classe",
-        level: String(input.selectedClass.level || "").trim(),
-        subject_id: String(subject?.id || "").trim(),
-        subject_name: String(subject?.label || "Matière").trim() || "Matière",
-      }))
-      .filter((subject) => Boolean(subject.subject_id));
-    if (items.length === 0) return;
-    slots[index] = {
+    const key = classDevicePeriodKey(period);
+    const items = scheduledByPeriod.get(periodId);
+    if (!key || !items?.length) return [];
+    return [{
       key,
       period_id: periodId,
       weekday: Number(period.weekday),
       label: String(period.label || "Séance").trim() || "Séance",
       start_time: classDevicePeriodTime(period.start_time),
       end_time: classDevicePeriodTime(period.end_time),
-      items,
-    };
+      items: items.map((subject) => ({
+        class_id: input.classId,
+        class_label: String(input.selectedClass.label || "Classe").trim() || "Classe",
+        level: String(input.selectedClass.level || "").trim(),
+        subject_id: String(subject.id || "").trim(),
+        subject_name: String(subject.label || "Matière").trim() || "Matière",
+      })),
+    }];
   });
-
-  const preparedSlots = slots.filter(
-    (slot): slot is RelayTeacherOfflineSchedule["slots"][number] => Boolean(slot),
-  );
-  if (preparedSlots.length === 0) {
+  // Aucun cours connu, ou une matière absente du référentiel : ne jamais
+  // annoncer « préparation prête » avec un paquet trompeur.
+  if (preparedSlots.length === 0 || preparedSlots.length !== scheduledByPeriod.size) {
     throw new Error(classDeviceReadinessMessage("class_data_missing"));
   }
 
@@ -1413,7 +1438,7 @@ async function resolveClassDeviceContext(
       cached?.actor_profile_id ||
       "",
   ).trim();
-  const relay = cached?.attendance_presence;
+  const relay = RELAY_GLOBAL_STANDBY ? null : cached?.attendance_presence;
   const relayBaseUrls = Array.isArray(requested.relayBaseUrls)
     ? requested.relayBaseUrls
     : Array.isArray(relay?.relay_local_urls)
@@ -1428,6 +1453,7 @@ async function resolveClassDeviceContext(
     requested.relayAccessToken || relay?.relay_access_token || "",
   ).trim();
   if (
+    RELAY_GLOBAL_STANDBY ||
     !institutionId ||
     !requestedClassId ||
     !actorProfileId ||
@@ -1968,7 +1994,7 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     preparationSource = "relay";
     basics = basics || await cacheGet<any>("teacher:inst:basics").catch(() => null);
     const institutionId = String(basics?.institution_id || "").trim();
-    const relayPolicy = basics?.attendance_presence || {};
+    const relayPolicy = RELAY_GLOBAL_STANDBY ? {} : basics?.attendance_presence || {};
     if (
       !institutionId ||
       !relayPolicy?.relay_local_url ||
@@ -2147,15 +2173,23 @@ async function prepareClassDevice(
     actorProfileId = identity.actorProfileId;
     selectedClass = identity.selectedClass || {};
 
-    try {
-      relayPolicy = resolveClassDevicePreparationAccess(
-        classPayload.payload,
-      ).relayPolicy;
-    } catch (error) {
-      // Un relais absent ou mal configuré ne doit pas empêcher une préparation
-      // Cloud valide. Son accès reste simplement désactivé pour cette tentative.
-      accessError = error;
-      relayPolicy = null;
+    // Sans Relais activé, seule l’identité de la classe est obligatoire.
+    // Ne pas conserver une absence de politique Relais comme erreur de préparation.
+    if (
+      !RELAY_GLOBAL_STANDBY &&
+      selectedClass?.attendance_presence?.enabled === true &&
+      selectedClass.attendance_presence.allow_local_relay !== false
+    ) {
+      try {
+        relayPolicy = resolveClassDevicePreparationAccess(
+          classPayload.payload,
+        ).relayPolicy;
+      } catch (error) {
+        // L’accès au Relais reste strictement validé si celui-ci est déclaré actif.
+        // La préparation Cloud peut toutefois continuer sans jeton local.
+        accessError = error;
+        relayPolicy = null;
+      }
     }
   } catch (error) {
     accessError = error;

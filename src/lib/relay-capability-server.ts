@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { RELAY_GLOBAL_STANDBY } from "@/lib/relay-standby";
 
 type RelayDeviceCapabilityRow = {
   is_active?: boolean | null;
@@ -25,6 +26,7 @@ export async function relayEnabledForInstitutionServer(
   service: SupabaseClient<any>,
   institutionId: string | null | undefined,
 ) {
+  if (RELAY_GLOBAL_STANDBY) return false;
   const normalizedInstitutionId = String(institutionId || "").trim();
   if (!normalizedInstitutionId) return false;
 

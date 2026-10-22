@@ -286,7 +286,8 @@ export function validateClassDeviceScheduleScope(
         (item) =>
           item &&
           typeof item === "object" &&
-          normalizedId((item as { class_id?: unknown }).class_id) === classId,
+          normalizedId((item as { class_id?: unknown }).class_id) === classId &&
+          normalizedId((item as { subject_id?: unknown }).subject_id) !== "",
       )
     );
   });

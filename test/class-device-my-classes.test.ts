@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { RELAY_GLOBAL_STANDBY } from "../src/lib/relay-standby";
+
+// Les contrats opt-in sont conservés pour la réactivation future du Relais.
+const relayOptInTest = RELAY_GLOBAL_STANDBY ? test.skip : test;
 import {
   ClassDeviceAccessError,
   enrichClassDeviceAccess,
@@ -120,7 +124,7 @@ function unsignedClassDeviceToken(input: {
   return `${Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")}.signature`;
 }
 
-test("politique valide retourne URL et jeton class_device v2 borné", async () => {
+relayOptInTest("politique valide retourne URL et jeton class_device v2 borné", async () => {
   const result = await enrichClassDeviceAccess({
     items: [classRow("class-a", "school-a")],
     actorProfileId: "device-profile-a",
@@ -157,7 +161,7 @@ test("politique valide retourne URL et jeton class_device v2 borné", async () =
   assert.equal(payload.actor_profile_id, "device-profile-a");
 });
 
-test("les endpoints observés remplacent automatiquement l'ancienne IPv4", async () => {
+relayOptInTest("les endpoints observés remplacent automatiquement l'ancienne IPv4", async () => {
   const result = await enrichClassDeviceAccess({
     items: [classRow("class-a", "school-a")],
     actorProfileId: "device-profile-a",
@@ -199,10 +203,10 @@ test("une politique seule n'active jamais un relais non provisionné", async () 
   assert.equal(presence.enabled, false);
   assert.equal(presence.allow_local_relay, false);
   assert.equal(presence.relay_access_token, null);
-  assert.equal(presence.diagnostic, "relay_not_provisioned");
+  assert.equal(presence.diagnostic, RELAY_GLOBAL_STANDBY ? "relay_disabled" : "relay_not_provisioned");
 });
 
-test("deux écoles et deux classes ne mélangent jamais leurs jetons", async () => {
+relayOptInTest("deux écoles et deux classes ne mélangent jamais leurs jetons", async () => {
   const result = await enrichClassDeviceAccess({
     items: [
       classRow("class-a", "school-a"),
@@ -237,7 +241,7 @@ test("deux écoles et deux classes ne mélangent jamais leurs jetons", async () 
   );
 });
 
-test("settings_json absent ou indisponible conserve l’accès relais valide", async () => {
+relayOptInTest("settings_json absent ou indisponible conserve l’accès relais valide", async () => {
   for (const service of [
     fakeService({
       institutions: [{ id: "school-a", name: "School A" }],
@@ -269,7 +273,7 @@ test("settings_json absent ou indisponible conserve l’accès relais valide", a
   }
 });
 
-test("erreur de lecture établissement est diagnostiquée sans perdre l’accès relais", async () => {
+relayOptInTest("erreur de lecture établissement est diagnostiquée sans perdre l’accès relais", async () => {
   const result = await enrichClassDeviceAccess({
     items: [classRow("class-a", "school-a")],
     actorProfileId: "device-profile",
@@ -289,23 +293,56 @@ test("erreur de lecture établissement est diagnostiquée sans perdre l’accès
   );
 });
 
-test("erreur de lecture de politique devient une erreur explicite", async () => {
-  await assert.rejects(
-    enrichClassDeviceAccess({
+test("EPC sans Relais conserve la classe et son nom pour le Cloud", async () => {
+  const result = await enrichClassDeviceAccess({
+    items: [classRow("epc-cp1-fr", "epc-dimbokro")],
+    actorProfileId: "epc-device",
+    service: fakeService({
+      institutions: [{ id: "epc-dimbokro", name: "EPC Centre d'Étude Islamique de Dimbokro" }],
+      policies: [],
+    }),
+  });
+  const item: any = result.items[0];
+  assert.equal(item.institution_name, "EPC Centre d'Étude Islamique de Dimbokro");
+  assert.equal(item.actor_profile_id, "epc-device");
+  assert.equal(item.attendance_presence.enabled, false);
+  assert.equal(item.attendance_presence.relay_access_token, null);
+  assert.equal(item.attendance_presence.diagnostic, RELAY_GLOBAL_STANDBY ? "relay_disabled" : "relay_policy_missing");
+});
+
+test("panne de politique Relais ne bloque pas l’accès Cloud aux classes", async () => {
+  for (const options of [
+    { throwPolicy: true },
+    { policyError: { code: "unavailable" } },
+  ]) {
+    const result = await enrichClassDeviceAccess({
       items: [classRow("class-a", "school-a")],
       actorProfileId: "device-profile",
       service: fakeService({
-        throwPolicy: true,
+        ...options,
+        institutions: [{ id: "school-a", name: "School A" }],
       }),
-    }),
-    (error: unknown) =>
-      error instanceof ClassDeviceAccessError &&
-      error.status === 503 &&
-      error.code === "class_relay_policy_unavailable",
-  );
+    });
+    const item: any = result.items[0];
+    assert.equal(item.institution_name, "School A");
+    assert.equal(item.attendance_presence.enabled, false);
+    assert.equal(item.attendance_presence.relay_access_token, null);
+    assert.equal(item.attendance_presence.diagnostic, RELAY_GLOBAL_STANDBY ? "relay_disabled" : "relay_policy_unavailable");
+    assert.ok(result.diagnostics.includes("relay_policy_unavailable"));
+  }
 });
 
-test("secret ou URL incomplet retourne un diagnostic non sensible", async () => {
+test("préparation Cloud n’exige jamais un jeton Relais absent", async () => {
+  const source = await readFile(
+    new URL("../src/lib/offline-readiness.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /selectedClass\?\.attendance_presence\?\.enabled === true/);
+  assert.match(source, /if \(relayPolicy\) \{/);
+  assert.match(source, /buildClassDeviceScheduleFromCloud\(/);
+});
+
+relayOptInTest("secret ou URL incomplet retourne un diagnostic non sensible", async () => {
   const cases = [
     {
       override: { relay_presence_secret: null },
@@ -337,7 +374,7 @@ test("secret ou URL incomplet retourne un diagnostic non sensible", async () => 
   }
 });
 
-test("échec de création du jeton est explicite sans secret ni signature", async () => {
+relayOptInTest("échec de création du jeton est explicite sans secret ni signature", async () => {
   await assert.rejects(
     enrichClassDeviceAccess({
       items: [classRow("class-a", "school-a")],
