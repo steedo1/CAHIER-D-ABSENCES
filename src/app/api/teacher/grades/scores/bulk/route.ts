@@ -296,14 +296,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Only a directly assigned primary teacher in a Franco-Arabic school
-    // may correct a published evaluation. The traditional approval workflow
-    // remains unchanged for every other school, cycle and actor.
+    // Secondaire : correction pendant la période. Primaire classique :
+    // conserver les protections historiques. EPC primaire : exception existante.
+    const { data: gradeClass, error: classError } = await srv.from("classes")
+      .select("id,institution_id,level").eq("id", ge.class_id).maybeSingle();
+    if (classError || !gradeClass) return bad("TEACHER_CLASS_LOOKUP_FAILED", 503);
+    const primaryClass = /^(CP[12]|CE[12]|CM[12])(?:\b|$)/i
+      .test(String(gradeClass.level || "").trim());
     let directPrimaryTeacher = false;
     if (ge.teacher_id === auth.user.id) {
-      const { data: cls, error: classError } = await srv.from("classes")
-        .select("id,institution_id,level").eq("id", ge.class_id).maybeSingle();
-      if (classError) return bad("TEACHER_CLASS_LOOKUP_FAILED", 503);
+      const cls = gradeClass;
       if (cls?.institution_id) {
         const { data: inst, error: instError } = await srv.from("institutions")
           .select("settings_json").eq("id", cls.institution_id).maybeSingle();
@@ -322,7 +324,9 @@ export async function POST(req: NextRequest) {
     // ✅ Keep published notes editable in this single opt-in teaching path.
     const editable = assertEvaluationEditable(ge);
     const wasPublished = ge.is_published === true || ge.publication_status === "published";
-    if (!editable.ok && !(wasPublished && ge.publication_status !== "submitted")) {
+    const canCorrectPublished = ge.teacher_id === auth.user.id &&
+      (!primaryClass || directPrimaryTeacher);
+    if (!editable.ok && !(wasPublished && ge.publication_status !== "submitted" && canCorrectPublished)) {
       console.warn("[teacher/grades/scores/bulk] evaluation not editable", {
         evaluation_id,
         error: editable.error,
