@@ -3067,7 +3067,7 @@ export default function ClassDeviceNotesPage() {
                   </Button>
                 </>
               )}
-              {currentActiveEval && !isPreschoolProgram && (
+              {currentActiveEval && (
                 <GhostButton
                   tone="red"
                   type="button"
