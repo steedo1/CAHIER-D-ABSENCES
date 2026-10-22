@@ -854,7 +854,10 @@ export async function handleTeacherPublicationIntent(params: {
     evaluationId: params.evaluationId,
     actorProfileId: params.actorProfileId,
     comment: params.comment || null,
-    forceNewVersion: false,
+    // Ne créer une nouvelle version que pour une correction explicitement
+    // enregistrée puis publiée. Les clics répétés restent idempotents.
+    forceNewVersion: ctx.evaluation.is_published === true &&
+      asPublicationStatus(ctx.evaluation.publication_status) === "changes_requested",
     queuePush: true,
   });
 }
