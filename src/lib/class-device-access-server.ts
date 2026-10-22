@@ -53,6 +53,7 @@ export type ClassDeviceAccessDiagnostic =
   | "institution_id_missing"
   | "class_id_missing"
   | "relay_policy_missing"
+  | "relay_policy_unavailable"
   | "relay_disabled"
   | "relay_local_access_disabled"
   | "relay_not_provisioned"
@@ -125,19 +126,6 @@ async function readOptionalQuery<T>(
   }
 }
 
-async function readPolicyQuery(
-  read: () => PromiseLike<QueryResult<AttendancePolicyRow>>,
-): Promise<QueryResult<AttendancePolicyRow>> {
-  try {
-    return await read();
-  } catch {
-    throw new ClassDeviceAccessError(
-      503,
-      "class_relay_policy_unavailable",
-    );
-  }
-}
-
 export async function enrichClassDeviceAccess(input: {
   items: ClassDeviceSourceRow[];
   actorProfileId: string;
@@ -198,7 +186,7 @@ export async function enrichClassDeviceAccess(input: {
         .select("id,settings_json")
         .in("id", institutionIds),
     ),
-    readPolicyQuery(() =>
+    readOptionalQuery<AttendancePolicyRow>(() =>
       input.service
         .from("institution_attendance_policies")
         .select(
@@ -213,13 +201,6 @@ export async function enrichClassDeviceAccess(input: {
         .in("institution_id", institutionIds),
     ),
   ]);
-
-  if (policiesResult.error) {
-    throw new ClassDeviceAccessError(
-      503,
-      "class_relay_policy_unavailable",
-    );
-  }
 
   const institutionById = new Map(
     (institutionsResult.error ? [] : institutionsResult.data || []).map(
@@ -263,6 +244,9 @@ export async function enrichClassDeviceAccess(input: {
   if (settingsResult.error) {
     aggregateDiagnostics.add("education_settings_unavailable");
   }
+  if (policiesResult.error) {
+    aggregateDiagnostics.add("relay_policy_unavailable");
+  }
 
   const createAccessToken =
     input.createAccessToken || createRelayAttendanceAccessToken;
@@ -276,14 +260,19 @@ export async function enrichClassDeviceAccess(input: {
       configuredUrl: policy?.relay_local_url,
       observedUrls: observedUrlsByInstitution.get(institutionId),
     });
-    const accessDiagnostic = relayDiagnostic(
-      row,
-      policy,
-      relayLocalUrls,
-      relayDevicesResult.error
-        ? null
-        : provisionedRelayInstitutions.has(institutionId),
-    );
+    // Une panne de lecture de la politique désactive uniquement le Relais.
+    // La classe autorisée et la préparation Cloud restent disponibles.
+    const accessDiagnostic: ClassDeviceAccessDiagnostic | null =
+      policiesResult.error
+        ? "relay_policy_unavailable"
+        : relayDiagnostic(
+            row,
+            policy,
+            relayLocalUrls,
+            relayDevicesResult.error
+              ? null
+              : provisionedRelayInstitutions.has(institutionId),
+          );
     const metadataDiagnostics = new Set<string>();
     if (institutionsResult.error) {
       metadataDiagnostics.add("institution_metadata_unavailable");
