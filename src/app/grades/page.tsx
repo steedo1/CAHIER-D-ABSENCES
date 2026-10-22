@@ -260,24 +260,20 @@ function isEvaluationChangesRequested(ev: Evaluation) {
 
 function isEvaluationEditableForTeacher(ev: Evaluation, allowPublishedPrimaryCorrection = false) {
   if (allowPublishedPrimaryCorrection && isEvaluationPublished(ev)) return true;
-  const status = getPublicationStatus(ev);
-
-  return (
-    ev.is_published !== true &&
-    (status === "draft" || status === "changes_requested")
-  );
+  return getPublicationStatus(ev) !== "submitted";
 }
 
 function isEvaluationDeletableForTeacher(ev: Evaluation) {
-  return isEvaluationEditableForTeacher(ev);
+  return !isEvaluationPublished(ev) &&
+    (getPublicationStatus(ev) === "draft" || getPublicationStatus(ev) === "changes_requested");
 }
 
 function publicationStatusLabel(ev: Evaluation, directPublication = false) {
   const status = getPublicationStatus(ev);
 
+  if (status === "submitted") return "En attente de validation";
+  if (status === "changes_requested") return ev.is_published ? "Correction en cours" : "Correction demandée";
   if (ev.is_published === true || status === "published") return "Publié";
-  if (status === "submitted") return directPublication ? "À publier" : "En attente de validation";
-  if (status === "changes_requested") return "Correction demandée";
 
   return "Brouillon";
 }
@@ -1203,6 +1199,15 @@ export default function TeacherNotesPage() {
           const payload: any = result.data;
           throw new Error(payload?.message || payload?.error || "Échec d’enregistrement.");
         }
+        const saved: any = result.data;
+        if (saved?.publication_status === "changes_requested") {
+          setEvaluations(prev => prev.map(ev => ev.id === evaluation_id
+            ? { ...ev, publication_status: "changes_requested" } : ev));
+        } else if (saved?.publication?.is_published === true) {
+          setEvaluations(prev => prev.map(ev => ev.id === evaluation_id
+            ? { ...ev, is_published: true, publication_status: "published",
+                publication_version: saved.publication.publication_version ?? ev.publication_version } : ev));
+        }
       }
 
       const savedEvalIds = new Set(perEval.map(([evaluation_id]) => evaluation_id));
@@ -1341,7 +1346,7 @@ export default function TeacherNotesPage() {
   }
 
   /* -------- Publication (panneau séparé) -------- */
-  async function togglePublish(ev: Evaluation) {
+  async function togglePublish(ev: Evaluation, forcePublish = false) {
     if (!isOnline) {
       setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
       return;
@@ -1360,7 +1365,7 @@ export default function TeacherNotesPage() {
 
     setMsg(null);
 
-    const next = !isEvaluationPublished(ev);
+    const next = forcePublish || !isEvaluationPublished(ev);
 
     setPublishBusy((prev) => ({ ...prev, [ev.id]: true }));
 
@@ -1424,11 +1429,15 @@ export default function TeacherNotesPage() {
     if (!window.confirm("Publier cette évaluation ?")) return;
     const hasChanges = Object.keys(changed[ev.id] || {}).length > 0;
     if (hasChanges && !(await saveAllChanges())) return;
-    if (isEvaluationPublished(ev)) {
-      setMsg(hasChanges ? "Notes corrigées et mises à jour ✅" : "Déjà publiée. Aucune nouvelle notification.");
+    if (isEvaluationPublished(ev) && (getPublicationStatus(ev) === "published" && !hasChanges)) {
+      setMsg("Déjà publiée. Aucune nouvelle notification.");
       return;
     }
-    await togglePublish(ev);
+    if (isEvaluationPublished(ev) && !publicationRequiresValidation) {
+      setMsg(hasChanges ? "Notes corrigées et mises à jour ✅" : "Déjà publiée.");
+      return;
+    }
+    await togglePublish(ev, true);
   }
 
   /* -------- Suppression d’une évaluation (colonne) -------- */
