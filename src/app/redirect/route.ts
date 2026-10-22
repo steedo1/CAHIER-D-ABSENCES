@@ -37,8 +37,39 @@ function loginRedirect(url: URL, book?: Book) {
   return withNoStore(NextResponse.redirect(loginUrl));
 }
 
+// Reverse proxies (including Render) may forward an internal request origin.
+// Only use a known public host to form browser-facing redirect URLs.
+function publicRequestUrl(req: Request): URL {
+  const incoming = new URL(req.url);
+  const forwardedHost = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim().toLowerCase();
+  const host = forwardedHost || req.headers.get("host")?.trim().toLowerCase() || "";
+  const renderHost = process.env.RENDER_EXTERNAL_HOSTNAME?.trim().toLowerCase();
+  const allowedHost =
+    host === "www.mon-cahier.com" ||
+    host === "mon-cahier.com" ||
+    (Boolean(renderHost) && host === renderHost);
+
+  if (allowedHost) {
+    return new URL(incoming.pathname + incoming.search, `https://${host}`);
+  }
+
+  const renderExternalUrl = process.env.RENDER_EXTERNAL_URL;
+  if (renderExternalUrl) {
+    try {
+      const base = new URL(renderExternalUrl);
+      if (base.protocol === "https:") {
+        return new URL(incoming.pathname + incoming.search, base);
+      }
+    } catch {
+      // Keep incoming URL outside Render or if the URL is invalid.
+    }
+  }
+
+  return incoming;
+}
+
 export async function GET(req: Request) {
-  const url = new URL(req.url);
+  const url = publicRequestUrl(req);
 
 
   const rawBook = url.searchParams.get("book");

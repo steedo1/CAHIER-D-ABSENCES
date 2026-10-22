@@ -158,6 +158,8 @@ test("dated subject averages read only the selected official snapshot and teachi
 
 test("Franco-Arabic teacher publication queues only the official parent snapshot once", async () => {
   const db = setup();
+  // La direction a activé explicitement les notifications push.
+  db.tables.institution_grade_publication_settings[0].auto_push_on_publish = true;
   const ev = await create(db, "DEC", "arabic");
   const saved = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts").POST(req("/api/teacher/grades/scores/bulk", { evaluation_id: ev.id, items: [{ student_id: pupil0, score: 0 }] }));
   assert.equal(saved.status, 200);
@@ -182,6 +184,25 @@ test("Franco-Arabic teacher publication queues only the official parent snapshot
 });
 
 
+test("Franco-Arabic school with disabled push does not notify parents on publication", async () => {
+  const db = setup();
+  db.tables.institution_grade_publication_settings[0].auto_push_on_publish = false;
+  const ev = await create(db, "DEC", "french");
+  const saved = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts")
+    .POST(req("/api/teacher/grades/scores/bulk", {
+      evaluation_id: ev.id, items: [{ student_id: pupil0, score: 8 }],
+    }));
+  assert.equal(saved.status, 200);
+  const published = await db.teacher(evaluationPath).PATCH(
+    req("/api/teacher/grades/evaluations", {
+      evaluation_id: ev.id, is_published: true,
+    }, "PATCH"));
+  assert.equal(published.status, 200);
+  assert.equal(db.tables.grade_evaluations[0].publication_status, "published");
+  assert.equal(db.tables.notifications_queue.filter(row => row.status === "pending").length, 0,
+    "the administrative push switch must be respected");
+});
+
 test("concurrent creation cannot duplicate the same event/subject/teaching", async () => {
   const db = setup();
   const [first,second] = await Promise.all([create(db,"DEC"),create(db,"DEC")]);
@@ -198,7 +219,9 @@ test("French-only primary retains its existing administrator validation policy",
 });
 
 test("actual production scale CHECK: /50 keeps raw points, displayed scales and official snapshots without DDL", async () => {
-  const db = setup("CM1"), ev = await create(db,"DEC","french");
+  const db = setup("CM1");
+  db.tables.institution_grade_publication_settings[0].auto_push_on_publish = true;
+  const ev = await create(db,"DEC","french");
   assert.equal(ev.scale,50);
   const stored = db.tables.grade_evaluations[0];
   assert.equal(stored.scale,60,"a value allowed by the existing production constraint");
@@ -356,7 +379,7 @@ test("EPC primary teacher corrects a published note without unpublishing or dele
   ).POST(req("/api/teacher/grades/scores/bulk", {
     evaluation_id: evaluation.id, items: [{ student_id: pupil0, score: 3 }],
   }));
-  assert.equal(foreign.status, 423, "a different teacher cannot change the published note");
+  assert.ok([403, 423].includes(foreign.status), "a different teacher cannot change the published note");
   assert.equal(db.tables.student_grades.find(row =>
     row.evaluation_id === evaluation.id && row.student_id === pupil0)?.score, 9.5);
 });

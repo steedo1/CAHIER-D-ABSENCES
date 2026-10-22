@@ -494,13 +494,11 @@ export default function AdminGradePublicationRequestsPage() {
 
   const selectedCanApprove =
     selectedHasExactClassScope &&
-    selected?.publication_status !== "published" &&
-    selected?.is_published !== true;
+    selected?.publication_status !== "published";
 
   const selectedCanRequestChanges =
     selectedHasExactClassScope &&
-    selected?.publication_status !== "published" &&
-    selected?.is_published !== true;
+    selected?.publication_status !== "published";
 
   async function loadRequests(nextStatus: StatusFilter = status) {
     setLoading(true);
