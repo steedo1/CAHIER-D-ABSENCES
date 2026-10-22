@@ -24,7 +24,7 @@ export async function requiresDirectGradePublication(
 
 /**
  * For a Franco-Arabic establishment, neither an administrator's historical
- * toggle nor an old settings row can require an approval or disable push.
+ * toggle or old settings row can require approval. Push remains a school choice.
  * Parent notification delivery still depends on their subscriptions,
  * preferences, token validity and the ordinary async notification workers.
  */
@@ -33,6 +33,6 @@ export function effectiveGradePublicationSwitches(
   configured: { require_admin_validation: boolean; auto_push_on_publish: boolean },
 ) {
   return isFrancoArabic
-    ? { require_admin_validation: false, auto_push_on_publish: true }
+    ? { require_admin_validation: false, auto_push_on_publish: configured.auto_push_on_publish }
     : configured;
 }
