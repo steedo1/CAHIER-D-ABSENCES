@@ -1088,6 +1088,9 @@ type ClassDeviceInstitutionPeriod = {
 };
 
 type ClassDeviceInstitutionBasics = {
+  institution_id?: string | null;
+  class_id?: string | null;
+  actor_profile_id?: string | null;
   periods?: ClassDeviceInstitutionPeriod[];
 };
 
