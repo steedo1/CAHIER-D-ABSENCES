@@ -4,7 +4,7 @@ import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-clas
 import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
 import { usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
-import { publishEvaluationOfficially } from "@/lib/grades/publication";
+import { getGradePublicationSettings, publishEvaluationOfficially, stagePublishedEvaluationCorrection } from "@/lib/grades/publication";
 // src/app/api/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -419,7 +419,7 @@ export async function POST(req: NextRequest) {
     const editable = assertEvaluationEditable(ge);
 
     const isPublished = ge.is_published === true || ge.publication_status === "published";
-    const mayRepublish = autoPublishPrimary && isPublished;
+    const mayRepublish = isPublished && ge.publication_status !== "submitted";
     if (!editable.ok && !mayRepublish) {
       console.warn("[grades/scores/bulk] evaluation not editable", {
         evaluation_id,
@@ -429,6 +429,12 @@ export async function POST(req: NextRequest) {
       });
 
       return bad(editable.error, editable.status, editable.extra);
+    }
+
+    // Les corrections déjà publiées exigent l'identité de la classe sur compte-classe.
+    if (isPublished && classDeviceOnly &&
+        !await classDeviceMayAccessClass({ service: srv, userId: profile.id, classId: ge.class_id })) {
+      return bad("CLASS_DEVICE_CLASS_FORBIDDEN", 403);
     }
 
     // ✅ Bloquer l'écriture si l'évaluation est verrouillée par PIN.
@@ -468,8 +474,8 @@ export async function POST(req: NextRequest) {
     const violations: Violation[] = [];
 
     // Valider & préparer.
-    const upserts: UpsertRow[] = [];
-    const toDelete: string[] = [];
+    let upserts: UpsertRow[] = [];
+    let toDelete: string[] = [];
 
     for (const it of items) {
       const student_id = String(it?.student_id || "").trim();
@@ -515,6 +521,22 @@ export async function POST(req: NextRequest) {
       return bad("VALIDATION_FAILED", 422, { violations });
     }
 
+    // Comparaison serveur anti-doublon avant toute écriture.
+    const touchedIds = [...new Set([...upserts.map((row) => row.student_id), ...toDelete])];
+    if (touchedIds.length > 0) {
+      const { data: existing, error: existingError } = await srv.from("student_grades")
+        .select("student_id,score,comment").eq("evaluation_id", evaluation_id)
+        .in("student_id", touchedIds);
+      if (existingError) return bad("GRADE_COMPARISON_FAILED", 503);
+      const before = new Map((existing || []).map((row: any) => [String(row.student_id), row]));
+      upserts = upserts.filter((row) => {
+        const old: any = before.get(row.student_id);
+        return !old || Number(old.score) !== Number(row.score) ||
+          String(old.comment ?? "") !== String(row.comment ?? "");
+      });
+      toDelete = toDelete.filter((studentId) => before.has(studentId));
+    }
+
     let upserted = 0;
     let deleted = 0;
     const warnings: string[] = [];
@@ -554,21 +576,35 @@ export async function POST(req: NextRequest) {
       warnings.push(`${violations.length} ligne(s) ignorée(s) (validation)`);
     }
 
-    // A saved primary mark becomes official immediately. Subsequent pupils'
-    // marks update the same evaluation via a new audited snapshot/version.
-    // Nothing is published for other schools or roles.
     let publication: Awaited<ReturnType<typeof publishEvaluationOfficially>> | null = null;
-    if (autoPublishPrimary && (upserted > 0 || deleted > 0)) {
-      publication = await publishEvaluationOfficially({
-        evaluationId: evaluation_id, actorProfileId: profile.id,
-        forceNewVersion: isPublished, queuePush: true,
-        notifyStudentIds: [...new Set([...upserts.map(item => item.student_id), ...toDelete])],
-      });
-      if (!publication.ok) {
-        console.error("[grades/scores/bulk] primary marks saved but publication failed",
-          { evaluation_id, publication });
-        return bad("PRIMARY_PUBLICATION_PENDING", publication.status || 503,
-          { message: "Notes enregistrées, mais publication à reprendre. Réessayez l’enregistrement.",
+    let correctionPendingAdmin = false;
+    if (upserted > 0 || deleted > 0) {
+      if (autoPublishPrimary) {
+        // Primaire EPC : comportement historique, publication immédiate.
+        publication = await publishEvaluationOfficially({
+          evaluationId: evaluation_id, actorProfileId: profile.id,
+          forceNewVersion: isPublished, queuePush: true,
+          notifyStudentIds: [...new Set([...upserts.map(item => item.student_id), ...toDelete])],
+        });
+      } else if (isPublished) {
+        const settings = await getGradePublicationSettings(profile.institution_id);
+        if (settings.require_admin_validation) {
+          const staged = await stagePublishedEvaluationCorrection({
+            evaluationId: evaluation_id, actorProfileId: profile.id,
+          });
+          if (!staged.ok) return bad(staged.error, staged.status, { saved: true });
+          correctionPendingAdmin = true;
+        } else {
+          publication = await publishEvaluationOfficially({
+            evaluationId: evaluation_id, actorProfileId: profile.id,
+            forceNewVersion: true, queuePush: true,
+            notifyStudentIds: [...new Set([...upserts.map(item => item.student_id), ...toDelete])],
+          });
+        }
+      }
+      if (publication && !publication.ok) {
+        return bad("CORRECTION_PUBLICATION_PENDING", publication.status || 503,
+          { message: "Notes enregistrées, publication à reprendre.",
             saved: true, publication_error: publication.error });
       }
     }
@@ -588,7 +624,7 @@ export async function POST(req: NextRequest) {
       upserted,
       deleted,
       warnings,
-      publication_status: publication?.ok ? "published" : editable.publication_status,
+      publication_status: publication?.ok ? "published" : correctionPendingAdmin ? "changes_requested" : editable.publication_status,
       publication: publication?.ok ? { is_published: true,
         publication_version: publication.publication_version,
         push_queued: publication.push_queued } : null,
