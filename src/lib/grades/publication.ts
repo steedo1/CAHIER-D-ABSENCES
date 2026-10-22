@@ -473,7 +473,7 @@ export async function submitEvaluationForPublication(params: {
 
   const currentStatus = asPublicationStatus(evaluation.publication_status);
 
-  if (evaluation.is_published || currentStatus === "published") {
+  if (currentStatus === "published") {
     return {
       ok: true,
       action: "already_published",
@@ -508,7 +508,7 @@ export async function submitEvaluationForPublication(params: {
       reviewed_at: null,
       reviewed_by: null,
       review_comment: null,
-      is_published: false,
+      is_published: evaluation.is_published === true,
     })
     .eq("id", evaluation.id);
 
@@ -530,7 +530,7 @@ export async function submitEvaluationForPublication(params: {
     evaluation_id: evaluation.id,
     institution_id: institutionId,
     publication_status: "submitted",
-    is_published: false,
+    is_published: evaluation.is_published === true,
     publication_version: Number(evaluation.publication_version || 0),
     push_queued: false,
   };
@@ -563,7 +563,7 @@ export async function requestChangesForEvaluation(params: {
   const { evaluation, institutionId } = ctx;
   const currentStatus = asPublicationStatus(evaluation.publication_status);
 
-  if (evaluation.is_published || currentStatus === "published") {
+  if (currentStatus === "published") {
     return err("ALREADY_PUBLISHED_USE_CORRECTION_WORKFLOW", 409);
   }
 
@@ -574,7 +574,7 @@ export async function requestChangesForEvaluation(params: {
       reviewed_at: nowIso(),
       reviewed_by: params.actorProfileId,
       review_comment: cleanComment,
-      is_published: false,
+      is_published: evaluation.is_published === true,
     })
     .eq("id", evaluation.id);
 
@@ -596,10 +596,29 @@ export async function requestChangesForEvaluation(params: {
     evaluation_id: evaluation.id,
     institution_id: institutionId,
     publication_status: "changes_requested",
-    is_published: false,
+    is_published: evaluation.is_published === true,
     publication_version: Number(evaluation.publication_version || 0),
     push_queued: false,
   };
+}
+
+/**
+ * Enregistrement d'une correction d'une note déjà publiée :
+ * on conserve le dernier snapshot approuvé, sans push ni SMS,
+ * jusqu'au clic « Publier » puis à la validation administrative.
+ */
+export async function stagePublishedEvaluationCorrection(params: {
+  evaluationId: string;
+  actorProfileId: string;
+}) {
+  const srv = getSupabaseServiceClient();
+  const { error } = await srv.from("grade_evaluations")
+    .update({ publication_status: "changes_requested" })
+    .eq("id", params.evaluationId)
+    .eq("is_published", true)
+    .in("publication_status", ["published", "changes_requested"]);
+  if (error) return err("STAGE_PUBLISHED_CORRECTION_FAILED", 503, error);
+  return { ok: true as const };
 }
 
 /**
