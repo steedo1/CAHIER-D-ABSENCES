@@ -13,6 +13,7 @@ import {
 import { useAuth } from "@/app/providers";
 import { fetchAuthRole } from "@/lib/auth/role-client";
 import { getOfflineAccessIntent } from "@/lib/offline-auth-client";
+import { RELAY_GLOBAL_STANDBY } from "@/lib/relay-standby";
 import {
   readRelayCapability,
   rememberRelayCapability,
@@ -82,7 +83,7 @@ export default function RelayCapabilityProvider({ children }: { children: ReactN
       const payload = await response.json().catch(() => ({}));
       if (sessionRef.current?.user.id !== actorId) return;
       const nextInstitutionId = String(payload?.institution_id || "").trim();
-      const nextRelayEnabled = payload?.relay_enabled === true;
+      const nextRelayEnabled = !RELAY_GLOBAL_STANDBY && payload?.relay_enabled === true;
       if (nextInstitutionId) {
         rememberRelayCapability({
           institutionId: nextInstitutionId,
