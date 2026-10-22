@@ -3,7 +3,7 @@ import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
 import { usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
-import { getGradePublicationSettings, publishEvaluationOfficially, stagePublishedEvaluationCorrection } from "@/lib/grades/publication";
+import { publishEvaluationOfficially, stagePublishedEvaluationCorrection } from "@/lib/grades/publication";
 // src/app/api/teacher/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -538,17 +538,8 @@ export async function POST(req: NextRequest) {
     let publication: Awaited<ReturnType<typeof publishEvaluationOfficially>> | null = null;
     let correctionPendingAdmin = false;
     if (wasPublished && (upserted > 0 || deleted > 0)) {
-      const { data: cls } = await srv.from("classes")
-        .select("institution_id").eq("id", ge.class_id).maybeSingle();
-      if (!cls?.institution_id) return bad("INSTITUTION_NOT_FOUND", 503);
-      const settings = await getGradePublicationSettings(cls.institution_id);
-      if (settings.require_admin_validation && !directPrimaryTeacher) {
-        const staged = await stagePublishedEvaluationCorrection({
-          evaluationId: evaluation_id, actorProfileId: auth.user.id,
-        });
-        if (!staged.ok) return bad(staged.error, staged.status, { saved: true });
-        correctionPendingAdmin = true;
-      } else {
+      if (directPrimaryTeacher) {
+        // Primaire EPC : conserver la publication immédiate historique.
         publication = await publishEvaluationOfficially({
           evaluationId: evaluation_id,
           actorProfileId: auth.user.id,
@@ -559,6 +550,13 @@ export async function POST(req: NextRequest) {
         if (!publication.ok) return bad("CORRECTION_PUBLICATION_PENDING", publication.status || 503, {
           saved: true, message: "Notes enregistrées, publication à reprendre.",
         });
+      } else {
+        // Secondaire : Enregistrer conserve la dernière version officielle.
+        const staged = await stagePublishedEvaluationCorrection({
+          evaluationId: evaluation_id, actorProfileId: auth.user.id,
+        });
+        if (!staged.ok) return bad(staged.error, staged.status, { saved: true });
+        correctionPendingAdmin = true;
       }
     }
 
