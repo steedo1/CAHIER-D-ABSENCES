@@ -177,10 +177,13 @@ function round2(value: number) {
 }
 
 function scoreSourceForEvaluation(ev: EvaluationRow): ScoreSource {
-  return ev.is_published === true ||
-    normalizeStatus(ev.publication_status) === "published"
-    ? "grade_published_scores"
-    : "student_grades";
+  // Une correction en attente doit afficher les nouvelles saisies à l'administration.
+  const status = normalizeStatus(ev.publication_status);
+  return status === "submitted" || status === "changes_requested"
+    ? "student_grades"
+    : ev.is_published === true || status === "published"
+      ? "grade_published_scores"
+      : "student_grades";
 }
 
 function teacherKey(classId: unknown, subjectId: unknown) {
