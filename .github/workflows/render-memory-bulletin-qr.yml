@@ -1,0 +1,44 @@
+name: Render memory bulletin QR gate
+
+on:
+  push:
+    branches:
+      - fix/render-memory-bulletin-20261022
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-qr-memory-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render-bulletin-qr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: TypeScript check
+        run: npm run typecheck
+      - name: QR memory and existing bulletin regressions
+        run: |
+          node --test \
+            test/render-bulletin-qr-memory.test.mjs \
+            test/bulletin-qr-fallback.test.mjs \
+            test/bulletin-qr-preview.test.mjs \
+            test/bulletin-qr-consumption.test.mjs
+      - name: Next production build (CI placeholders, no real Supabase access)
+        env:
+          SUPABASE_URL: https://example.invalid
+          SUPABASE_ANON_KEY: ci-non-secret-anon-placeholder
+          SUPABASE_SERVICE_ROLE_KEY: ci-non-secret-service-placeholder
+          NEXT_PUBLIC_SUPABASE_URL: https://example.invalid
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-non-secret-anon-placeholder
+        run: npm run build
