@@ -73,6 +73,18 @@ test("EPC sans Relais reçoit ses propres créneaux Cloud, sans politique LAN", 
   assert.match(response.headers.get("cache-control"), /no-store/);
 });
 
+test("EPC sans créneau retourne une classe valide sans inventer d'emploi du temps", async () => {
+  const route = makeRoute({ periods: [] });
+  const response = await route.GET();
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.class_id, "epc-cp1-fr");
+  assert.deepEqual(payload.periods, []);
+  const page = read("src/app/class/page.tsx");
+  assert.match(page, /timetableAvailability === "unconfigured"/);
+  assert.match(page, /choisissez « Autre cours »/);
+});
+
 test("un appareil sans classe unique ne peut lire les horaires d'aucune école", async () => {
   for (const ids of [[], ["a", "b"]]) {
     const route = makeRoute({ classIds: ids });
