@@ -3,7 +3,7 @@ import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
 import { usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
-import { publishEvaluationOfficially } from "@/lib/grades/publication";
+import { getGradePublicationSettings, publishEvaluationOfficially, stagePublishedEvaluationCorrection } from "@/lib/grades/publication";
 // src/app/api/teacher/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -322,7 +322,7 @@ export async function POST(req: NextRequest) {
     // ✅ Keep published notes editable in this single opt-in teaching path.
     const editable = assertEvaluationEditable(ge);
     const wasPublished = ge.is_published === true || ge.publication_status === "published";
-    if (!editable.ok && !(directPrimaryTeacher && wasPublished)) {
+    if (!editable.ok && !(wasPublished && ge.publication_status !== "submitted")) {
       console.warn("[teacher/grades/scores/bulk] evaluation not editable", {
         evaluation_id,
         error: editable.error,
@@ -388,8 +388,8 @@ export async function POST(req: NextRequest) {
     const scale = Number(ge.scale || 20);
     const violations: Violation[] = [];
 
-    const upserts: UpsertRow[] = [];
-    const toDelete: string[] = [];
+    let upserts: UpsertRow[] = [];
+    let toDelete: string[] = [];
 
     for (const it of items) {
       const student_id = String(it?.student_id || "").trim();
@@ -441,6 +441,23 @@ export async function POST(req: NextRequest) {
       });
 
       return bad("VALIDATION_FAILED", 422, { violations });
+    }
+
+    // Ne pas re-publier ou notifier lorsque la valeur est identique.
+    const touchedIds = [...new Set([...upserts.map((row) => row.student_id), ...toDelete])];
+    if (touchedIds.length > 0) {
+      const { data: existing, error: existingError } = await srv.from("student_grades")
+        .select("student_id,score,comment")
+        .eq("evaluation_id", evaluation_id)
+        .in("student_id", touchedIds);
+      if (existingError) return bad("GRADE_COMPARISON_FAILED", 503);
+      const before = new Map((existing || []).map((row: any) => [String(row.student_id), row]));
+      upserts = upserts.filter((row) => {
+        const old: any = before.get(row.student_id);
+        return !old || Number(old.score) !== Number(row.score) ||
+          String(old.comment ?? "") !== String(row.comment ?? "");
+      });
+      toDelete = toDelete.filter((studentId) => before.has(studentId));
     }
 
     let upserted = 0;
@@ -514,23 +531,29 @@ export async function POST(req: NextRequest) {
       warnings.push(`${violations.length} ligne(s) ignorée(s) (validation)`);
     }
 
-    // Official snapshots and notifications must be refreshed after each
-    // saved correction. Only changed pupils are notified on republication.
     let publication: Awaited<ReturnType<typeof publishEvaluationOfficially>> | null = null;
-    if (directPrimaryTeacher && wasPublished && (upserted > 0 || deleted > 0)) {
-      publication = await publishEvaluationOfficially({
-        evaluationId: evaluation_id,
-        actorProfileId: auth.user.id,
-        forceNewVersion: wasPublished,
-        queuePush: true,
-        notifyStudentIds: [...new Set([...upserts.map(item => item.student_id), ...toDelete])],
-      });
-      if (!publication.ok) {
-        console.error("[teacher/grades/scores/bulk] primary scores saved; publication pending",
-          { evaluation_id, error: publication.error });
-        return bad("PRIMARY_PUBLICATION_PENDING", publication.status || 503, {
-          saved: true,
-          message: "Notes enregistrées, publication officielle à reprendre. Rechargez les notes avant de réessayer.",
+    let correctionPendingAdmin = false;
+    if (wasPublished && (upserted > 0 || deleted > 0)) {
+      const { data: cls } = await srv.from("classes")
+        .select("institution_id").eq("id", ge.class_id).maybeSingle();
+      if (!cls?.institution_id) return bad("INSTITUTION_NOT_FOUND", 503);
+      const settings = await getGradePublicationSettings(cls.institution_id);
+      if (settings.require_admin_validation && !directPrimaryTeacher) {
+        const staged = await stagePublishedEvaluationCorrection({
+          evaluationId: evaluation_id, actorProfileId: auth.user.id,
+        });
+        if (!staged.ok) return bad(staged.error, staged.status, { saved: true });
+        correctionPendingAdmin = true;
+      } else {
+        publication = await publishEvaluationOfficially({
+          evaluationId: evaluation_id,
+          actorProfileId: auth.user.id,
+          forceNewVersion: true,
+          queuePush: true,
+          notifyStudentIds: [...new Set([...upserts.map(item => item.student_id), ...toDelete])],
+        });
+        if (!publication.ok) return bad("CORRECTION_PUBLICATION_PENDING", publication.status || 503, {
+          saved: true, message: "Notes enregistrées, publication à reprendre.",
         });
       }
     }
@@ -552,7 +575,7 @@ export async function POST(req: NextRequest) {
       upserted,
       deleted,
       warnings,
-      publication_status: publication?.ok ? "published" : editable.publication_status,
+      publication_status: publication?.ok ? "published" : correctionPendingAdmin ? "changes_requested" : editable.publication_status,
       publication: publication?.ok ? {
         is_published: true, publication_version: publication.publication_version,
         push_queued: publication.push_queued,
