@@ -683,6 +683,8 @@ export default function ClassDevicePage() {
     academic_year_label: null,
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
+  const [timetableAvailability, setTimetableAvailability] =
+    useState<"unknown" | "configured" | "unconfigured">("unknown");
   const [slotLabel, setSlotLabel] = useState<string>(
     "Aucun créneau configuré (fallback automatique)"
   );
@@ -2045,6 +2047,11 @@ export default function ClassDevicePage() {
         : null;
     // Never use unscoped legacy settings for a different school's class phone.
     if (!all) return;
+    setTimetableAvailability(
+      Array.isArray(all.periods) && all.periods.length > 0
+        ? "configured"
+        : "unconfigured",
+    );
 
     if (all?.periods) {
       const nameFromAll =
@@ -4035,21 +4042,27 @@ export default function ClassDevicePage() {
         </div>
       </header>
 
-      <OfflineReadinessCard
-        role="class-device"
-        classDeviceContext={{
-          institutionId: selectedClass?.institution_id,
-          classId: selectedClass?.id,
-          actorProfileId: selectedClass?.actor_profile_id,
-          relayBaseUrl:
-            classRelayBaseUrl(selectedClass),
-          relayBaseUrls:
-            selectedClass?.attendance_presence?.relay_local_urls,
-          relayAccessToken:
-            selectedClass?.attendance_presence?.relay_access_token,
-        }}
-        onPrepared={refreshClassContextAfterPreparation}
-      />
+      {timetableAvailability === "unconfigured" ? (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+          Aucun créneau d'appel n'est encore configuré pour cet établissement.
+          Le compte classe reste accessible via le Cloud. Pour un cours réellement
+          dispensé, choisissez « Autre cours » puis la discipline concernée.
+          L'appel automatique par créneau sera disponible après configuration de l'emploi du temps.
+        </div>
+      ) : timetableAvailability === "configured" || relayUiEnabled ? (
+        <OfflineReadinessCard
+          role="class-device"
+          classDeviceContext={{
+            institutionId: selectedClass?.institution_id,
+            classId: selectedClass?.id,
+            actorProfileId: selectedClass?.actor_profile_id,
+            relayBaseUrl: classRelayBaseUrl(selectedClass),
+            relayBaseUrls: selectedClass?.attendance_presence?.relay_local_urls,
+            relayAccessToken: selectedClass?.attendance_presence?.relay_access_token,
+          }}
+          onPrepared={refreshClassContextAfterPreparation}
+        />
+      ) : null}
       {(subjectScheduleIssue || (relayUiEnabled ? relayScheduleIssue : null)) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
           {subjectScheduleIssue || (relayUiEnabled ? relayScheduleIssue : null)}
