@@ -4,7 +4,7 @@ import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-clas
 import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
 import { usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
-import { getGradePublicationSettings, publishEvaluationOfficially, stagePublishedEvaluationCorrection } from "@/lib/grades/publication";
+import { publishEvaluationOfficially, stagePublishedEvaluationCorrection } from "@/lib/grades/publication";
 // src/app/api/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -598,20 +598,13 @@ export async function POST(req: NextRequest) {
           notifyStudentIds: [...new Set([...upserts.map(item => item.student_id), ...toDelete])],
         });
       } else if (isPublished) {
-        const settings = await getGradePublicationSettings(profile.institution_id);
-        if (settings.require_admin_validation) {
-          const staged = await stagePublishedEvaluationCorrection({
-            evaluationId: evaluation_id, actorProfileId: profile.id,
-          });
-          if (!staged.ok) return bad(staged.error, staged.status, { saved: true });
-          correctionPendingAdmin = true;
-        } else {
-          publication = await publishEvaluationOfficially({
-            evaluationId: evaluation_id, actorProfileId: profile.id,
-            forceNewVersion: true, queuePush: true,
-            notifyStudentIds: [...new Set([...upserts.map(item => item.student_id), ...toDelete])],
-          });
-        }
+        // « Enregistrer » met la correction en attente, jamais en publication.
+        // Le dernier snapshot officiel reste intact jusqu'au clic « Publier ».
+        const staged = await stagePublishedEvaluationCorrection({
+          evaluationId: evaluation_id, actorProfileId: profile.id,
+        });
+        if (!staged.ok) return bad(staged.error, staged.status, { saved: true });
+        correctionPendingAdmin = true;
       }
       if (publication && !publication.ok) {
         return bad("CORRECTION_PUBLICATION_PENDING", publication.status || 503,
