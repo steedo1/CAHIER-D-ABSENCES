@@ -2021,6 +2021,7 @@ export default function ClassDevicePage() {
     const grouped: Record<number, Period[]> = {};
 
     const all =
+      (await getJson("/api/class/institution/basics", "classDevice:inst:basics:class")) ||
       (await getJson("/api/teacher/institution/basics", "classDevice:inst:basics:teacher")) ||
       (await getJson("/api/institution/basics", "classDevice:inst:basics:institution"));
 
