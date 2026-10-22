@@ -190,7 +190,7 @@ test("Franco-Arabic school with disabled push does not notify parents on publica
   const ev = await create(db, "DEC", "french");
   const saved = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts")
     .POST(req("/api/teacher/grades/scores/bulk", {
-      evaluation_id: ev.id, items: [{ student_id: pupil0, score: 12 }],
+      evaluation_id: ev.id, items: [{ student_id: pupil0, score: 8 }],
     }));
   assert.equal(saved.status, 200);
   const published = await db.teacher(evaluationPath).PATCH(
