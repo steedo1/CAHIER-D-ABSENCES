@@ -645,6 +645,7 @@ export default function TeacherNotesPage() {
 
   /* -------- Publication + suppression panel -------- */
   const [showPublishPanel, setShowPublishPanel] = useState(false);
+  const [publishConfirmEvalId, setPublishConfirmEvalId] = useState<string | null>(null);
   const [publishBusy, setPublishBusy] = useState<Record<string, boolean>>({});
 
   /* -------- Verrouillage des évaluations (PIN) -------- */
@@ -1422,22 +1423,27 @@ export default function TeacherNotesPage() {
   }
 
 
-  async function publishSelectedEvaluation() {
+  function publishSelectedEvaluation() {
     const ev = evaluations.find((item) => item.id === currentActiveEvalId);
     if (!ev || selectedPeriodClosed || !isOnline || loading || !!publishBusy[ev.id]) return;
     if (isEvaluationSubmitted(ev) && !directGradePublication) {
       setMsg("En attente de validation.");
       return;
     }
-    if (!window.confirm(`Publier ${labelByEvalId[ev.id] || "cette note"} ?`)) return;
+    setPublishConfirmEvalId(ev.id);
+  }
+
+  async function confirmSelectedPublication() {
+    const id = publishConfirmEvalId;
+    setPublishConfirmEvalId(null);
+    const ev = evaluations.find((item) => item.id === id);
+    if (!ev || selectedPeriodClosed || !isOnline || loading || !!publishBusy[ev.id]) return;
     const hasChanges = Object.keys(changed[ev.id] || {}).length > 0;
     if (hasChanges && !(await saveAllChanges(ev.id))) return;
-    if (isEvaluationPublished(ev) && (getPublicationStatus(ev) === "published" && !hasChanges)) {
+    if (isEvaluationPublished(ev) && getPublicationStatus(ev) === "published" && !hasChanges) {
       setMsg("Déjà publiée. Aucune nouvelle notification.");
       return;
     }
-    // Une correction sauvegardée reste en attente, même en publication directe.
-    // Le clic Publier déclenche lui-même la nouvelle version officielle.
     await togglePublish(ev, true);
   }
 
@@ -3553,6 +3559,22 @@ export default function TeacherNotesPage() {
             </div>
           )}
         </section>
+      )}
+
+      {publishConfirmEvalId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3" role="dialog" aria-modal="true" aria-label="Confirmer la publication">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-xl">
+            <div className="mb-4 text-sm font-semibold text-slate-900">
+              Publier {labelByEvalId[publishConfirmEvalId] || "cette note"} ?
+            </div>
+            <div className="flex justify-end gap-2">
+              <GhostButton onClick={() => setPublishConfirmEvalId(null)}>Annuler</GhostButton>
+              <Button onClick={() => { void confirmSelectedPublication(); }} disabled={loading}>
+                Publier
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Statistiques par évaluation */}
