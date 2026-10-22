@@ -1124,17 +1124,17 @@ export default function TeacherNotesPage() {
     }));
   }
 
-  async function saveAllChanges() {
-    if (!selected) return;
+  async function saveAllChanges(): Promise<boolean> {
+    if (!selected) return false;
 
     if (gradeWritesBlocked) {
       setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
-      return;
+      return false;
     }
 
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. La saisie des notes est fermée.");
-      return;
+      return false;
     }
 
     // Regrouper par évaluation
@@ -1161,19 +1161,19 @@ export default function TeacherNotesPage() {
       setMsg(
         "Toutes les colonnes modifiées sont déjà soumises ou publiées. Aucune modification directe n’est autorisée."
       );
-      return;
+      return false;
     }
 
     if (lockedWithChanges.length > 0 && perEval.length === 0) {
       setMsg(
         "Toutes les colonnes modifiées sont verrouillées. Déverrouillez l’évaluation pour enregistrer."
       );
-      return;
+      return false;
     }
 
     if (perEval.length === 0) {
       setMsg("Aucun changement à enregistrer.");
-      return;
+      return false;
     }
 
     setLoading(true);
@@ -1254,8 +1254,10 @@ export default function TeacherNotesPage() {
             ? "Notes enregistrées ✅ (les corrections de notes publiées sont republiées automatiquement)"
             : "Notes enregistrées ✅"
       );
+      return true;
     } catch (e: any) {
       setMsg(e?.message || "Échec d’enregistrement des notes.");
+      return false;
     } finally {
       setLoading(false);
     }
@@ -1265,25 +1267,25 @@ export default function TeacherNotesPage() {
     if (!selected) return;
     if (isPrimaryProgram && !primaryCatalogEnabled && !selectedPeriodId) {
       setMsg("Aucune période d’évaluation sélectionnée : utilisez Paramètres → Périodes d’évaluation.");
-      return;
+      return false;
     }
     if (isPrimaryProgram && !selected.configured_scale) {
       setMsg("Barème non configuré pour le primaire et cet enseignement : demandez à la direction de le définir avant toute saisie.");
-      return;
+      return false;
     }
     if (!isOnline) {
       setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
-      return;
+      return false;
     }
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. Impossible d’ajouter une nouvelle note.");
-      return;
+      return false;
     }
 
     // Si sous-matières configurées en collège, on impose la sélection
     if (hasComponents && !selectedComponentId) {
       setMsg("Choisissez une sous-rubrique avant d’ajouter une note.");
-      return;
+      return false;
     }
 
     const creationSelection = selKey;
@@ -1409,6 +1411,24 @@ export default function TeacherNotesPage() {
         return copy;
       });
     }
+  }
+
+
+  async function publishSelectedEvaluation() {
+    const ev = evaluations.find((item) => item.id === currentActiveEvalId);
+    if (!ev || selectedPeriodClosed || !isOnline || loading || !!publishBusy[ev.id]) return;
+    if (isEvaluationSubmitted(ev) && !directGradePublication) {
+      setMsg("En attente de validation.");
+      return;
+    }
+    if (!window.confirm("Publier cette évaluation ?")) return;
+    const hasChanges = Object.keys(changed[ev.id] || {}).length > 0;
+    if (hasChanges && !(await saveAllChanges())) return;
+    if (isEvaluationPublished(ev)) {
+      setMsg(hasChanges ? "Notes corrigées et mises à jour ✅" : "Déjà publiée. Aucune nouvelle notification.");
+      return;
+    }
+    await togglePublish(ev);
   }
 
   /* -------- Suppression d’une évaluation (colonne) -------- */
@@ -2737,40 +2757,45 @@ export default function TeacherNotesPage() {
                 )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {!isSchoolProgram && (
+              {!isPrimaryProgram && !isPreschoolProgram && (
                 <>
-                  <GhostButton
-                    tone="slate"
-                    onClick={() => setShowPublishPanel(true)}
-                    disabled={!evaluations.length || selectedPeriodClosed || !isOnline}
+                  <Button
+                    onClick={saveAllChanges}
+                    disabled={loading || totalChanges === 0 || selectedPeriodClosed || gradeWritesBlocked}
                   >
-                    Gérer la publication
-                  </GhostButton>
+                    <Save className="h-4 w-4" /> Enregistrer
+                  </Button>
+                  <Button
+                    tone="emerald"
+                    onClick={publishSelectedEvaluation}
+                    disabled={!currentActiveEvalId || loading || !isOnline || selectedPeriodClosed ||
+                      !!(currentActiveEvalId && publishBusy[currentActiveEvalId]) ||
+                      !!(currentActiveEvalId && isEvaluationSubmitted(evaluations.find(ev => ev.id === currentActiveEvalId)!) && !directGradePublication)}
+                    title={currentActiveEvalId ? labelByEvalId[currentActiveEvalId] || "Évaluation active" : undefined}
+                  >
+                    Publier{currentActiveEvalId ? " • " + (labelByEvalId[currentActiveEvalId] || "Note") : ""}
+                  </Button>
                   <GhostButton
                     tone="emerald"
-                    onClick={exportToCsv}
-                    disabled={!roster.length || !evaluations.length}
+                    onClick={() => setShowPublishPanel(true)}
+                    disabled={!evaluations.length}
                   >
-                    <FileSpreadsheet className="h-4 w-4" />
-                    Exporter (Excel/CSV)
+                    <FileText className="h-4 w-4" /> Statistiques
                   </GhostButton>
                 </>
               )}
-              <Button
-                onClick={saveAllChanges}
-                disabled={
-                  loading ||
-                  totalChanges === 0 ||
-                  selectedPeriodClosed ||
-                  gradeWritesBlocked
-                }
-              >
-                <Save className="h-4 w-4" /> Enregistrer
-              </Button>
+              {isPrimaryProgram && (
+                <Button
+                  onClick={saveAllChanges}
+                  disabled={loading || totalChanges === 0 || selectedPeriodClosed || gradeWritesBlocked}
+                >
+                  <Save className="h-4 w-4" /> Enregistrer
+                </Button>
+              )}
             </div>
           </div>
 
-          {isSchoolProgram && !isPreschoolProgram && (
+          {isPrimaryProgram && !isPreschoolProgram && (
             <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-3">
               <h2 className="text-sm font-semibold text-emerald-950">Publication des évaluations</h2>
               <p className="mt-1 text-xs text-emerald-900">
@@ -3512,186 +3537,41 @@ export default function TeacherNotesPage() {
         </section>
       )}
 
-      {/* Panneau gestion publication + suppression */}
-      {!isSchoolProgram && showPublishPanel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl border border-slate-200 p-4 md:p-6">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="text-base md:text-lg font-semibold">
-                Gérer la publication des évaluations
-              </h2>
-              <GhostButton
-                onClick={() => {
-                  setShowPublishPanel(false);
-                }}
-              >
-                Fermer
-              </GhostButton>
+      {/* Statistiques par évaluation */}
+      {!isPrimaryProgram && !isPreschoolProgram && showPublishPanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
+          <div className="w-full max-w-xl rounded-2xl border bg-white p-4 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-semibold">Statistiques</h2>
+              <GhostButton onClick={() => setShowPublishPanel(false)}>Fermer</GhostButton>
             </div>
-            <p className="text-xs md:text-sm text-slate-600 mb-3">
-              {directGradePublication
-                ? "Enregistrez vos notes, puis cliquez sur Publier : aucune validation administrative n’est requise. Après publication officielle, les notifications parents sont préparées automatiquement."
-                : "Publiez ou soumettez les évaluations selon le mode choisi par l’établissement. Les notes soumises ou publiées ne sont plus modifiables directement."}
-            </p>
-
-            {evaluations.length === 0 ? (
-              <div className="text-sm text-slate-500">
-                Aucune évaluation pour le moment.
-              </div>
-            ) : (
-              <div className="max-h-[60vh] overflow-y-auto rounded-xl border">
-                <table className="min-w-full text-xs md:text-sm">
-                  <thead className="bg-slate-50">
-                    <tr className="text-left text-slate-600">
-                      <th className="px-3 py-2">Date</th>
-                      <th className="px-3 py-2">Type</th>
-                      <th className="px-3 py-2">Détails</th>
-                      <th className="px-3 py-2 text-right">
-                        Statut / publication
-                      </th>
-                      <th className="px-3 py-2 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {evaluations.map((ev) => {
-                      const eventMarker = parsePrimaryEventTitle(ev.title);
-                      const typeLabel = eventMarker
-                        ? eventMarker.kind === "homework" ? "Devoir" : eventMarker.kind === "internal" ? "Évaluation interne" : eventMarker.kind === "mock" ? "Examen blanc" : eventMarker.kind === "passage" ? "Composition de passage" : "Composition officielle"
-                        : ev.eval_kind === "composition"
-                          ? "Composition"
-                          : ev.eval_kind === "devoir"
-                            ? "Devoir"
-                            : ev.eval_kind === "interro_ecrite"
-                          ? "Interrogation écrite"
-                          : "Interrogation orale";
-                      const shortLabel = labelByEvalId[ev.id] ?? "";
-                      const comp = ev.subject_component_id
-                        ? componentById[ev.subject_component_id]
-                        : undefined;
-                      const rubLabel =
-                        comp?.short_label || comp?.label || "";
-                      return (
-                        <tr key={ev.id} className="hover:bg-slate-50/60">
-                          <td className="px-3 py-2">
-                            {formatDateFr(ev.eval_date)}
-                          </td>
-                          <td className="px-3 py-2">
-                            {typeLabel}
-                            {shortLabel && (
-                              <span className="ml-1 text-[11px] text-slate-400">
-                                ({shortLabel})
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-slate-600 text-xs md:text-sm">
-                            /{ev.scale} • coeff {ev.coeff}
-                            {rubLabel && (
-                              <span className="ml-2 text-[11px] text-emerald-700">
-                                • {rubLabel}
-                              </span>
-                            )}
-                            {ev.published_at && (
-                              <span className="ml-2 text-[11px] text-slate-400">
-                                {`(publié le ${formatDateFr(
-                                  ev.published_at
-                                )})`}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <div className="flex flex-col items-end gap-1">
-                              <span
-                                className={[
-                                  "inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                                  publicationStatusClass(ev),
-                                ].join(" ")}
-                              >
-                                {publicationStatusLabel(ev, directGradePublication)}
-                              </span>
-
-                              {ev.review_comment && (
-                                <span className="max-w-[220px] text-right text-[11px] text-rose-600">
-                                  {ev.review_comment}
-                                </span>
-                              )}
-
-                              <Button
-                                type="button"
-                                tone={
-                                  isEvaluationPublished(ev)
-                                    ? "slate"
-                                    : isEvaluationChangesRequested(ev)
-                                    ? "amber"
-                                    : "emerald"
-                                }
-                                className="px-2 py-1 text-xs shadow-none"
-                                onClick={() => togglePublish(ev)}
-                                disabled={
-                                  !isOnline ||
-                                  selectedPeriodClosed ||
-                                  (isEvaluationSubmitted(ev) && !directGradePublication) ||
-                                  !!publishBusy[ev.id]
-                                }
-                                title={
-                                  isEvaluationSubmitted(ev) && !directGradePublication
-                                    ? "Déjà soumis : attente validation administrative"
-                                    : undefined
-                                }
-                              >
-                                {publishBusy[ev.id]
-                                  ? "Traitement…"
-                                  : publicationActionLabel(ev, directGradePublication)}
-                              </Button>
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <div className="flex justify-end gap-2">
-                              <GhostButton
-                                tone="emerald"
-                                type="button"
-                                onClick={() => exportEvalToPdf(ev)}
-                                disabled={
-                                  !roster.length ||
-                                  (Object.keys(grades[ev.id] || {}).length ===
-                                    0 &&
-                                    Object.keys(changed[ev.id] || {}).length ===
-                                      0)
-                                }
-                              >
-                                <FileText className="h-3.5 w-3.5" />
-                                Fiche PDF
-                              </GhostButton>
-                              <GhostButton
-                                tone="red"
-                                type="button"
-                                onClick={() => deleteEvaluation(ev)}
-                                disabled={
-                                  !isOnline ||
-                                  selectedPeriodClosed ||
-                                  !isEvaluationDeletableForTeacher(ev) ||
-                                  !!publishBusy[ev.id]
-                                }
-                                title={
-                                  !isEvaluationDeletableForTeacher(ev)
-                                    ? "Évaluation soumise ou publiée"
-                                    : undefined
-                                }
-                              >
-                                Supprimer la note
-                              </GhostButton>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <div className="max-h-[65vh] space-y-2 overflow-y-auto">
+              {evaluations.map((ev) => (
+                <div key={ev.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3">
+                  <div className="text-sm">
+                    <strong>{labelByEvalId[ev.id] || "Note"}</strong>
+                    <span className="ml-2 text-slate-500">{formatDateFr(ev.eval_date)}</span>
+                    <span className="ml-2 text-xs text-slate-500">{publicationStatusLabel(ev, directGradePublication)}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <GhostButton tone="emerald" onClick={() => exportEvalToPdf(ev)} disabled={!roster.length}>
+                      <FileText className="h-4 w-4" /> PDF
+                    </GhostButton>
+                    <GhostButton
+                      tone="red"
+                      onClick={() => deleteEvaluation(ev)}
+                      disabled={!isOnline || selectedPeriodClosed || !isEvaluationDeletableForTeacher(ev) || !!publishBusy[ev.id]}
+                    >
+                      Supprimer
+                    </GhostButton>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
-    
+
       {/* ==== MODAL VERROUILLAGE (PIN) ==== */}
       {lockModalOpen && lockTargetEv && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
