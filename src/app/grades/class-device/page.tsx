@@ -630,6 +630,7 @@ export default function ClassDeviceNotesPage() {
 
   /* -------- Publication + suppression panel -------- */
   const [showPublishPanel, setShowPublishPanel] = useState(false);
+  const [publishConfirmEvalId, setPublishConfirmEvalId] = useState<string | null>(null);
   const [publishBusy, setPublishBusy] = useState<Record<string, boolean>>({});
   const [deleteTarget, setDeleteTarget] = useState<Evaluation | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -1488,21 +1489,27 @@ export default function ClassDeviceNotesPage() {
   }
 
 
-  async function publishSelectedEvaluation() {
+  function publishSelectedEvaluation() {
     const ev = evaluations.find((item) => item.id === currentActiveEvalId);
     if (!ev || selectedPeriodClosed || !isOnline || loading || !!publishBusy[ev.id]) return;
     if (getPublicationStatus(ev) === "submitted") {
       setMsg("En attente de validation.");
       return;
     }
-    if (!window.confirm(`Publier ${labelByEvalId[ev.id] || "cette note"} ?`)) return;
+    setPublishConfirmEvalId(ev.id);
+  }
+
+  async function confirmSelectedPublication() {
+    const id = publishConfirmEvalId;
+    setPublishConfirmEvalId(null);
+    const ev = evaluations.find((item) => item.id === id);
+    if (!ev || selectedPeriodClosed || !isOnline || loading || !!publishBusy[ev.id]) return;
     const hasChanges = Object.keys(changed[ev.id] || {}).length > 0;
     if (hasChanges && !(await saveAllChanges(ev.id))) return;
     if (isEvaluationPublishedOfficial(ev) && !hasChanges) {
       setMsg("Déjà publiée. Aucune nouvelle notification.");
       return;
     }
-    // Après correction sous validation, ce clic soumet la nouvelle version.
     await togglePublish(ev, true);
   }
 
@@ -3679,6 +3686,22 @@ export default function ClassDeviceNotesPage() {
             </div>
           )}
         </section>
+      )}
+
+      {publishConfirmEvalId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3" role="dialog" aria-modal="true" aria-label="Confirmer la publication">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-xl">
+            <div className="mb-4 text-sm font-semibold text-slate-900">
+              Publier {labelByEvalId[publishConfirmEvalId] || "cette note"} ?
+            </div>
+            <div className="flex justify-end gap-2">
+              <GhostButton onClick={() => setPublishConfirmEvalId(null)}>Annuler</GhostButton>
+              <Button onClick={() => { void confirmSelectedPublication(); }} disabled={loading}>
+                Publier
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Panneau publication */}
