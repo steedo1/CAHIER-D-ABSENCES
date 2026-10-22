@@ -648,32 +648,55 @@ function pickPublicOrigin(fallbackOrigin: string) {
 
 /** ✅ QR PNG server-side (qualité print + quiet zone) */
 async function attachQrPng<T extends { qr_url: string | null }>(items: T[]) {
-  // ✅ défaut plus robuste à l'impression
+  // L'instance Render Free dispose de 512 Mio : ne jamais créer toutes les
+  // images PNG (600 px par défaut) d'une classe dans un Promise.all illimité.
   const size = Number(process.env.BULLETIN_QR_PNG_SIZE || "600");
   const margin = Math.max(4, Number(process.env.BULLETIN_QR_PNG_MARGIN || "4"));
   const ecl =
     (process.env.BULLETIN_QR_PNG_ECL || "M") as "L" | "M" | "Q" | "H";
 
-  return await Promise.all(
-    items.map(async (it) => {
-      if (!it.qr_url) return { ...it, qr_png: null as string | null };
+  const results = new Array<T & { qr_png: string | null }>(items.length);
+  let nextIndex = 0;
+  let failedCount = 0;
+  let longestFailedUrl = 0;
 
+  // Deux encodages simultanés au maximum ; ordre et intégralité préservés,
+  // pas de nouvelle lecture/écriture Supabase.
+  await Promise.all(Array.from({ length: Math.min(2, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      const item = items[index];
+      if (!item.qr_url) {
+        results[index] = { ...item, qr_png: null };
+        continue;
+      }
       try {
-        const png = await createBulletinQrDataUrl(it.qr_url, {
+        const png = await createBulletinQrDataUrl(item.qr_url, {
           width: size,
-          margin, // ✅ quiet zone (CRITIQUE)
+          margin,
           errorCorrectionLevel: ecl,
         }, (text, options) => QRCode.toDataURL(text, options));
-        return { ...it, qr_png: png || null };
+        results[index] = { ...item, qr_png: png || null };
       } catch {
-        console.warn("[bulletin] génération du QR impossible", {
-          url_length: it.qr_url.length,
-          error_correction_level: ecl,
-        });
-        return { ...it, qr_png: null as string | null };
+        // Un URL signé peut dépasser la capacité physique d'un QR.
+        // Le client conserve le token pour demander un code court à l'aperçu.
+        failedCount++;
+        longestFailedUrl = Math.max(longestFailedUrl, item.qr_url.length);
+        results[index] = { ...item, qr_png: null };
       }
-    })
-  );
+    }
+  }));
+
+  // Une seule ligne agrégée par requête, sans jeton ni données scolaires.
+  if (failedCount) {
+    console.warn("[bulletin] génération du QR impossible", {
+      failed_count: failedCount,
+      total_count: items.length,
+      max_url_length: longestFailedUrl,
+      error_correction_level: ecl,
+    });
+  }
+  return results;
 }
 
 function computeBulletinKey(p: {
