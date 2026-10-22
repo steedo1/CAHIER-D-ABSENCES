@@ -1453,6 +1453,7 @@ async function resolveClassDeviceContext(
     requested.relayAccessToken || relay?.relay_access_token || "",
   ).trim();
   if (
+    RELAY_GLOBAL_STANDBY ||
     !institutionId ||
     !requestedClassId ||
     !actorProfileId ||
