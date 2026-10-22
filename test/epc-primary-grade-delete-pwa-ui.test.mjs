@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const page = readFileSync(new URL("../src/app/grades/class-device/page.tsx", import.meta.url), "utf8");
+const teacherPage = readFileSync(new URL("../src/app/grades/page.tsx", import.meta.url), "utf8");
 
 test("EPC PWA deletion uses a visible confirmation, not native confirm", () => {
   assert.doesNotMatch(page, /window\.confirm\(/, "native confirm is unreliable in installed PWAs");
@@ -24,4 +25,22 @@ test("EPC deletion clears only class-device evaluation and score caches after cl
   assert.match(page, /gradesEvaluationsKey\(/);
   assert.match(page, /gradesScoresKey\("class-device", ev\.id\)/);
   assert.match(page, /setActiveEvalId\(\(prev\) => prev === ev\.id \? null : prev\)/);
+});
+
+test("Mobile class-device gradebook keeps deletion visible for secondary and primary columns", () => {
+  assert.match(page, /\{isMobile && currentActiveEval && !isPreschoolProgram && \(/);
+  assert.doesNotMatch(page, /isMobile && isPrimaryProgram && primaryCatalogEnabled && currentActiveEval &&/);
+  assert.match(page, /disabled=\{!isOnline \|\| selectedPeriodClosed \|\| !isEvaluationDeletable\(currentActiveEval\)/);
+  assert.match(page, /Suppression bloquée : note soumise ou publiée/);
+});
+
+test("Mobile teacher gradebook restores deletion with PWA-safe confirmation", () => {
+  assert.match(teacherPage, /\{isMobile && currentActiveEval && !isPreschoolProgram && \(/);
+  assert.match(teacherPage, /onClick=\{\(\) => requestDeleteEvaluation\(currentActiveEval\)\}/);
+  assert.match(teacherPage, /!isEvaluationDeletableForTeacher\(currentActiveEval\)/);
+  assert.doesNotMatch(teacherPage, /window\.confirm\(/);
+  assert.match(teacherPage, /role="dialog" aria-modal="true" aria-labelledby="confirm-teacher-grade-delete-title"/);
+  assert.match(teacherPage, /onClick=\{\(\) => void deleteEvaluation\(deleteTarget\)\}/);
+  assert.match(teacherPage, /if \(!r\.ok \|\| !j\?\.ok\)/);
+  assert.match(teacherPage, /setDeleteError\(errorText\)/);
 });
