@@ -45,4 +45,6 @@ jobs:
         if: contains(github.ref, 'epc-delete-visible-confirm-cache')
       - run: node --import tsx --test test/class-device-my-classes.test.ts test/class-device-offline-readiness.test.ts test/class-device-identifiers.test.ts
         if: contains(github.ref, 'epc-class-device-cloud-only')
+      - run: node --test test/class-device-cloud-basics.test.mjs test/class-device-preparation-revision.test.mjs
+        if: contains(github.ref, 'epc-class-device-cloud-only')
       - run: npm run build
