@@ -683,6 +683,8 @@ export default function ClassDevicePage() {
     academic_year_label: null,
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
+  const [timetableAvailability, setTimetableAvailability] =
+    useState<"unknown" | "configured" | "unconfigured">("unknown");
   const [slotLabel, setSlotLabel] = useState<string>(
     "Aucun créneau configuré (fallback automatique)"
   );
@@ -2002,6 +2004,18 @@ export default function ClassDevicePage() {
 
   /* 1bis) charger paramètres + périodes + réglages de conduite */
   async function loadInstitutionBasics() {
+    if (!selectedClass?.id || !selectedClass.institution_id || !selectedClass.actor_profile_id) return;
+    const institutionId = selectedClass.institution_id;
+    const classDeviceId = selectedClass.id;
+    const actorProfileId = selectedClass.actor_profile_id;
+    const scopedBasicsKey = (source: string) =>
+      `classDevice:inst:basics:${source}:${institutionId}:${classDeviceId}:${actorProfileId}`;
+    const belongsToThisClassDevice = (payload: any) =>
+      payload &&
+      payload.institution_id === institutionId &&
+      payload.actor_profile_id === actorProfileId &&
+      (!payload.class_id || payload.class_id === classDeviceId);
+
     async function getJson(url: string, key: string) {
       try {
         return await offlineGetJson(url, key);
@@ -2020,9 +2034,24 @@ export default function ClassDevicePage() {
     };
     const grouped: Record<number, Period[]> = {};
 
-    const all =
-      (await getJson("/api/teacher/institution/basics", "classDevice:inst:basics:teacher")) ||
-      (await getJson("/api/institution/basics", "classDevice:inst:basics:institution"));
+    const classBasics = await getJson(
+      "/api/class/institution/basics", scopedBasicsKey("class"),
+    );
+    const teacherBasics = belongsToThisClassDevice(classBasics)
+      ? null
+      : await getJson("/api/teacher/institution/basics", scopedBasicsKey("teacher"));
+    const all = belongsToThisClassDevice(classBasics)
+      ? classBasics
+      : belongsToThisClassDevice(teacherBasics)
+        ? teacherBasics
+        : null;
+    // Never use unscoped legacy settings for a different school's class phone.
+    if (!all) return;
+    setTimetableAvailability(
+      Array.isArray(all.periods) && all.periods.length > 0
+        ? "configured"
+        : "unconfigured",
+    );
 
     if (all?.periods) {
       const nameFromAll =
@@ -2121,7 +2150,7 @@ export default function ClassDevicePage() {
       "/api/admin/institution/settings",
       "classDevice:inst:adminSettings"
     );
-    if (adminSettings) {
+    if (adminSettings?.institution_id === institutionId) {
       const nameFromAdmin = String(
         adminSettings?.institution_name || adminSettings?.name || adminSettings?.institution_label || ""
       ).trim();
@@ -2152,7 +2181,7 @@ export default function ClassDevicePage() {
         instConfig.institution_name || prev.institution_name || DEFAULT_INSTITUTION_NAME,
       academic_year_label: instConfig.academic_year_label || prev.academic_year_label || null,
     }));
-    if (!relayClassScheduleRef.current) setPeriodsByDay(grouped);
+    if (!relayClassScheduleRef.current && Object.keys(grouped).length > 0) setPeriodsByDay(grouped);
 
     // 2) config de conduite (maxima) — loader ultra défensif
     const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
@@ -2223,9 +2252,11 @@ export default function ClassDevicePage() {
   }
 
   useEffect(() => {
-    void loadInstitutionBasics();
+    if (selectedClass?.id && selectedClass.institution_id && selectedClass.actor_profile_id) {
+      void loadInstitutionBasics();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedClass?.id, selectedClass?.institution_id, selectedClass?.actor_profile_id]);
 
   /* ✅ Même logique que ton fichier qui marche :
         1) dataset/globals
@@ -4011,21 +4042,27 @@ export default function ClassDevicePage() {
         </div>
       </header>
 
-      <OfflineReadinessCard
-        role="class-device"
-        classDeviceContext={{
-          institutionId: selectedClass?.institution_id,
-          classId: selectedClass?.id,
-          actorProfileId: selectedClass?.actor_profile_id,
-          relayBaseUrl:
-            classRelayBaseUrl(selectedClass),
-          relayBaseUrls:
-            selectedClass?.attendance_presence?.relay_local_urls,
-          relayAccessToken:
-            selectedClass?.attendance_presence?.relay_access_token,
-        }}
-        onPrepared={refreshClassContextAfterPreparation}
-      />
+      {timetableAvailability === "unconfigured" ? (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+          Aucun créneau d'appel n'est encore configuré pour cet établissement.
+          Le compte classe reste accessible via le Cloud. Pour un cours réellement
+          dispensé, choisissez « Autre cours » puis la discipline concernée.
+          L'appel automatique par créneau sera disponible après configuration de l'emploi du temps.
+        </div>
+      ) : timetableAvailability === "configured" || relayUiEnabled ? (
+        <OfflineReadinessCard
+          role="class-device"
+          classDeviceContext={{
+            institutionId: selectedClass?.institution_id,
+            classId: selectedClass?.id,
+            actorProfileId: selectedClass?.actor_profile_id,
+            relayBaseUrl: classRelayBaseUrl(selectedClass),
+            relayBaseUrls: selectedClass?.attendance_presence?.relay_local_urls,
+            relayAccessToken: selectedClass?.attendance_presence?.relay_access_token,
+          }}
+          onPrepared={refreshClassContextAfterPreparation}
+        />
+      ) : null}
       {(subjectScheduleIssue || (relayUiEnabled ? relayScheduleIssue : null)) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
           {subjectScheduleIssue || (relayUiEnabled ? relayScheduleIssue : null)}
