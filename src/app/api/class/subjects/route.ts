@@ -493,14 +493,37 @@ export async function GET(req: NextRequest) {
       }
       const mapped = await mapSubjectIdsToItems(srv, institutionId, subjectIds);
       const mappedById = new Map(mapped.map((subject) => [subject.id, subject]));
-      if (subjectIds.some((subjectId) => !mappedById.has(subjectId))) {
+      // Certaines anciennes affectations utilisent subjects.id au lieu de
+      // institution_subjects.id : conserver la même traduction que la route unitaire.
+      const unresolved = subjectIds.filter((id) => !mappedById.has(id));
+      const canonicalToInstitution = new Map<string, string>();
+      if (unresolved.length) {
+        const { data: aliases, error: aliasesError } = await srv
+          .from("institution_subjects")
+          .select("id,subject_id")
+          .eq("institution_id", institutionId)
+          .in("subject_id", unresolved);
+        if (aliasesError) {
+          return NextResponse.json({ error: aliasesError.message }, { status: 400 });
+        }
+        for (const alias of aliases || []) {
+          const canonical = String(alias.subject_id || "").trim();
+          const local = String(alias.id || "").trim();
+          if (canonical && local && !canonicalToInstitution.has(canonical)) {
+            canonicalToInstitution.set(canonical, local);
+          }
+        }
+      }
+      const mappedSubject = (id: string) =>
+        mappedById.get(id) || mappedById.get(canonicalToInstitution.get(id) || "");
+      if (subjectIds.some((subjectId) => !mappedSubject(subjectId))) {
         return NextResponse.json({ error: "timetable_subject_mapping_incomplete" }, { status: 409 });
       }
       const grouped = new Map<string, Map<string, SubjectItem>>();
       for (const row of timetable || []) {
         const periodId = String(row.period_id || "").trim();
         const subjectId = String(row.subject_id || "").trim();
-        const subject = mappedById.get(subjectId);
+        const subject = mappedSubject(subjectId);
         if (!periodId || !subject) continue;
         if (!grouped.has(periodId)) grouped.set(periodId, new Map());
         grouped.get(periodId)!.set(subject.id, subject);
