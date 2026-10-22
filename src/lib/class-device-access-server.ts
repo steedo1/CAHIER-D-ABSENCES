@@ -1,6 +1,7 @@
 import { resolveAttendanceEducationContext } from "@/lib/education-attendance";
 import { createRelayAttendanceAccessToken } from "@/lib/attendance-presence-server";
 import { relayEndpointCandidates } from "@/lib/relay-endpoints";
+import { RELAY_GLOBAL_STANDBY } from "@/lib/relay-standby";
 
 export type ClassDeviceSourceRow = {
   id?: string | null;
@@ -263,9 +264,11 @@ export async function enrichClassDeviceAccess(input: {
     // Une panne de lecture de la politique désactive uniquement le Relais.
     // La classe autorisée et la préparation Cloud restent disponibles.
     const accessDiagnostic: ClassDeviceAccessDiagnostic | null =
-      policiesResult.error
-        ? "relay_policy_unavailable"
-        : relayDiagnostic(
+      RELAY_GLOBAL_STANDBY
+        ? "relay_disabled"
+        : policiesResult.error
+          ? "relay_policy_unavailable"
+          : relayDiagnostic(
             row,
             policy,
             relayLocalUrls,
