@@ -111,8 +111,23 @@ test("no legacy grade approval screens or polling remain for Franco-Arabic admin
   assert.match(guard,/redirect\("\/admin\/notes"\)/);
   assert.match(policy,/effectiveGradePublicationSwitches/);
   assert.match(policy,/queueGradeNotificationsForEvaluation/);
-  assert.match(teacher,/Publier les notes/);
+  assert.match(teacher,/Note active :/);
+  assert.match(teacher,/onClick=\{publishSelectedEvaluation\}/);
+  assert.match(teacher,/saveAllChanges\(currentActiveEvalId \?\? undefined\)/);
+  const classDevice = readFileSync("src/app/grades/class-device/page.tsx","utf8");
+  assert.match(classDevice,/Note active :/);
+  assert.match(classDevice,/onClick=\{publishSelectedEvaluation\}/);
+  assert.match(classDevice,/saveAllChanges\(currentActiveEvalId \?\? undefined\)/);
   assert.match(teacher,/Notifications des parents mises en file d’envoi/);
+});
+
+test("security patch Next.js 15.5.28 is pinned for npm ci and Render", () => {
+  const pkg=JSON.parse(readFileSync("package.json","utf8"));
+  const lock=JSON.parse(readFileSync("package-lock.json","utf8"));
+  assert.equal(pkg.dependencies.next, "15.5.28");
+  assert.equal(lock.packages["node_modules/next"].version, "15.5.28");
+  assert.equal(lock.packages["node_modules/@next/env"].version, "15.5.28");
+  assert.equal(lock.packages[""].dependencies.next, "15.5.28");
 });
 
 test("Franco-Arabic evaluation creation requires exact subject assignment, not just class access", () => {
