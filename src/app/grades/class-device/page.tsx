@@ -3187,18 +3187,25 @@ export default function ClassDeviceNotesPage() {
             </div>
           )}
 
-          {isMobile && isPrimaryProgram && primaryCatalogEnabled && currentActiveEval &&
-            isEvaluationDeletable(currentActiveEval) && (
-            <button
-              type="button"
-              onClick={() => requestDeleteEvaluation(currentActiveEval)}
-              disabled={!isOnline || !!publishBusy[currentActiveEval.id]}
-              aria-label="Supprimer la note ouverte"
-              className="mb-3 inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Supprimer la note
-            </button>
+          {/* La colonne sélectionnée reste supprimable sur mobile, quel que soit le cycle.
+              Après soumission ou publication, le bouton reste visible mais désactivé. */}
+          {isMobile && currentActiveEval && !isPreschoolProgram && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => requestDeleteEvaluation(currentActiveEval)}
+                disabled={!isOnline || selectedPeriodClosed || !isEvaluationDeletable(currentActiveEval) || !!publishBusy[currentActiveEval.id]}
+                aria-label="Supprimer la note ouverte"
+                title={isEvaluationDeletable(currentActiveEval) ? "Supprimer la colonne active" : "Note soumise ou publiée : suppression protégée"}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Supprimer la note
+              </button>
+              {!isEvaluationDeletable(currentActiveEval) && (
+                <span className="text-xs text-slate-500">Suppression bloquée : note soumise ou publiée.</span>
+              )}
+            </div>
           )}
 
           {/* ==== LAYOUT PC : tableau classique ==== */}
