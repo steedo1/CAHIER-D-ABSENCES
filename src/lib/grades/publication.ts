@@ -374,8 +374,9 @@ export async function createOfficialSnapshotForEvaluation(params: {
   }
 
   const gradeRows = (grades || []) as StudentGradeRow[];
-  const previousByStudent = new Map(
-    (currentRows || []).map((row: any) => [String(row.student_id), row.score == null ? null : Number(row.score)])
+  const previousByStudent = new Map<string, number | null>(
+    (currentRows || []).map((row: any) =>
+      [String(row.student_id), row.score == null ? null : Number(row.score)] as const)
   );
   const correctedStudentIds = alreadyHasCurrent
     ? gradeRows.filter((row) => !previousByStudent.has(row.student_id) ||
