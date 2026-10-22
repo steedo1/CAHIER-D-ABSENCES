@@ -419,7 +419,18 @@ export async function POST(req: NextRequest) {
     const editable = assertEvaluationEditable(ge);
 
     const isPublished = ge.is_published === true || ge.publication_status === "published";
-    const mayRepublish = isPublished && ge.publication_status !== "submitted";
+    // Ne pas étendre le droit de correction du secondaire au primaire classique.
+    let classicPrimaryPublished = false;
+    if (isPublished && !autoPublishPrimary) {
+      const { data: targetClass, error: levelErr } = await srv.from("classes")
+        .select("level").eq("id", ge.class_id)
+        .eq("institution_id", profile.institution_id).maybeSingle();
+      if (levelErr || !targetClass) return bad("GRADE_CLASS_SCOPE_UNAVAILABLE", 503);
+      classicPrimaryPublished = /^(CP[12]|CE[12]|CM[12])(?:\b|$)/i
+        .test(String(targetClass.level || "").trim());
+    }
+    const mayRepublish = isPublished &&
+      ge.publication_status !== "submitted" && !classicPrimaryPublished;
     if (!editable.ok && !mayRepublish) {
       console.warn("[grades/scores/bulk] evaluation not editable", {
         evaluation_id,
