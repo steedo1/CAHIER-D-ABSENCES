@@ -1255,6 +1255,10 @@ async function buildClassDeviceScheduleFromCloud(input: {
   const basics = await fetchFirstAndCache<ClassDeviceInstitutionBasics>(
     [
       {
+        url: "/api/class/institution/basics?offline_preparation=v1",
+        key: "classDevice:inst:basics:class",
+      },
+      {
         url: "/api/teacher/institution/basics?offline_preparation=v1",
         key: "classDevice:inst:basics:teacher",
       },
@@ -1263,7 +1267,12 @@ async function buildClassDeviceScheduleFromCloud(input: {
         key: "classDevice:inst:basics:institution",
       },
     ],
-    (payload) => Array.isArray(payload?.periods) && payload.periods.length > 0,
+    (payload) =>
+      Array.isArray(payload?.periods) &&
+      payload.periods.length > 0 &&
+      (!("institution_id" in payload) || payload.institution_id === input.institutionId) &&
+      (!("class_id" in payload) || payload.class_id === input.classId) &&
+      (!("actor_profile_id" in payload) || payload.actor_profile_id === input.actorProfileId),
   );
   const periods = (Array.isArray(basics.periods) ? basics.periods : []).filter(
     (period) => Boolean(String(period?.id || "").trim()) && classDevicePeriodKey(period),
