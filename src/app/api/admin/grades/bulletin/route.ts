@@ -670,6 +670,17 @@ async function attachQrPng<T extends { qr_url: string | null }>(items: T[]) {
         results[index] = { ...item, qr_png: null };
         continue;
       }
+
+      // Le QR version 40 en mode octets (niveau L) contient au plus 2 953
+      // octets. Une URL plus longue ne peut jamais être encodée, même en
+      // réduisant la redondance : éviter quatre tentatives CPU inutiles.
+      // Le token reste disponible pour l'émission explicite du QR court.
+      if (Buffer.byteLength(item.qr_url, "utf8") > 2953) {
+        failedCount++;
+        longestFailedUrl = Math.max(longestFailedUrl, item.qr_url.length);
+        results[index] = { ...item, qr_png: null };
+        continue;
+      }
       try {
         const png = await createBulletinQrDataUrl(item.qr_url, {
           width: size,
