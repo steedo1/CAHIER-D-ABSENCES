@@ -281,10 +281,6 @@ function publicationStatusLabel(ev: Evaluation, directPublication = false) {
 function publicationStatusClass(ev: Evaluation) {
   const status = getPublicationStatus(ev);
 
-  if (ev.is_published === true || status === "published") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  }
-
   if (status === "submitted") {
     return "border-amber-200 bg-amber-50 text-amber-800";
   }
@@ -292,6 +288,11 @@ function publicationStatusClass(ev: Evaluation) {
   if (status === "changes_requested") {
     return "border-rose-200 bg-rose-50 text-rose-800";
   }
+
+  if (ev.is_published === true || status === "published") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  }
+
 
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
@@ -312,7 +313,7 @@ function publicationLockReason(ev: Evaluation, directPublication = false) {
   if (isEvaluationPublished(ev)) {
     return directPublication
       ? "Évaluation publiée : les notes peuvent être corrigées, puis republiées automatiquement à l’enregistrement."
-      : "Évaluation publiée officiellement : les notes sont verrouillées.";
+      : "Évaluation publiée : modification possible pendant la période ouverte.";
   }
 
   return null;
@@ -2778,7 +2779,8 @@ export default function TeacherNotesPage() {
               {!isPrimaryProgram && !isPreschoolProgram && (
                 <>
                   <Button
-                    onClick={() => saveAllChanges(currentActiveEvalId ?? undefined)}
+                    tone="slate"
+                    onClick={() => { void saveAllChanges(currentActiveEvalId ?? undefined); }}
                     disabled={loading || !currentActiveEvalId || Object.keys(changed[currentActiveEvalId] || {}).length === 0 || selectedPeriodClosed || gradeWritesBlocked}
                   >
                     <Save className="h-4 w-4" /> Enregistrer
@@ -2804,7 +2806,7 @@ export default function TeacherNotesPage() {
               )}
               {isPrimaryProgram && (
                 <Button
-                  onClick={saveAllChanges}
+                  onClick={() => { void saveAllChanges(); }}
                   disabled={loading || totalChanges === 0 || selectedPeriodClosed || gradeWritesBlocked}
                 >
                   <Save className="h-4 w-4" /> Enregistrer
