@@ -3189,7 +3189,7 @@ export default function ClassDeviceNotesPage() {
 
           {/* La colonne sélectionnée reste supprimable sur mobile, quel que soit le cycle.
               Après soumission ou publication, le bouton reste visible mais désactivé. */}
-          {isMobile && currentActiveEval && !isPreschoolProgram && (
+          {isMobile && currentActiveEval && selected?.school_cycle !== "preschool" && (
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <button
                 type="button"
