@@ -236,9 +236,9 @@ function isEvaluationDeletable(ev: Evaluation | null | undefined) {
 
 function publicationStatusLabel(ev: Evaluation | null | undefined) {
   const status = getPublicationStatus(ev);
-  if (status === "published") return "Publié";
   if (status === "submitted") return "En attente de validation";
   if (status === "changes_requested") return ev?.is_published ? "Correction en cours" : "Correction demandée";
+  if (status === "published") return "Publié";
   return "Brouillon";
 }
 
@@ -2985,7 +2985,8 @@ export default function ClassDeviceNotesPage() {
               {!isPrimaryProgram && (
                 <>
                   <Button
-                    onClick={() => saveAllChanges(currentActiveEvalId ?? undefined)}
+                    tone="slate"
+                    onClick={() => { void saveAllChanges(currentActiveEvalId ?? undefined); }}
                     disabled={loading || !currentActiveEvalId || Object.keys(changed[currentActiveEvalId] || {}).length === 0 || selectedPeriodClosed || gradeWritesBlocked}
                   >
                     <Save className="h-4 w-4" /> Enregistrer
@@ -3018,7 +3019,7 @@ export default function ClassDeviceNotesPage() {
                     <FileSpreadsheet className="h-4 w-4" /> Exporter (Excel/CSV)
                   </GhostButton>
                   <Button
-                    onClick={saveAllChanges}
+                    onClick={() => { void saveAllChanges(); }}
                     disabled={loading || totalChanges === 0 || selectedPeriodClosed || gradeWritesBlocked}
                   >
                     <Save className="h-4 w-4" /> Enregistrer
