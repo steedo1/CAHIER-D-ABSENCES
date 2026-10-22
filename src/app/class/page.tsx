@@ -2002,6 +2002,18 @@ export default function ClassDevicePage() {
 
   /* 1bis) charger paramètres + périodes + réglages de conduite */
   async function loadInstitutionBasics() {
+    if (!selectedClass?.id || !selectedClass.institution_id || !selectedClass.actor_profile_id) return;
+    const institutionId = selectedClass.institution_id;
+    const classDeviceId = selectedClass.id;
+    const actorProfileId = selectedClass.actor_profile_id;
+    const scopedBasicsKey = (source: string) =>
+      `classDevice:inst:basics:${source}:${institutionId}:${classDeviceId}:${actorProfileId}`;
+    const belongsToThisClassDevice = (payload: any) =>
+      payload &&
+      payload.institution_id === institutionId &&
+      payload.actor_profile_id === actorProfileId &&
+      (!payload.class_id || payload.class_id === classDeviceId);
+
     async function getJson(url: string, key: string) {
       try {
         return await offlineGetJson(url, key);
@@ -2020,10 +2032,19 @@ export default function ClassDevicePage() {
     };
     const grouped: Record<number, Period[]> = {};
 
-    const all =
-      (await getJson("/api/class/institution/basics", "classDevice:inst:basics:class")) ||
-      (await getJson("/api/teacher/institution/basics", "classDevice:inst:basics:teacher")) ||
-      (await getJson("/api/institution/basics", "classDevice:inst:basics:institution"));
+    const classBasics = await getJson(
+      "/api/class/institution/basics", scopedBasicsKey("class"),
+    );
+    const teacherBasics = belongsToThisClassDevice(classBasics)
+      ? null
+      : await getJson("/api/teacher/institution/basics", scopedBasicsKey("teacher"));
+    const all = belongsToThisClassDevice(classBasics)
+      ? classBasics
+      : belongsToThisClassDevice(teacherBasics)
+        ? teacherBasics
+        : null;
+    // Never use unscoped legacy settings for a different school's class phone.
+    if (!all) return;
 
     if (all?.periods) {
       const nameFromAll =
@@ -2122,7 +2143,7 @@ export default function ClassDevicePage() {
       "/api/admin/institution/settings",
       "classDevice:inst:adminSettings"
     );
-    if (adminSettings) {
+    if (adminSettings?.institution_id === institutionId) {
       const nameFromAdmin = String(
         adminSettings?.institution_name || adminSettings?.name || adminSettings?.institution_label || ""
       ).trim();
@@ -2153,7 +2174,7 @@ export default function ClassDevicePage() {
         instConfig.institution_name || prev.institution_name || DEFAULT_INSTITUTION_NAME,
       academic_year_label: instConfig.academic_year_label || prev.academic_year_label || null,
     }));
-    if (!relayClassScheduleRef.current) setPeriodsByDay(grouped);
+    if (!relayClassScheduleRef.current && Object.keys(grouped).length > 0) setPeriodsByDay(grouped);
 
     // 2) config de conduite (maxima) — loader ultra défensif
     const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
@@ -2224,9 +2245,11 @@ export default function ClassDevicePage() {
   }
 
   useEffect(() => {
-    void loadInstitutionBasics();
+    if (selectedClass?.id && selectedClass.institution_id && selectedClass.actor_profile_id) {
+      void loadInstitutionBasics();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedClass?.id, selectedClass?.institution_id, selectedClass?.actor_profile_id]);
 
   /* ✅ Même logique que ton fichier qui marche :
         1) dataset/globals
