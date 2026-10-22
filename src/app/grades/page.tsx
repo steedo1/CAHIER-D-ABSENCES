@@ -647,6 +647,8 @@ export default function TeacherNotesPage() {
   const [showPublishPanel, setShowPublishPanel] = useState(false);
   const [publishConfirmEvalId, setPublishConfirmEvalId] = useState<string | null>(null);
   const [publishBusy, setPublishBusy] = useState<Record<string, boolean>>({});
+  const [deleteTarget, setDeleteTarget] = useState<Evaluation | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   /* -------- Verrouillage des évaluations (PIN) -------- */
   const [evalLocks, setEvalLocks] = useState<Record<string, EvalLock>>({});
@@ -1448,6 +1450,11 @@ export default function TeacherNotesPage() {
   }
 
   /* -------- Suppression d’une évaluation (colonne) -------- */
+  function requestDeleteEvaluation(ev: Evaluation) {
+    setDeleteError(null);
+    setDeleteTarget(ev);
+  }
+
   async function deleteEvaluation(ev: Evaluation) {
     if (!isOnline) {
       setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
@@ -1465,15 +1472,8 @@ export default function TeacherNotesPage() {
       return;
     }
 
-    if (
-      !window.confirm(
-        "Supprimer définitivement cette colonne de notes ?\nToutes les notes associées seront perdues."
-      )
-    ) {
-      return;
-    }
-
     setMsg(null);
+    setDeleteError(null);
     setPublishBusy((prev) => ({ ...prev, [ev.id]: true }));
 
     try {
@@ -1503,9 +1503,14 @@ export default function TeacherNotesPage() {
         return next;
       });
 
+      setActiveEvalId((prev) => prev === ev.id ? null : prev);
+      setDeleteTarget(null);
+      setDeleteError(null);
       setMsg("Colonne de note supprimée ✅");
     } catch (e: any) {
-      setMsg(e?.message || "Échec de suppression de la colonne de note.");
+      const errorText = e?.message || "Échec de suppression de la colonne de note.";
+      setDeleteError(errorText);
+      setMsg(errorText);
     } finally {
       setPublishBusy((prev) => {
         const copy = { ...prev };
@@ -2454,6 +2459,10 @@ export default function TeacherNotesPage() {
     return evaluations[evaluations.length - 1]?.id ?? null;
   }, [evaluations, activeEvalId]);
 
+  const currentActiveEval = useMemo(() => {
+    return evaluations.find((ev) => ev.id === currentActiveEvalId) ?? null;
+  }, [evaluations, currentActiveEvalId]);
+
   const displayedEvaluations = useMemo(() => {
     if (!isMobile) return evaluations;
     if (!evaluations.length) return evaluations;
@@ -2808,6 +2817,18 @@ export default function TeacherNotesPage() {
                   </GhostButton>
                 </>
               )}
+              {isMobile && currentActiveEval && !isPreschoolProgram && (
+                <GhostButton
+                  tone="red"
+                  type="button"
+                  onClick={() => requestDeleteEvaluation(currentActiveEval)}
+                  disabled={!isOnline || selectedPeriodClosed || !!publishBusy[currentActiveEval.id] || !isEvaluationDeletableForTeacher(currentActiveEval)}
+                  title={!isEvaluationDeletableForTeacher(currentActiveEval) ? "Note soumise ou publiée : suppression protégée" : "Supprimer la colonne active"}
+                  aria-label="Supprimer la note active"
+                >
+                  <Trash2 className="h-4 w-4" /> Supprimer la note
+                </GhostButton>
+              )}
               {isPrimaryProgram && (
                 <Button
                   onClick={() => { void saveAllChanges(); }}
@@ -3062,7 +3083,7 @@ export default function TeacherNotesPage() {
 
                             <button
                               type="button"
-                              onClick={() => deleteEvaluation(ev)}
+                              onClick={() => requestDeleteEvaluation(ev)}
                               disabled={
                                 !isOnline ||
                                 selectedPeriodClosed ||
@@ -3577,6 +3598,35 @@ export default function TeacherNotesPage() {
         </div>
       )}
 
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/65 p-4" role="presentation">
+          <div role="dialog" aria-modal="true" aria-labelledby="confirm-teacher-grade-delete-title" className="w-full max-w-md space-y-4 rounded-2xl bg-white p-5 shadow-2xl">
+            <h2 id="confirm-teacher-grade-delete-title" className="text-lg font-bold text-slate-950">Confirmer la suppression</h2>
+            <p className="text-sm text-slate-700">
+              Supprimer définitivement <strong>{labelByEvalId[deleteTarget.id] || "cette colonne"}</strong> du {formatDateFr(deleteTarget.eval_date)} ?
+              Toutes les notes associées seront perdues.
+            </p>
+            {deleteError && (
+              <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                Suppression non effectuée : {deleteError}
+              </p>
+            )}
+            <div className="flex flex-wrap justify-end gap-3">
+              <button type="button" className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800"
+                disabled={!!publishBusy[deleteTarget.id]}
+                onClick={() => { setDeleteTarget(null); setDeleteError(null); }}>
+                Annuler
+              </button>
+              <button type="button" className="rounded-xl bg-red-700 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+                disabled={!!publishBusy[deleteTarget.id]}
+                onClick={() => void deleteEvaluation(deleteTarget)}>
+                {publishBusy[deleteTarget.id] ? "Suppression…" : "Confirmer la suppression"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Statistiques par évaluation */}
       {!isPrimaryProgram && !isPreschoolProgram && showPublishPanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
@@ -3599,7 +3649,7 @@ export default function TeacherNotesPage() {
                     </GhostButton>
                     <GhostButton
                       tone="red"
-                      onClick={() => deleteEvaluation(ev)}
+                      onClick={() => requestDeleteEvaluation(ev)}
                       disabled={!isOnline || selectedPeriodClosed || !isEvaluationDeletableForTeacher(ev) || !!publishBusy[ev.id]}
                     >
                       Supprimer
