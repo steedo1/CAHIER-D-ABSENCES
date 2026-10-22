@@ -1112,7 +1112,9 @@ export function classDeviceAccessDiagnosticMessage(value: unknown) {
     class_id_missing:
       "L’identifiant de la classe autorisée est absent.",
     relay_policy_missing:
-      "La politique d’accès au relais est absente pour cet établissement.",
+      "Le Relais local n’est pas configuré pour cet établissement.",
+    relay_policy_unavailable:
+      "La configuration du Relais local est momentanément indisponible.",
     relay_disabled:
       "L’accès au relais est désactivé pour cet établissement.",
     relay_local_access_disabled:
@@ -2147,15 +2149,22 @@ async function prepareClassDevice(
     actorProfileId = identity.actorProfileId;
     selectedClass = identity.selectedClass || {};
 
-    try {
-      relayPolicy = resolveClassDevicePreparationAccess(
-        classPayload.payload,
-      ).relayPolicy;
-    } catch (error) {
-      // Un relais absent ou mal configuré ne doit pas empêcher une préparation
-      // Cloud valide. Son accès reste simplement désactivé pour cette tentative.
-      accessError = error;
-      relayPolicy = null;
+    // Sans Relais activé, seule l’identité de la classe est obligatoire.
+    // Ne pas conserver une absence de politique Relais comme erreur de préparation.
+    if (
+      selectedClass?.attendance_presence?.enabled === true &&
+      selectedClass.attendance_presence.allow_local_relay !== false
+    ) {
+      try {
+        relayPolicy = resolveClassDevicePreparationAccess(
+          classPayload.payload,
+        ).relayPolicy;
+      } catch (error) {
+        // L’accès au Relais reste strictement validé si celui-ci est déclaré actif.
+        // La préparation Cloud peut toutefois continuer sans jeton local.
+        accessError = error;
+        relayPolicy = null;
+      }
     }
   } catch (error) {
     accessError = error;
