@@ -2688,8 +2688,6 @@ export default function ClassDevicePage() {
             period_id: activeConfiguredSlot.id,
           }).catch(() => undefined);
         }
-        applyList(((autoResp?.items || []) as Subject[]) ?? [], "auto");
-
         if (
           currentPreparedRevision !== responseRevision &&
           selectedClass?.institution_id &&
@@ -2717,7 +2715,13 @@ export default function ClassDevicePage() {
           }
         }
 
-        applyList(((autoResp?.items || []) as Subject[]) ?? [], "auto");
+        const cloudSubjects = ((autoResp?.items || []) as Subject[]) ?? [];
+        applyList(cloudSubjects, cloudSubjects.length ? "auto" : "empty");
+        if (!cloudSubjects.length) {
+          setSubjectScheduleIssue(
+            "Aucune matière n’est enregistrée dans le Cloud pour ce créneau. Si un cours est prévu, vérifiez sa publication dans l’emploi du temps puis actualisez la tablette.",
+          );
+        }
         return;
       }
 
@@ -2730,6 +2734,9 @@ export default function ClassDevicePage() {
       // scheduled slot. It remains available only through the explicit manual
       // exceptional-course flow.
       applyList([], "empty");
+      setSubjectScheduleIssue(
+        "Le planning de ce créneau n’a pas pu être vérifié sur le Cloud et aucune copie locale valide n’est disponible. Reconnectez puis actualisez la préparation.",
+      );
     })();
 
     return () => {
