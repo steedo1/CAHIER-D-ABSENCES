@@ -1256,11 +1256,11 @@ async function buildClassDeviceScheduleFromCloud(input: {
     [
       {
         url: "/api/class/institution/basics?offline_preparation=v1",
-        key: "classDevice:inst:basics:class",
+        key: `classDevice:inst:basics:class:${input.institutionId}:${input.classId}:${input.actorProfileId}`,
       },
       {
         url: "/api/teacher/institution/basics?offline_preparation=v1",
-        key: "classDevice:inst:basics:teacher",
+        key: `classDevice:inst:basics:teacher:${input.institutionId}:${input.classId}:${input.actorProfileId}`,
       },
       {
         url: "/api/institution/basics?offline_preparation=v1",
