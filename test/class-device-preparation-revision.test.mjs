@@ -160,29 +160,45 @@ function cloudPreparation(finalOverrides = {}, initialOverrides = {}) {
       assert.ok(options.every((option) => option.url.endsWith("?offline_preparation=v1")));
       return { periods: fixture.periods };
     },
-    fetchClassPreparationAndCache: async (url) => {
+    fetchFreshJson: async (url) => {
       downloaded.push(url);
-      if (url.startsWith("/api/class/roster")) return { items: Array.from({ length: fixture.student_count }, (_, i) => ({ id: `student-${i}` })) };
-      assert.equal(new URL(url, "https://fixture.invalid").searchParams.get("offline_preparation"), "v1");
-      const periodId = new URL(url, "https://fixture.invalid").searchParams.get("period_id");
-      return { items: fixture.subject_refs.filter((item) => item.period === periodId).map((item) => ({ id: item.subject, label: "Matière" })) };
+      if (url.startsWith("/api/class/roster")) {
+        return { items: Array.from({ length: fixture.student_count }, (_, i) => ({ id: `student-${i}` })) };
+      }
+      if (url.includes("all_slots=v1")) {
+        return {
+          bulk_version: 1,
+          institution_id: fixture.institution_id,
+          class_id: fixture.class_id,
+          actor_profile_id: fixture.actor_profile_id,
+          schedule_revision: 110,
+          preparation_revision: 100,
+          slots: fixture.subject_refs.map((row) => ({
+            period_id: row.period,
+            items: [{ id: row.subject, label: "Matière" }],
+          })),
+        };
+      }
+      assert.equal(url, "/api/offline/schedule-status");
+      return finalStatus;
     },
-    fetchFreshJson: async () => finalStatus,
     observeScheduleRevision: () => {}, rememberCloudScheduleStatus: async (value) => { confirmations.push(value); },
     classDeviceReadinessMessage: (value) => value,
-  }, ["safeRevision", "classDevicePeriodTime", "classDevicePeriodKey", "mapLimit"]);
+  }, ["safeRevision", "classDevicePeriodTime", "classDevicePeriodKey"]);
   return { fixture, downloaded, confirmations, run: () => build({ institutionId: fixture.institution_id, classId: fixture.class_id,
     actorProfileId: fixture.actor_profile_id, selectedClass: { label: "TA", level: "TA" }, scheduleRevision: 100,
     preparationRevision: 100, generatedAt: null, onProgress: () => {}, ...initialOverrides }) };
 }
+
 test("37 créneaux et 66 élèves : la préparation Cloud aboutit pendant des appels d'autres classes, sans relais", async () => {
   const f = cloudPreparation(); const schedule = await f.run();
   assert.equal(f.fixture.periods.length, 37); assert.equal(f.fixture.student_count, 66);
-  assert.equal(f.downloaded.length, 38);
+  assert.equal(f.downloaded.length, 3); // liste, planning groupé, confirmation finale
   assert.equal(schedule.schedule_revision, 110); assert.equal(schedule.preparation_revision, 100);
   assert.equal(schedule.rosters[f.fixture.class_id].items.length, 66);
   assert.equal(schedule.slots.length, new Set(f.fixture.subject_refs.map((item) => item.period)).size);
   assert.equal(schedule.source, "cloud"); assert.equal(schedule.relay_time, null);
+  assert.equal(f.downloaded.filter((url) => url.includes("all_slots=v1")).length, 1);
   assert.equal(f.confirmations.length, 1);
 });
 for (const [name, final, initial] of [
