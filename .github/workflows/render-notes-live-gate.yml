@@ -1,0 +1,58 @@
+name: Render grades live release gate
+
+on:
+  push:
+    branches: [release/notes-render-live-20261022]
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - 'src/app/grades/**'
+      - 'src/app/api/grades/**'
+      - 'src/app/api/teacher/grades/**'
+      - 'src/lib/grades/**'
+      - 'test/primary-events-integration.test.mjs'
+      - 'test/franco-arabic-direct-grade-publication.test.mjs'
+      - 'package*.json'
+      - '.github/workflows/render-notes-live-gate.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-notes-live-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: https://example.invalid
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-ci-anon
+      SUPABASE_URL: https://example.invalid
+      SUPABASE_SERVICE_ROLE_KEY: isolated-ci-service
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Lockfile install
+        run: npm ci
+      - name: TypeScript
+        run: npm run typecheck
+      - name: Gradebook and school-cycle regressions
+        run: npm run test:multicycle
+      - name: Parent Connect and SMS regressions
+        run: npm run test:parent-connect
+      - name: EPC column delete and QR memory regressions
+        run: |
+          node --test test/epc-primary-grade-delete-pwa-ui.test.mjs test/render-bulletin-qr-memory.test.mjs test/render-short-qr-batching.test.mjs test/bulletin-qr-preview.test.mjs
+      - name: Reject high or critical vulnerable production packages
+        run: npm audit --omit=dev --audit-level=high
+      - name: Next production build
+        run: npm run build
