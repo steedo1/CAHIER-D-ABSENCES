@@ -304,6 +304,8 @@ export async function createOfficialSnapshotForEvaluation(params: {
       institutionId: string;
       publicationVersion: number;
       officialRows: number;
+      correctedStudentIds: string[];
+      isCorrection: boolean;
     }
   | {
       ok: false;
@@ -329,10 +331,9 @@ export async function createOfficialSnapshotForEvaluation(params: {
 
   const { data: currentRows, error: currentErr } = await srv
     .from("grade_published_scores")
-    .select("id")
+    .select("id, student_id, score")
     .eq("evaluation_id", evaluation.id)
-    .eq("is_current", true)
-    .limit(1);
+    .eq("is_current", true);
 
   if (currentErr) {
     return {
@@ -353,6 +354,8 @@ export async function createOfficialSnapshotForEvaluation(params: {
       institutionId,
       publicationVersion: Number(evaluation.publication_version || 1),
       officialRows: 0,
+      correctedStudentIds: [],
+      isCorrection: true,
     };
   }
 
@@ -371,6 +374,14 @@ export async function createOfficialSnapshotForEvaluation(params: {
   }
 
   const gradeRows = (grades || []) as StudentGradeRow[];
+  const previousByStudent = new Map(
+    (currentRows || []).map((row: any) => [String(row.student_id), row.score == null ? null : Number(row.score)])
+  );
+  const correctedStudentIds = alreadyHasCurrent
+    ? gradeRows.filter((row) => !previousByStudent.has(row.student_id) ||
+        previousByStudent.get(row.student_id) !== (row.score == null ? null : Number(row.score)))
+      .map((row) => row.student_id)
+    : gradeRows.map((row) => row.student_id);
 
   const nextVersion = Math.max(
     Number(evaluation.publication_version || 0) + 1,
@@ -411,6 +422,11 @@ export async function createOfficialSnapshotForEvaluation(params: {
       is_current: true,
       published_at: publishedAt,
       published_by: params.actorProfileId || evaluation.teacher_id || null,
+      // A correction may be announced by push, never by a second SMS digest.
+      ...(alreadyHasCurrent ? {
+        sms_digest_queued_at: publishedAt,
+        ...(correctedStudentIds.includes(g.student_id) ? {} : { push_queued_at: publishedAt }),
+      } : {}),
     }));
 
     const { error: insertErr } = await srv
@@ -433,6 +449,8 @@ export async function createOfficialSnapshotForEvaluation(params: {
     institutionId,
     publicationVersion: nextVersion,
     officialRows: gradeRows.length,
+    correctedStudentIds,
+    isCorrection: alreadyHasCurrent,
   };
 }
 
@@ -675,12 +693,16 @@ export async function publishEvaluationOfficially(params: {
   let pushQueued = false;
 
   const shouldQueuePush =
-    params.queuePush !== false && settings.auto_push_on_publish === true;
+    params.queuePush !== false &&
+    settings.auto_push_on_publish === true &&
+    (!snapshot.isCorrection || snapshot.correctedStudentIds.length > 0);
 
   if (shouldQueuePush) {
     try {
       await queueGradeNotificationsForEvaluation(evaluation.id,
-        params.notifyStudentIds ? { studentIds: params.notifyStudentIds } : undefined);
+        snapshot.isCorrection
+          ? { studentIds: snapshot.correctedStudentIds }
+          : params.notifyStudentIds ? { studentIds: params.notifyStudentIds } : undefined);
       pushQueued = true;
     } catch (pushErr) {
       console.error("[grades/publication] push queue failed", {
