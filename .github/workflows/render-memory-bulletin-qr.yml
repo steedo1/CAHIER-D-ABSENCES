@@ -5,6 +5,7 @@ on:
     branches:
       - fix/render-memory-bulletin-20261022
       - fix/render-qr-capacity-guard-20261022
+      - fix/render-short-qr-batched-20261022
   workflow_dispatch:
 
 permissions:
@@ -32,6 +33,7 @@ jobs:
         run: |
           node --test \
             test/render-bulletin-qr-memory.test.mjs \
+            test/render-short-qr-batching.test.mjs \
             test/bulletin-qr-fallback.test.mjs \
             test/bulletin-qr-preview.test.mjs \
             test/bulletin-qr-consumption.test.mjs

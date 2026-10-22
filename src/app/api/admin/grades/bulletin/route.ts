@@ -733,6 +733,24 @@ function computeBulletinKey(p: {
 }
 
 /**
+ * Évite de saturer Supabase lors de l'émission d'une classe entière.
+ * Les lots sont ordonnés : tous les QR sont rendus, sans modification du contenu.
+ */
+async function mapInBatches<T, R>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const output: R[] = [];
+  const safeLimit = Math.max(1, Math.floor(limit) || 1);
+  for (let index = 0; index < items.length; index += safeLimit) {
+    const chunk = await Promise.all(items.slice(index, index + safeLimit).map(work));
+    output.push(...chunk);
+  }
+  return output;
+}
+
+/**
  * ✅ Génère un QR URL COURT (/v/[code]) en stockant un mapping en DB.
  * ✅ Fallback automatique vers l'ancien token si la table n'est pas prête.
  */
@@ -910,8 +928,9 @@ const snapFor = (row: any) => {
 
   // 2) Mode short si supporté
   if (shortSupported) {
-    return await Promise.all(
-      items.map(async (it) => {
+    // Maximum quatre lectures/insertions concurrentes par classe, au lieu
+    // d'une requête simultanée pour chaque élève.
+    return await mapInBatches(items, 4, async (it) => {
         try {
           let code: string;
 
@@ -1004,8 +1023,7 @@ const snapFor = (row: any) => {
             official_document_number: bulletinOfficialNumber(null, bulletinKey),
           };
         }
-      })
-    );
+    });
   }
 
   // 3) Fallback token pour tous
