@@ -1126,13 +1126,15 @@ export default function ClassDeviceNotesPage() {
       return;
     }
 
+    // L'action Enregistrer/Publier vise la dernière colonne saisie.
+    setActiveEvalId(evId);
     setChanged((prev) => ({
       ...prev,
       [evId]: { ...(prev[evId] || {}), [studentId]: v },
     }));
   }
 
-    async function saveAllChanges(): Promise<boolean> {
+    async function saveAllChanges(targetEvaluationId?: string): Promise<boolean> {
     if (!selected) {
       logInfo("saveAllChanges -> aucun selected, on annule.");
       return false;
@@ -1149,7 +1151,7 @@ export default function ClassDeviceNotesPage() {
     }
 
     const perEval = Object.entries(changed).filter(
-      ([, per]) => Object.keys(per).length > 0
+      ([evaluationId, per]) => (!targetEvaluationId || evaluationId === targetEvaluationId) && Object.keys(per).length > 0
     );
     logInfo("saveAllChanges -> perEval à enregistrer", perEval);
 
@@ -1481,9 +1483,9 @@ export default function ClassDeviceNotesPage() {
       setMsg("En attente de validation.");
       return;
     }
-    if (!window.confirm("Publier cette évaluation ?")) return;
+    if (!window.confirm(`Publier ${labelByEvalId[ev.id] || "cette note"} ?`)) return;
     const hasChanges = Object.keys(changed[ev.id] || {}).length > 0;
-    if (hasChanges && !(await saveAllChanges())) return;
+    if (hasChanges && !(await saveAllChanges(ev.id))) return;
     if (isEvaluationPublishedOfficial(ev) && !hasChanges) {
       setMsg("Déjà publiée. Aucune nouvelle notification.");
       return;
@@ -2954,7 +2956,7 @@ export default function ClassDeviceNotesPage() {
       {/* Vue SAISIE */}
       {mode === "saisie" && (
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
-          <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="sticky top-0 z-30 -mx-2 mb-3 flex flex-col gap-2 rounded-xl border border-emerald-100 bg-white/95 px-3 py-3 shadow-sm backdrop-blur-sm md:mx-0 md:flex-row md:items-center md:justify-between">
             <div className="text-sm text-slate-700">
               {evaluations.length}{" "}
               {evaluations.length <= 1
@@ -2971,13 +2973,20 @@ export default function ClassDeviceNotesPage() {
                   }
                 </span>
               )}
+              {!isPrimaryProgram && currentActiveEvalId && (
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs" aria-live="polite">
+                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-800">Note active : {labelByEvalId[currentActiveEvalId] || "Note"}</span>
+                  <span className="font-medium text-slate-500">{publicationStatusLabel(currentActiveEval)}</span>
+                  {Object.keys(changed[currentActiveEvalId] || {}).length > 0 && <span className="font-semibold text-amber-700">À enregistrer</span>}
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {!isPrimaryProgram && (
                 <>
                   <Button
-                    onClick={saveAllChanges}
-                    disabled={loading || totalChanges === 0 || selectedPeriodClosed || gradeWritesBlocked}
+                    onClick={() => saveAllChanges(currentActiveEvalId ?? undefined)}
+                    disabled={loading || !currentActiveEvalId || Object.keys(changed[currentActiveEvalId] || {}).length === 0 || selectedPeriodClosed || gradeWritesBlocked}
                   >
                     <Save className="h-4 w-4" /> Enregistrer
                   </Button>
@@ -2989,7 +2998,7 @@ export default function ClassDeviceNotesPage() {
                       !!(currentActiveEval && getPublicationStatus(currentActiveEval) === "submitted")}
                     title={currentActiveEvalId ? labelByEvalId[currentActiveEvalId] || "Évaluation active" : undefined}
                   >
-                    Publier{currentActiveEvalId ? " • " + (labelByEvalId[currentActiveEvalId] || "Note") : ""}
+                    Publier
                   </Button>
                   <GhostButton tone="emerald" onClick={() => setShowPublishPanel(true)} disabled={!evaluations.length}>
                     <FileText className="h-4 w-4" /> Statistiques
