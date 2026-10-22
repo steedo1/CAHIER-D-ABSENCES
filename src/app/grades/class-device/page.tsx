@@ -1308,8 +1308,8 @@ export default function ClassDeviceNotesPage() {
       return allSaved;
     } catch (e: any) {
       logError("saveAllChanges -> exception", e);
-      return false;
       setMsg(e?.message || "Échec d’enregistrement des notes.");
+      return false;
     } finally {
       setLoading(false);
     }
