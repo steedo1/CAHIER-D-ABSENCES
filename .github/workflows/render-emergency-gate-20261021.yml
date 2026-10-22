@@ -7,6 +7,7 @@ on:
       - fix/render-bulletin-read-timeout-20261021
       - fix/epc-primary-delete-subject-scope-20261021
       - fix/epc-delete-visible-confirm-cache-20261021
+      - fix/epc-class-device-cloud-only-20261022
   workflow_dispatch:
 
 permissions:
@@ -42,4 +43,6 @@ jobs:
         if: contains(github.ref, 'render-bulletin-read-timeout')
       - run: node --test test/epc-primary-grade-delete-pwa-ui.test.mjs
         if: contains(github.ref, 'epc-delete-visible-confirm-cache')
+      - run: node --import tsx --test test/class-device-my-classes.test.ts test/class-device-offline-readiness.test.ts test/class-device-identifiers.test.ts
+        if: contains(github.ref, 'epc-class-device-cloud-only')
       - run: npm run build
