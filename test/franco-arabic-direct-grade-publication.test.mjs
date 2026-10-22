@@ -37,13 +37,18 @@ const post = (url, body) => new NextRequest(url, {
   body: JSON.stringify(body),
 });
 
-test("Franco-Arabic teacher publishing overrides historical admin approval and push preferences", async () => {
+test("Franco-Arabic teacher publishing skips admin approval but respects push preferences", async () => {
   const db=fixture(true);
   const policy=createFixtureRouteLoader(db,db.legacyAdminId)
     ("src/lib/grades/publication.ts");
   const result=await policy.getGradePublicationSettings(db.legacyId);
   assert.equal(result.require_admin_validation,false);
-  assert.equal(result.auto_push_on_publish,true);
+  assert.equal(result.auto_push_on_publish,false,
+    "les notifications push désactivées par la direction restent désactivées");
+  db.tables.institution_grade_publication_settings[0].auto_push_on_publish = true;
+  const enabled = await policy.getGradePublicationSettings(db.legacyId);
+  assert.equal(enabled.auto_push_on_publish, true,
+    "les notifications push activées par la direction sont disponibles");
   assert.equal(result.sms_digest_mode,"disabled",
     "SMS credit and digest options are not implicitly enabled");
   assert.deepEqual(db.tables.institution_grade_publication_settings[0].require_admin_validation,true,
