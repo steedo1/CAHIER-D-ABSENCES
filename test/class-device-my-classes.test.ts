@@ -289,20 +289,53 @@ test("erreur de lecture établissement est diagnostiquée sans perdre l’accès
   );
 });
 
-test("erreur de lecture de politique devient une erreur explicite", async () => {
-  await assert.rejects(
-    enrichClassDeviceAccess({
+test("EPC sans Relais conserve la classe et son nom pour le Cloud", async () => {
+  const result = await enrichClassDeviceAccess({
+    items: [classRow("epc-cp1-fr", "epc-dimbokro")],
+    actorProfileId: "epc-device",
+    service: fakeService({
+      institutions: [{ id: "epc-dimbokro", name: "EPC Centre d'Étude Islamique de Dimbokro" }],
+      policies: [],
+    }),
+  });
+  const item: any = result.items[0];
+  assert.equal(item.institution_name, "EPC Centre d'Étude Islamique de Dimbokro");
+  assert.equal(item.actor_profile_id, "epc-device");
+  assert.equal(item.attendance_presence.enabled, false);
+  assert.equal(item.attendance_presence.relay_access_token, null);
+  assert.equal(item.attendance_presence.diagnostic, "relay_policy_missing");
+});
+
+test("panne de politique Relais ne bloque pas l’accès Cloud aux classes", async () => {
+  for (const options of [
+    { throwPolicy: true },
+    { policyError: { code: "unavailable" } },
+  ]) {
+    const result = await enrichClassDeviceAccess({
       items: [classRow("class-a", "school-a")],
       actorProfileId: "device-profile",
       service: fakeService({
-        throwPolicy: true,
+        ...options,
+        institutions: [{ id: "school-a", name: "School A" }],
       }),
-    }),
-    (error: unknown) =>
-      error instanceof ClassDeviceAccessError &&
-      error.status === 503 &&
-      error.code === "class_relay_policy_unavailable",
+    });
+    const item: any = result.items[0];
+    assert.equal(item.institution_name, "School A");
+    assert.equal(item.attendance_presence.enabled, false);
+    assert.equal(item.attendance_presence.relay_access_token, null);
+    assert.equal(item.attendance_presence.diagnostic, "relay_policy_unavailable");
+    assert.ok(result.diagnostics.includes("relay_policy_unavailable"));
+  }
+});
+
+test("préparation Cloud n’exige jamais un jeton Relais absent", async () => {
+  const source = await readFile(
+    new URL("../src/lib/offline-readiness.ts", import.meta.url),
+    "utf8",
   );
+  assert.match(source, /selectedClass\?\.attendance_presence\?\.enabled === true/);
+  assert.match(source, /if \(relayPolicy\) \{/);
+  assert.match(source, /buildClassDeviceScheduleFromCloud\(/);
 });
 
 test("secret ou URL incomplet retourne un diagnostic non sensible", async () => {
