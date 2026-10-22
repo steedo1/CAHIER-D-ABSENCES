@@ -1547,6 +1547,8 @@ export default function ClassDevicePage() {
     if (isOnline && pendingSync > 0) {
       setMsg("Synchronisation en cours…");
       await syncNow();
+      // Ne jamais laisser le libellé de synchronisation affiché après retour.
+      setMsg(null);
     }
 
     // 2) le rejeu de l'ouverture mémorise client:* -> UUID serveur.
@@ -1566,7 +1568,10 @@ export default function ClassDevicePage() {
 
     // 3) même si pendingSync==0, on tente un refresh serveur.
     const srv = await refreshServerOpenSession();
-    if (srv && srv.id && !isClientSessionId(srv.id)) return srv;
+    if (srv && srv.id && !isClientSessionId(srv.id)) {
+      setMsg(null);
+      return srv;
+    }
 
     await refreshPending();
     setMsg(
