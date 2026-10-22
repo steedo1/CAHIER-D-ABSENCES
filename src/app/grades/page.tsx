@@ -1436,10 +1436,8 @@ export default function TeacherNotesPage() {
       setMsg("Déjà publiée. Aucune nouvelle notification.");
       return;
     }
-    if (isEvaluationPublished(ev) && !publicationRequiresValidation) {
-      setMsg(hasChanges ? "Notes corrigées et mises à jour ✅" : "Déjà publiée.");
-      return;
-    }
+    // Une correction sauvegardée reste en attente, même en publication directe.
+    // Le clic Publier déclenche lui-même la nouvelle version officielle.
     await togglePublish(ev, true);
   }
 
