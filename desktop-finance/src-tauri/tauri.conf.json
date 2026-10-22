@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Mon Cahier Finance Desktop",
+  "version": "0.1.0",
+  "identifier": "ci.nexadigital.moncahier.finance",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Mon Cahier Finance Desktop - Prototype",
+        "width": 1180,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600
+      }
+    ]
+  },
+  "bundle": {
+    "active": false
+  }
+}
