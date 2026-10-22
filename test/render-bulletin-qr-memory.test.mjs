@@ -97,3 +97,42 @@ test("Render: lot vide ou unité sans ressource ni avertissement inutile", async
   assert.equal(count, 0);
   assert.equal(warnings.length, 0);
 });
+
+test("Render: les URLs impossibles de plus de 2953 octets ne sont jamais envoyées à l'encodeur", async () => {
+  const warnings = [];
+  let encodeCount = 0;
+  const attachQrPng = loadAttachQrPng(async (url, options, render) => {
+    encodeCount++;
+    return render(url, options);
+  }, warnings);
+  const longUrl = "https://www.mon-cahier.com/verify/bulletin?t=" + "a".repeat(3000);
+  const utf8Url = "https://www.mon-cahier.com/v/" + "é".repeat(1500);
+  const shortUrl = "https://www.mon-cahier.com/v/SHORT";
+  const result = await attachQrPng([
+    { student_id: "long", qr_url: longUrl, qr_token: "historic-token" },
+    { student_id: "utf8", qr_url: utf8Url },
+    { student_id: "short", qr_url: shortUrl },
+  ]);
+  assert.equal(encodeCount, 1, "only the short URL enters the QR encoder");
+  assert.equal(result[0].qr_png, null);
+  assert.equal(result[0].qr_url, longUrl);
+  assert.equal(result[0].qr_token, "historic-token");
+  assert.equal(result[1].qr_png, null);
+  assert.equal(result[2].qr_png, `image:${shortUrl}`);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0][1].failed_count, 2);
+});
+
+test("Render: limite exacte de 2953 octets laissée à l'encodeur", async () => {
+  let count = 0;
+  const attachQrPng = loadAttachQrPng(async (url, options, render) => {
+    count++;
+    return render(url, options);
+  });
+  const prefix = "https://www.mon-cahier.com/v/";
+  const url = prefix + "A".repeat(2953 - Buffer.byteLength(prefix));
+  assert.equal(Buffer.byteLength(url), 2953);
+  const result = await attachQrPng([{ student_id: "boundary", qr_url: url }]);
+  assert.equal(count, 1);
+  assert.equal(result[0].qr_png, `image:${url}`);
+});

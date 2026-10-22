@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/render-memory-bulletin-20261022
+      - fix/render-qr-capacity-guard-20261022
   workflow_dispatch:
 
 permissions:
