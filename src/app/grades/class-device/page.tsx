@@ -211,9 +211,9 @@ function getPublicationStatus(ev: Evaluation | null | undefined):
   | "published" {
   const raw = String(ev?.publication_status || "").trim();
 
-  if (ev?.is_published === true || raw === "published") return "published";
   if (raw === "submitted") return "submitted";
   if (raw === "changes_requested") return "changes_requested";
+  if (ev?.is_published === true || raw === "published") return "published";
   return "draft";
 }
 
@@ -227,18 +227,18 @@ function isEvaluationLockedByPublication(ev: Evaluation | null | undefined) {
 }
 
 function isEvaluationEditable(ev: Evaluation | null | undefined) {
-  return !isEvaluationLockedByPublication(ev);
+  return getPublicationStatus(ev) !== "submitted";
 }
 
 function isEvaluationDeletable(ev: Evaluation | null | undefined) {
-  return !isEvaluationLockedByPublication(ev);
+  return !ev?.is_published && !isEvaluationLockedByPublication(ev);
 }
 
 function publicationStatusLabel(ev: Evaluation | null | undefined) {
   const status = getPublicationStatus(ev);
   if (status === "published") return "Publié";
   if (status === "submitted") return "En attente de validation";
-  if (status === "changes_requested") return "Correction demandée";
+  if (status === "changes_requested") return ev?.is_published ? "Correction en cours" : "Correction demandée";
   return "Brouillon";
 }
 
@@ -1235,6 +1235,14 @@ export default function ClassDeviceNotesPage() {
         }
 
         savedEvalIds.push(evaluation_id);
+        if (j?.publication_status === "changes_requested") {
+          setEvaluations(prev => prev.map(ev => ev.id === evaluation_id
+            ? { ...ev, publication_status: "changes_requested" } : ev));
+        } else if (j?.publication?.is_published) {
+          setEvaluations(prev => prev.map(ev => ev.id === evaluation_id
+            ? { ...ev, is_published: true, publication_status: "published",
+                publication_version: j.publication.publication_version ?? ev.publication_version } : ev));
+        }
         if (isPrimaryProgram && primaryCatalogEnabled && j?.publication?.is_published) {
           setEvaluations(prev => prev.map(ev => ev.id === evaluation_id
             ? { ...ev, is_published: true, publication_status: "published",
@@ -1389,7 +1397,7 @@ export default function ClassDeviceNotesPage() {
     }
   }
 
-  async function togglePublish(ev: Evaluation) {
+  async function togglePublish(ev: Evaluation, forcePublish = false) {
     if (isPrimaryProgram && primaryCatalogEnabled) {
       setMsg("Les notes du primaire sont publiées automatiquement lors de l’enregistrement.");
       return;
@@ -1412,7 +1420,7 @@ export default function ClassDeviceNotesPage() {
       return;
     }
 
-    const next = status === "published" ? false : true;
+    const next = forcePublish || status !== "published";
     logInfo("togglePublish -> PATCH /api/grades/evaluations", {
       eval_id: ev.id,
       next,
@@ -1476,11 +1484,12 @@ export default function ClassDeviceNotesPage() {
     if (!window.confirm("Publier cette évaluation ?")) return;
     const hasChanges = Object.keys(changed[ev.id] || {}).length > 0;
     if (hasChanges && !(await saveAllChanges())) return;
-    if (isEvaluationPublishedOfficial(ev)) {
-      setMsg(hasChanges ? "Notes corrigées et mises à jour ✅" : "Déjà publiée. Aucune nouvelle notification.");
+    if (isEvaluationPublishedOfficial(ev) && !hasChanges) {
+      setMsg("Déjà publiée. Aucune nouvelle notification.");
       return;
     }
-    await togglePublish(ev);
+    // Après correction sous validation, ce clic soumet la nouvelle version.
+    await togglePublish(ev, true);
   }
 
   async function deleteEvaluation(ev: Evaluation) {
