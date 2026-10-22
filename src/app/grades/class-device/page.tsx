@@ -1132,20 +1132,20 @@ export default function ClassDeviceNotesPage() {
     }));
   }
 
-    async function saveAllChanges() {
+    async function saveAllChanges(): Promise<boolean> {
     if (!selected) {
       logInfo("saveAllChanges -> aucun selected, on annule.");
-      return;
+      return false;
     }
 
     if (gradeWritesBlocked) {
       setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
-      return;
+      return false;
     }
 
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. La saisie des notes est fermée.");
-      return;
+      return false;
     }
 
     const perEval = Object.entries(changed).filter(
@@ -1155,7 +1155,7 @@ export default function ClassDeviceNotesPage() {
 
     if (perEval.length === 0) {
       setMsg("Aucun changement à enregistrer.");
-      return;
+      return false;
     }
 
     setLoading(true);
@@ -1291,13 +1291,16 @@ export default function ClassDeviceNotesPage() {
           : "Notes enregistrées ✅");
       }
 
+      const allSaved = savedEvalIds.length > 0 && lockedEvalIds.length === 0 && publicationLockedEvalIds.length === 0;
       logInfo("saveAllChanges -> terminé", {
         savedEvalIds,
         lockedEvalIds,
         publicationLockedEvalIds,
       });
+      return allSaved;
     } catch (e: any) {
       logError("saveAllChanges -> exception", e);
+      return false;
       setMsg(e?.message || "Échec d’enregistrement des notes.");
     } finally {
       setLoading(false);
@@ -1460,6 +1463,24 @@ export default function ClassDeviceNotesPage() {
         return copy;
       });
     }
+  }
+
+
+  async function publishSelectedEvaluation() {
+    const ev = evaluations.find((item) => item.id === currentActiveEvalId);
+    if (!ev || selectedPeriodClosed || !isOnline || loading || !!publishBusy[ev.id]) return;
+    if (getPublicationStatus(ev) === "submitted") {
+      setMsg("En attente de validation.");
+      return;
+    }
+    if (!window.confirm("Publier cette évaluation ?")) return;
+    const hasChanges = Object.keys(changed[ev.id] || {}).length > 0;
+    if (hasChanges && !(await saveAllChanges())) return;
+    if (isEvaluationPublishedOfficial(ev)) {
+      setMsg(hasChanges ? "Notes corrigées et mises à jour ✅" : "Déjà publiée. Aucune nouvelle notification.");
+      return;
+    }
+    await togglePublish(ev);
   }
 
   async function deleteEvaluation(ev: Evaluation) {
@@ -2943,35 +2964,49 @@ export default function ClassDeviceNotesPage() {
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <GhostButton
-                tone="slate"
-                onClick={() => {
-                  logInfo("UI -> ouverture panneau publication");
-                  setShowPublishPanel(true);
-                }}
-                disabled={!evaluations.length || !isOnline || (isPrimaryProgram && primaryCatalogEnabled)}
-              >
-                Gérer la publication
-              </GhostButton>
-              <GhostButton
-                tone="emerald"
-                onClick={exportToCsv}
-                disabled={!roster.length || !evaluations.length}
-              >
-                <FileSpreadsheet className="h-4 w-4" />
-                Exporter (Excel/CSV)
-              </GhostButton>
-              <Button
-                onClick={saveAllChanges}
-                disabled={
-                  loading ||
-                  totalChanges === 0 ||
-                  selectedPeriodClosed ||
-                  gradeWritesBlocked
-                }
-              >
-                <Save className="h-4 w-4" /> Enregistrer
-              </Button>
+              {!isPrimaryProgram && (
+                <>
+                  <Button
+                    onClick={saveAllChanges}
+                    disabled={loading || totalChanges === 0 || selectedPeriodClosed || gradeWritesBlocked}
+                  >
+                    <Save className="h-4 w-4" /> Enregistrer
+                  </Button>
+                  <Button
+                    tone="emerald"
+                    onClick={publishSelectedEvaluation}
+                    disabled={!currentActiveEvalId || loading || !isOnline || selectedPeriodClosed ||
+                      !!(currentActiveEvalId && publishBusy[currentActiveEvalId]) ||
+                      !!(currentActiveEval && getPublicationStatus(currentActiveEval) === "submitted")}
+                    title={currentActiveEvalId ? labelByEvalId[currentActiveEvalId] || "Évaluation active" : undefined}
+                  >
+                    Publier{currentActiveEvalId ? " • " + (labelByEvalId[currentActiveEvalId] || "Note") : ""}
+                  </Button>
+                  <GhostButton tone="emerald" onClick={() => setShowPublishPanel(true)} disabled={!evaluations.length}>
+                    <FileText className="h-4 w-4" /> Statistiques
+                  </GhostButton>
+                </>
+              )}
+              {isPrimaryProgram && (
+                <>
+                  <GhostButton
+                    tone="slate"
+                    onClick={() => setShowPublishPanel(true)}
+                    disabled={!evaluations.length || !isOnline || primaryCatalogEnabled}
+                  >
+                    Gérer la publication
+                  </GhostButton>
+                  <GhostButton tone="emerald" onClick={exportToCsv} disabled={!roster.length || !evaluations.length}>
+                    <FileSpreadsheet className="h-4 w-4" /> Exporter (Excel/CSV)
+                  </GhostButton>
+                  <Button
+                    onClick={saveAllChanges}
+                    disabled={loading || totalChanges === 0 || selectedPeriodClosed || gradeWritesBlocked}
+                  >
+                    <Save className="h-4 w-4" /> Enregistrer
+                  </Button>
+                </>
+              )}
               {locksSupported && currentActiveEvalId && (
                 <Button
                   tone={isCurrentEvalLocked ? "slate" : "amber"}
@@ -3683,7 +3718,7 @@ export default function ClassDeviceNotesPage() {
         </div>
       )}
 
-{showPublishPanel && (
+{isPrimaryProgram && showPublishPanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
           <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl border border-slate-200 p-4 md:p-6">
             <div className="mb-3 flex items-center justify-between gap-2">
@@ -3829,6 +3864,39 @@ export default function ClassDeviceNotesPage() {
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {!isPrimaryProgram && showPublishPanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
+          <div className="w-full max-w-xl rounded-2xl border bg-white p-4 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-semibold">Statistiques</h2>
+              <GhostButton onClick={() => setShowPublishPanel(false)}>Fermer</GhostButton>
+            </div>
+            <div className="max-h-[65vh] space-y-2 overflow-y-auto">
+              {evaluations.map((ev) => (
+                <div key={ev.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3">
+                  <div className="text-sm">
+                    <strong>{labelByEvalId[ev.id] || "Note"}</strong>
+                    <span className="ml-2 text-slate-500">{formatDateFr(ev.eval_date)}</span>
+                    <span className="ml-2 text-xs text-slate-500">{publicationStatusLabel(ev)}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <GhostButton tone="emerald" onClick={() => openStatsPdfForEvaluation(ev)} disabled={!roster.length}>
+                      <FileText className="h-4 w-4" /> PDF
+                    </GhostButton>
+                    <GhostButton
+                      tone="red"
+                      onClick={() => deleteEvaluation(ev)}
+                      disabled={!isOnline || selectedPeriodClosed || !isEvaluationDeletable(ev) || !!publishBusy[ev.id]}
+                    >
+                      Supprimer
+                    </GhostButton>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
