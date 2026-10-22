@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Accès minimal au noyau Tauri uniquement.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
