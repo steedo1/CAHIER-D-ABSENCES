@@ -9,7 +9,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "baseUrl": ".",
     "paths": {
       "@mon-cahier-finance-rules": ["../src/lib/finance/charge-rules.ts"]
