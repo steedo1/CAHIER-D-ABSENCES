@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import FrancoArabicBulletin, { type BulletinVariant } from "./FrancoArabicBulletin";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
 import { isSpecializedBulletinPrintable } from "@/lib/franco-arabic-print-layout";
-import { bulletinPreparationMessages } from "@/lib/bulletin-preparation-messages";
 import "@/app/admin/bulletins/modeles/print.css";
 
 /** View inside the existing bulletin page; data and engine choice come from its
@@ -26,10 +25,6 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
     ? !!row.document.french && !!row.document.arabic : !!row.document[selected === "ordinary" ? "french" : selected]);
   const printable = visibleDocuments.length > 0 && visibleDocuments.every(row =>
     isSpecializedBulletinPrintable(row.document, row.programReadiness, selected));
-  const selectedTracks = selected === "combined" ? ["french", "arabic"] as const
-    : [selected === "ordinary" ? "french" : selected] as const;
-  const preparationMessages = bulletinPreparationMessages(visibleDocuments.flatMap(row =>
-    row.problemsByProgram ? selectedTracks.flatMap(track => row.problemsByProgram?.[track] || []) : row.problems));
   useEffect(() => {
     const printShortcut = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") {
@@ -51,14 +46,6 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
       <button type="button" disabled={!printable || printPreparing} onClick={() => void onPrint()} className="rounded-lg bg-slate-900 px-3 py-2 text-white disabled:opacity-40">{printPreparing ? "Préparation…" : "Imprimer les bulletins"}</button>
     </div>
     {error && <p role="alert" className="text-red-700 print:hidden">{error}</p>}
-    {!printable && <div role="status" className="rounded-xl bg-amber-50 p-4 text-amber-950 print:hidden">
-      <p className="font-semibold">Bulletins en préparation — {visibleDocuments[0]?.document[selected === "arabic" ? "arabic" : "french"]?.period || "Évaluation sélectionnée"}</p>
-      <p>Les cases vides ne valent pas zéro. La moyenne et le rang sont affichés après validation des données nécessaires.</p>
-      {preparationMessages.length > 0 && <ul className="mt-2 list-disc pl-5">
-        {preparationMessages.map(message => <li key={message}>{message}</li>)}
-      </ul>}
-      <a href="/admin/parametres?tab=coefficients" className="mt-2 inline-block font-semibold underline">Vérifier les matières et les barèmes</a>
-    </div>}
     <div className="specialized-print-denied" role="status">Impression indisponible : les bulletins sélectionnés sont incomplets ou non validés. Vérifiez la configuration et les notes publiées dans Mon Cahier.</div>
     <div className={`fa-report-print-root specialized-print-root ${!printable || printPreparing || error ? "specialized-print-blocked" : ""} space-y-6 overflow-x-auto print:overflow-visible`}>
       {visibleDocuments.map(row => <FrancoArabicBulletin key={row.studentId} model={{ ...row.document, school: { ...row.document.school, ...data.school },
