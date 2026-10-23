@@ -62,7 +62,7 @@ import { advanceClassDevicePreparation } from "@/lib/class-device-preparation-re
 import { retryableOfflinePreparationFailure } from "@/lib/offline-preparation-failure";
 import { cacheCompareAndSet } from "@/lib/offline";
 import { MON_CAHIER_WEB_RELEASE } from "@/lib/offline-release";
-import { relayEnabledForInstitution } from "@/lib/relay-capability";
+import { relayEnabledForInstitution, RELAY_LOCAL_DISABLED } from "@/lib/relay-capability";
 import {
   canUseTeacherCloudFallback,
   decideOfflineSchedulePolicy,
@@ -1625,7 +1625,9 @@ export async function assessClassDeviceOfflineReadiness(
       ? bundle.readiness
       : initial,
   );
-  const context = await resolveClassDeviceContext(readiness, requested);
+  const context = RELAY_LOCAL_DISABLED
+    ? null
+    : await resolveClassDeviceContext(readiness, requested);
   const institutionId = String(
     requested.institutionId || readiness?.institution_id || "",
   ).trim();
@@ -1965,6 +1967,9 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     });
   } catch (cloudError) {
     if (cloudError instanceof Error && cloudError.message === "teacher_phone_account_conflict") throw cloudError;
+    // PWA seule : pas de secours par le relais local, la précédente préparation
+    // cohérente reste disponible sans supprimer les journaux hors ligne.
+    if (RELAY_LOCAL_DISABLED) throw cloudError;
     preparationSource = "relay";
     basics = basics || await cacheGet<any>("teacher:inst:basics").catch(() => null);
     const institutionId = String(basics?.institution_id || "").trim();
@@ -2015,11 +2020,11 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
 
   const relayPolicy = basics?.attendance_presence || {};
   const institutionId = String(basics?.institution_id || bootstrap.institution_id || "").trim();
-  if (relayPolicy?.relay_local_url && relayPolicy?.relay_access_token) {
+  if (!RELAY_LOCAL_DISABLED && relayPolicy?.relay_local_url && relayPolicy?.relay_access_token) {
     onProgress("Vérification du relais local depuis l’application…");
   }
   const relayConnectivity: RelayTeacherConnectivityResult =
-    institutionId && relayPolicy?.relay_local_url && relayPolicy?.relay_access_token
+    !RELAY_LOCAL_DISABLED && institutionId && relayPolicy?.relay_local_url && relayPolicy?.relay_access_token
       ? await checkRelayTeacherConnectivity({
           institutionId,
           baseUrl: String(relayPolicy.relay_local_url),
@@ -2148,9 +2153,11 @@ async function prepareClassDevice(
     selectedClass = identity.selectedClass || {};
 
     try {
-      relayPolicy = resolveClassDevicePreparationAccess(
-        classPayload.payload,
-      ).relayPolicy;
+      if (!RELAY_LOCAL_DISABLED) {
+        relayPolicy = resolveClassDevicePreparationAccess(
+          classPayload.payload,
+        ).relayPolicy;
+      }
     } catch (error) {
       // Un relais absent ou mal configuré ne doit pas empêcher une préparation
       // Cloud valide. Son accès reste simplement désactivé pour cette tentative.
@@ -2185,9 +2192,11 @@ async function prepareClassDevice(
   };
   let relaySchedule: RelayTeacherOfflineSchedule | null = null;
   let relayScopeRevision: number | null = null;
-  let lastSourceError: unknown = accessError;
+  // Le diagnostic d’un ancien relais ne peut plus masquer une vraie erreur
+  // de chargement Cloud. En Cloud/PWA seul, l’exception vient du Cloud.
+  let lastSourceError: unknown = RELAY_LOCAL_DISABLED ? null : accessError;
 
-  if (relayPolicy) {
+  if (!RELAY_LOCAL_DISABLED && relayPolicy) {
     onProgress("Recherche du relais local…");
     relayConnectivity = await checkRelayTeacherConnectivity({
       institutionId,
@@ -2283,7 +2292,7 @@ async function prepareClassDevice(
     throw lastSourceError instanceof Error
       ? lastSourceError
       : new Error(
-          "Aucune préparation d’appel complète n’est disponible sur le Cloud, le relais ou ce téléphone.",
+          "La préparation Cloud de ce téléphone est indisponible. Vérifiez la connexion et actualisez les données d’appel ; les appels déjà enregistrés restent conservés.",
         );
   }
 
