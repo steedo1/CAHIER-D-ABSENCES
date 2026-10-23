@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { ciPrimaryFrenchAppreciation } from "@/lib/primary-french-reference-ci";
 import styles from "./FrancoArabicBulletin.module.css";
 import { selectPrintablePrograms } from "@/lib/franco-arabic-print-layout";
 import { SCHOOL_TEACHING_DIRECTOR_TITLE } from "@/lib/school-teaching-signatories";
@@ -231,7 +232,7 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
           ? (row.average === null ? "" : `${number(row.average)}/${row.denominator || program.denominator}`)
           : number(row.average)}</td>
         {!compact && <td>{number(row.classAverage)}</td>}
-        {!compact && <td className={styles.observation}>{row.observation || "—"}</td>}
+        {!compact && <td className={styles.observation}>{row.observation || (program.ciPrimaryFrench ? ciPrimaryFrenchAppreciation(row.average, row.denominator || program.denominator) : null) || "—"}</td>}
       </tr>
       {secondary && (row.components || []).map(component => (
           <tr key={`component-${row.id}-${component.id}`} className={styles.subjectComponentRow}>
@@ -336,7 +337,7 @@ function Panel({ program, compact, ordinary }: { program: BulletinProgram; compa
     </div>}
     <div className={styles.appreciation}>
       <span>Appréciation générale</span>
-      <p>{program.appreciation || "—"}</p>
+      <p>{program.appreciation || (program.ciPrimaryFrench ? ciPrimaryFrenchAppreciation(program.generalAverage, program.denominator) : null) || "—"}</p>
     </div>
   </section>;
 }

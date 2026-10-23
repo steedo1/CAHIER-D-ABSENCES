@@ -122,3 +122,34 @@ test("one original quote per Abidjan day, stable across reloads, with 120 distin
   assert.equal(new Set(sequence).size, 120);
   assert.notEqual(sequence[0], sequence[1]);
 });
+
+
+test("CI primary observations follow the booklet, normalize scales and preserve blanks and teacher comments", async () => {
+  const db = setup();
+  const load = db.admin;
+  const { ciPrimaryFrenchAppreciation: appreciation } = load("src/lib/primary-french-reference-ci.ts");
+  for (const [score, expected] of [[10, "Très bien"], [9, "Bien"], [8, "Bien"], [7, "Assez bien"], [6, "Assez bien"], [5, "Passable"], [4, "Médiocre"], [3, "Médiocre"], [2, "Mal"], [1, "Mal"], [0, "Travail très mal"]]) {
+    assert.equal(appreciation(score, 10), expected);
+    assert.equal(appreciation(score * 5, 50), expected);
+  }
+  assert.equal(appreciation(9.99, 10), "Bien");
+  assert.equal(appreciation(null, 10), null);
+  assert.equal(appreciation(NaN, 10), null);
+  assert.equal(appreciation(11, 10), null);
+  assert.equal(appreciation(5, 0), null);
+  await publish(db, "NIV1", "french", 0.8);
+  const data = (await report(db, "NIV1")).specialized;
+  const document = data.documents[0].document;
+  document.arabic = undefined;
+  document.french.subjects.push({ ...document.french.subjects[0], id: "ungraded", name: "Sans note", average: null, observation: null });
+  const Bulletin = load("src/components/bulletins/FrancoArabicBulletin.tsx").default;
+  let html = renderToStaticMarkup(React.createElement(Bulletin, { model: document, variant: "ordinary" }));
+  assert.match(html, /class="observation">Bien<\/td>/);
+  assert.match(html, /Appréciation générale<\/span><p>Bien<\/p>/);
+  assert.match(html, /class="observation">—<\/td>/, "ungraded subjects stay without assessment");
+  document.french.subjects.find(s => s.average !== null).observation = "Bonne progression";
+  document.french.appreciation = "Avis de l’enseignant";
+  html = renderToStaticMarkup(React.createElement(Bulletin, { model: document, variant: "ordinary" }));
+  assert.match(html, /Bonne progression/);
+  assert.match(html, /Avis de l’enseignant/);
+});
