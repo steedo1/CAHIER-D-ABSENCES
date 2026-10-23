@@ -122,8 +122,11 @@ for (const bulletinRole of ["admin", "file_correspondent"]) test(`browser: admin
     await scores.first().fill("8");
     await page.getByRole("button",{name:"Enregistrer",exact:true}).first().click();
     await page.getByText(/Notes enregistrées/).waitFor();
-    await page.getByRole("button",{name:/Composition de décembre.*Publier/i}).first().click();
-    await page.getByText(/publiées|publication effectuée|mis.*file/i).first().waitFor();
+    assert.equal(db.tables.grade_evaluations[0].publication_status,"published","Enregistrer feeds the bulletin immediately");
+    assert.equal(await page.getByRole("button",{name:/Publier/i}).count(),0);
+    await page.getByRole("button",{name:"Statistiques",exact:true}).click();
+    await page.getByRole("button",{name:"PDF",exact:true}).waitFor();
+    await page.getByRole("button",{name:"Fermer",exact:true}).click();
     await classSelect.selectOption(`${cls}|${math}|arabic`);
     await page.waitForFunction(()=>document.body.innerText.includes("Enseignement arabe"));
     await page.waitForTimeout(100);
@@ -176,3 +179,4 @@ for (const bulletinRole of ["admin", "file_correspondent"]) test(`browser: admin
     throw error;
   } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}
 });
+

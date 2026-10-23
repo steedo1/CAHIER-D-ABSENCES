@@ -6,7 +6,7 @@ import { selectProgramComponents } from "@/lib/school-subject-components";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { requiresDirectGradePublication, usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
+import { requiresDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
 import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 import {
   getGradePublicationSettings,
@@ -337,7 +337,7 @@ async function primaryClassDeviceAccess(
   classId: string, subjectIds: string[], schoolCtx: Awaited<ReturnType<typeof primarySchoolContext>>,
 ): Promise<boolean> {
   if (!roles.has("class_device") || roles.has("teacher") || !schoolCtx.isPrimary ||
-      !usesDirectGradePublication(schoolCtx.settings) || !subjectIds.length) return false;
+      !subjectIds.length) return false;
   if (!await classDeviceMayAccessClass({ service: srv, userId: profileId, classId })) return false;
   const { data, error } = await srv.from("class_teachers").select("id")
     .eq("institution_id", institutionId).eq("class_id", classId)

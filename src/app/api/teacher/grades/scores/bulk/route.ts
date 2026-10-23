@@ -2,7 +2,6 @@ import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
-import { usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
 import { publishEvaluationOfficially, stagePublishedEvaluationCorrection } from "@/lib/grades/publication";
 // src/app/api/teacher/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -296,37 +295,36 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Secondaire : correction pendant la période. Primaire classique :
-    // conserver les protections historiques. EPC primaire : exception existante.
+    // Primaire : toute sauvegarde de l'enseignant devient officielle.
+    // Le cycle est résolu depuis l'établissement, jamais depuis le navigateur.
     const { data: gradeClass, error: classError } = await srv.from("classes")
       .select("id,institution_id,level").eq("id", ge.class_id).maybeSingle();
     if (classError || !gradeClass) return bad("TEACHER_CLASS_LOOKUP_FAILED", 503);
     const primaryClass = /^(CP[12]|CE[12]|CM[12])(?:\b|$)/i
       .test(String(gradeClass.level || "").trim());
-    let directPrimaryTeacher = false;
+    let autoPublishPrimary = false;
     if (ge.teacher_id === auth.user.id) {
       const cls = gradeClass;
       if (cls?.institution_id) {
         const { data: inst, error: instError } = await srv.from("institutions")
           .select("settings_json").eq("id", cls.institution_id).maybeSingle();
         if (instError || !inst) return bad("TEACHER_INSTITUTION_LOOKUP_FAILED", 503);
-        if (usesDirectGradePublication(inst.settings_json)) {
+        const settings = parseSchoolCyclesSettings(inst.settings_json);
+        if (settings.enabled && resolveSchoolCycleForClass(cls, settings) === "primary") {
           const { data: roles, error: rolesError } = await srv.from("user_roles")
             .select("role").eq("profile_id", auth.user.id).eq("institution_id", cls.institution_id);
           if (rolesError) return bad("TEACHER_ROLE_LOOKUP_FAILED", 503);
-          const settings = parseSchoolCyclesSettings(inst.settings_json);
-          directPrimaryTeacher = (roles || []).some((row: any) => row.role === "teacher") &&
-            resolveSchoolCycleForClass(cls, settings) === "primary";
+          autoPublishPrimary = (roles || []).some((row: any) => row.role === "teacher");
         }
       }
     }
 
-    // ✅ Keep published notes editable in this single opt-in teaching path.
+    // Le primaire peut reprendre une ancienne soumission et corriger ses notes.
     const editable = assertEvaluationEditable(ge);
     const wasPublished = ge.is_published === true || ge.publication_status === "published";
     const canCorrectPublished = ge.teacher_id === auth.user.id &&
-      (!primaryClass || directPrimaryTeacher);
-    if (!editable.ok && !(wasPublished && ge.publication_status !== "submitted" && canCorrectPublished)) {
+      (!primaryClass || autoPublishPrimary);
+    if (!editable.ok && !autoPublishPrimary && !(wasPublished && ge.publication_status !== "submitted" && canCorrectPublished)) {
       console.warn("[teacher/grades/scores/bulk] evaluation not editable", {
         evaluation_id,
         error: editable.error,
@@ -537,20 +535,20 @@ export async function POST(req: NextRequest) {
 
     let publication: Awaited<ReturnType<typeof publishEvaluationOfficially>> | null = null;
     let correctionPendingAdmin = false;
-    if (wasPublished && (upserted > 0 || deleted > 0)) {
-      if (directPrimaryTeacher) {
-        // Primaire EPC : conserver la publication immédiate historique.
+    if (upserted > 0 || deleted > 0) {
+      if (autoPublishPrimary) {
+        // Première saisie et corrections : un seul clic sur Enregistrer.
         publication = await publishEvaluationOfficially({
           evaluationId: evaluation_id,
           actorProfileId: auth.user.id,
-          forceNewVersion: true,
+          forceNewVersion: wasPublished,
           queuePush: true,
           notifyStudentIds: [...new Set([...upserts.map(item => item.student_id), ...toDelete])],
         });
         if (!publication.ok) return bad("CORRECTION_PUBLICATION_PENDING", publication.status || 503, {
-          saved: true, message: "Notes enregistrées, publication à reprendre.",
+          saved: true, message: "Notes enregistrées, mais le bulletin n’est pas encore à jour. Réessayez l’enregistrement.",
         });
-      } else {
+      } else if (wasPublished) {
         // Secondaire : Enregistrer conserve la dernière version officielle.
         const staged = await stagePublishedEvaluationCorrection({
           evaluationId: evaluation_id, actorProfileId: auth.user.id,

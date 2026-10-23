@@ -161,8 +161,6 @@ test("Franco-Arabic teacher publication queues only the official parent snapshot
   // La direction a activé explicitement les notifications push.
   db.tables.institution_grade_publication_settings[0].auto_push_on_publish = true;
   const ev = await create(db, "DEC", "arabic");
-  const saved = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts").POST(req("/api/teacher/grades/scores/bulk", { evaluation_id: ev.id, items: [{ student_id: pupil0, score: 0 }] }));
-  assert.equal(saved.status, 200);
   // Only dispatch transport is isolated; real publication and queue code run.
   const overrides = new Map([["src/lib/push-dispatch.ts", "export async function triggerPushDispatch(){ return true; }"]]);
   const load = createFixtureRouteLoader(db, teacher, overrides);
@@ -170,6 +168,9 @@ test("Franco-Arabic teacher publication queues only the official parent snapshot
   stored.class = { ...db.tables.classes[0] }; stored.subject = { id: math, name: "Mathématiques" };
   db.tables.students = [db.tables.class_enrollments[0].students];
   db.tables.student_guardians = [{ id: "guardian", student_id: pupil0, guardian_profile_id: "parent", notifications_enabled: true }];
+  const saved = await load("src/app/api/teacher/grades/scores/bulk/route.ts").POST(req("/api/teacher/grades/scores/bulk", { evaluation_id: ev.id, items: [{ student_id: pupil0, score: 0 }] }));
+  assert.equal(saved.status, 200);
+
   const published = await load(evaluationPath).PATCH(req("/api/teacher/grades/evaluations", { evaluation_id: ev.id, is_published: true }, "PATCH"));
   assert.equal(published.status, 200, JSON.stringify(await published.clone().json()));
   assert.equal(db.tables.grade_evaluations[0].publication_status, "published", "no admin approval despite legacy validation=true");
@@ -226,12 +227,13 @@ test("actual production scale CHECK: /50 keeps raw points, displayed scales and 
   const stored = db.tables.grade_evaluations[0];
   assert.equal(stored.scale,60,"a value allowed by the existing production constraint");
   assert.match(stored.title,/:S50$/);
-  const saved = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts").POST(req("/api/teacher/grades/scores/bulk",{evaluation_id:ev.id,items:[{student_id:pupil0,score:37.25}]}));
-  assert.equal(saved.status,200);
-  assert.equal(db.tables.student_grades[0].score,37.25,"raw marks are not rescaled or rounded away");
   const loader = createFixtureRouteLoader(db,teacher,new Map([["src/lib/push-dispatch.ts","export async function triggerPushDispatch(){return true;}"]]));
   stored.class = {...db.tables.classes[0]};stored.subject={id:math,name:"Mathématiques"};
   db.tables.students=[db.tables.class_enrollments[0].students];
+  const saved = await loader("src/app/api/teacher/grades/scores/bulk/route.ts").POST(req("/api/teacher/grades/scores/bulk",{evaluation_id:ev.id,items:[{student_id:pupil0,score:37.25}]}));
+  assert.equal(saved.status,200);
+  assert.equal(db.tables.student_grades[0].score,37.25,"raw marks are not rescaled or rounded away");
+
   const published=await loader(evaluationPath).PATCH(req("/api/teacher/grades/evaluations",{evaluation_id:ev.id,is_published:true},"PATCH"));
   assert.equal(published.status,200,JSON.stringify(await published.clone().json()));
   assert.equal(db.tables.grade_published_scores[0].scale,50);
@@ -416,7 +418,7 @@ test("EPC primary teacher corrects a published note without unpublishing or dele
     row.evaluation_id === evaluation.id && row.student_id === pupil0)?.score, 9.5);
 });
 
-test("classic primary teachers retain the existing published-grade protection", async () => {
+test("French-only primary teachers also save corrections directly into the bulletin", async () => {
   const db = setup("CP1", false);
   const evaluation = await create(db, "DEC", "french");
   const row = db.tables.grade_evaluations.find(item => item.id === evaluation.id);
@@ -426,5 +428,8 @@ test("classic primary teachers retain the existing published-grade protection", 
     .POST(req("/api/teacher/grades/scores/bulk", {
       evaluation_id: evaluation.id, items: [{ student_id: pupil0, score: 3 }],
     }));
-  assert.equal(attempt.status, 423, "classic school policy must not change");
+  assert.equal(attempt.status, 200, JSON.stringify(await attempt.clone().json()));
+  assert.equal((await attempt.json()).publication?.is_published, true);
+  assert.equal(db.tables.grade_published_scores.find(score => score.is_current)?.score, 3);
 });
+

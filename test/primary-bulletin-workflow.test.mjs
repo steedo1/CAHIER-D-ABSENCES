@@ -102,11 +102,15 @@ test("Arabic subject barèmes feed the real bulletin, ignore blanks, preserve ze
       evaluation_id: evaluation.id, items: [{ student_id: "student-0", score }],
     }));
     assert.equal(saved.status, 200, JSON.stringify(await saved.clone().json()));
+    assert.equal((await saved.json()).publication?.is_published, true,
+      "Enregistrer rend déjà la note disponible pour le bulletin");
     const published = await teacher("src/lib/grades/publication.ts").publishEvaluationOfficially({
       evaluationId: evaluation.id, actorProfileId: teacherAr, queuePush: false,
     });
     assert.equal(published.ok, true, JSON.stringify(published));
-    assert.equal(published.official_rows, 1);
+    assert.equal(published.action, "already_published");
+    assert.equal(db.tables.grade_published_scores.filter(row =>
+      row.evaluation_id === evaluation.id && row.is_current).length, 1);
   }
   const load = createFixtureRouteLoader(db, db.legacyAdminId);
   const response = await load("src/app/api/admin/grades/bulletin/route.ts").GET(req(`/api/admin/grades/bulletin?class_id=${cAr}&from=2026-09-01&to=2026-12-15&academic_year=2026-2027`));
@@ -183,3 +187,4 @@ test("classic schools retain their existing RLS-authorized grade-write rights", 
   db.tables.institutions[0].settings_json = setup("CP1").tables.institutions[0].settings_json;
   assert.equal(await helper.specializedGradeStudentsAllowed(db.service, teacherFr, cFr, ["student-0"], teacherAr), false);
 });
+
