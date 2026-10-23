@@ -3,7 +3,6 @@ import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
 import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
-import { usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
 import { publishEvaluationOfficially, stagePublishedEvaluationCorrection } from "@/lib/grades/publication";
 // src/app/api/grades/scores/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -347,9 +346,8 @@ export async function POST(req: NextRequest) {
       return bad("FORBIDDEN", 403);
     }
 
-    // Keep historical class-device rules unchanged for classic/secondary
-    // schools. Only primary Franco-Arabic evaluations opt in to the tighter
-    // school+class+subject scope and immediate official publication.
+    // Tous les comptes classe du primaire rendent les notes officielles à la
+    // sauvegarde, avec contrôle de l'établissement, de la classe et de la matière.
     const { data: roleRows, error: roleError } = await srv.from("user_roles")
       .select("role").eq("profile_id", profile.id).eq("institution_id", profile.institution_id);
     if (roleError) return bad("CLASS_ROLE_LOOKUP_FAILED", 503);
@@ -364,15 +362,20 @@ export async function POST(req: NextRequest) {
         .select("id,level").eq("id", ge.class_id).eq("institution_id", profile.institution_id).maybeSingle();
       if (instErr || clsErr || !inst || !cls) return bad("SCHOOL_SCOPE_UNAVAILABLE", 503);
       const school = parseSchoolCyclesSettings(inst.settings_json);
-      autoPublishPrimary = school.enabled && usesDirectGradePublication(inst.settings_json) &&
+      autoPublishPrimary = school.enabled &&
         resolveSchoolCycleForClass(cls, school) === "primary";
       if (autoPublishPrimary) {
         if (!await classDeviceMayAccessClass({ service: srv, userId: profile.id,
           classId: ge.class_id })) return bad("CLASS_DEVICE_CLASS_FORBIDDEN", 403);
         if (!ge.subject_id) return bad("CLASS_DEVICE_SUBJECT_REQUIRED", 403);
+        const { data: aliases, error: aliasErr } = await srv.from("institution_subjects")
+          .select("id").eq("institution_id", profile.institution_id)
+          .eq("subject_id", ge.subject_id);
+        if (aliasErr) return bad("CLASS_DEVICE_SUBJECT_LOOKUP_FAILED", 503);
+        const subjectIds = [ge.subject_id, ...(aliases || []).map((row: { id: string }) => row.id)];
         const { data: assigned, error: assignErr } = await srv.from("class_teachers")
           .select("id").eq("institution_id", profile.institution_id)
-          .eq("class_id", ge.class_id).eq("subject_id", ge.subject_id)
+          .eq("class_id", ge.class_id).in("subject_id", subjectIds)
           .is("end_date", null).limit(1);
         if (assignErr || !assigned?.length) return bad("CLASS_DEVICE_SUBJECT_FORBIDDEN", 403);
       }
@@ -431,7 +434,7 @@ export async function POST(req: NextRequest) {
     }
     const mayRepublish = isPublished &&
       ge.publication_status !== "submitted" && !classicPrimaryPublished;
-    if (!editable.ok && !mayRepublish) {
+    if (!editable.ok && !autoPublishPrimary && !mayRepublish) {
       console.warn("[grades/scores/bulk] evaluation not editable", {
         evaluation_id,
         error: editable.error,
@@ -591,7 +594,7 @@ export async function POST(req: NextRequest) {
     let correctionPendingAdmin = false;
     if (upserted > 0 || deleted > 0) {
       if (autoPublishPrimary) {
-        // Primaire EPC : comportement historique, publication immédiate.
+        // Primaire : première saisie et corrections alimentent le bulletin.
         publication = await publishEvaluationOfficially({
           evaluationId: evaluation_id, actorProfileId: profile.id,
           forceNewVersion: isPublished, queuePush: true,
