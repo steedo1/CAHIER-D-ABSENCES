@@ -9,7 +9,6 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
-  FileSpreadsheet,
   Trash2,
   Lock,
   Unlock,
@@ -1081,8 +1080,7 @@ export default function ClassDeviceNotesPage() {
   // A direct-publication primary snapshot may receive the next pupils' marks.
   // The server issues a new audited official version after each successful save.
   function editableForSelectedClass(ev: Evaluation | null) {
-    return (isPrimaryProgram && primaryCatalogEnabled && ev &&
-      getPublicationStatus(ev) === "published") || isEvaluationEditable(ev);
+    return (isPrimaryProgram && ev) || isEvaluationEditable(ev);
   }
 
   useEffect(() => {
@@ -1250,7 +1248,7 @@ export default function ClassDeviceNotesPage() {
             ? { ...ev, is_published: true, publication_status: "published",
                 publication_version: j.publication.publication_version ?? ev.publication_version } : ev));
         }
-        if (isPrimaryProgram && primaryCatalogEnabled && j?.publication?.is_published) {
+        if (isPrimaryProgram && j?.publication?.is_published) {
           setEvaluations(prev => prev.map(ev => ev.id === evaluation_id
             ? { ...ev, is_published: true, publication_status: "published",
                 publication_version: j.publication.publication_version ?? ev.publication_version }
@@ -1301,8 +1299,8 @@ export default function ClassDeviceNotesPage() {
           "Évaluation(s) verrouillée(s) 🔒 : déverrouillez avec le PIN pour enregistrer."
         );
       } else {
-        setMsg(isPrimaryProgram && primaryCatalogEnabled
-          ? "Notes enregistrées et publiées automatiquement ✅"
+        setMsg(isPrimaryProgram
+          ? "Notes enregistrées et disponibles pour le bulletin ✅"
           : "Notes enregistrées ✅");
       }
 
@@ -1960,7 +1958,7 @@ export default function ClassDeviceNotesPage() {
   }
 
   /* ==========================================
-     Export CSV
+     Libellés des évaluations
   ========================================== */
   const totalChanges = useMemo(
     () =>
@@ -2000,228 +1998,6 @@ export default function ClassDeviceNotesPage() {
     logInfo("labelByEvalId -> map labels", map);
     return map;
   }, [evaluations, isPrimaryProgram, primaryCatalogEnabled, primaryEvents]);
-
-  async function exportToCsv() {
-    if (!selected) {
-      setMsg("Sélectionnez une classe/discipline avant d’exporter.");
-      logInfo("exportToCsv -> aucun selected");
-      return;
-    }
-    if (!roster.length) {
-      setMsg("Aucun élève à exporter pour cette classe.");
-      logInfo("exportToCsv -> roster vide");
-      return;
-    }
-
-    try {
-      const csvCell = (cell: string | number | null | undefined) => {
-        const v = cell == null ? "" : String(cell);
-        return `"${v.replace(/"/g, '""')}"`;
-      };
-      const csvLine = (cells: (string | number | null | undefined)[]) =>
-        cells.map(csvCell).join(";");
-      const formatCsvNumber = (value: number | null | undefined) =>
-        value == null || Number.isNaN(value) ? "" : value.toFixed(2).replace(".", ",");
-      const formatCsvPct = (value: number | null | undefined) =>
-        value == null || Number.isNaN(value) ? "" : `${value.toFixed(1).replace(".", ",")}%`;
-
-      let avgByStudent = new Map<string, AverageApiRow>();
-      try {
-        const params = new URLSearchParams({
-          class_id: selected.class_id,
-          published_only: "1",
-          missing: "ignore",
-          round_to: "none",
-          rank_by: "average",
-        });
-        if (selected.subject_id) {
-          params.set("subject_id", selected.subject_id);
-        }
-        if (academicYearLabel) {
-          params.set("academic_year", academicYearLabel);
-        }
-        appendSelectedPeriod(params);
-        const url = `/api/grades/averages?${params.toString()}`;
-        logInfo("exportToCsv -> fetch moyennes", url);
-        const r = await fetch(url, { cache: "no-store" });
-        const text = await r.text();
-        logInfo("exportToCsv -> moyennes status", r.status, "body", text);
-        let j: any = {};
-        try {
-          j = text ? JSON.parse(text) : {};
-        } catch (err) {
-          logError("exportToCsv -> moyennes JSON parse error", err);
-        }
-        if (r.ok && j?.ok && Array.isArray(j.items)) {
-          const arr = j.items as AverageApiRow[];
-          avgByStudent = new Map(
-            arr.map((row) => [row.student_id, row] as const)
-          );
-          logInfo("exportToCsv -> moyennes consolidées présentes", arr);
-        } else {
-          logInfo(
-            "exportToCsv -> pas de moyennes consolidées utilisables, on restera sur le calcul local."
-          );
-          avgByStudent = new Map();
-        }
-      } catch (err) {
-        logError("exportToCsv -> erreur lors du fetch moyennes", err);
-        avgByStudent = new Map();
-      }
-
-      const headers: string[] = ["N°", "Matricule", "Nom complet"];
-      evaluations.forEach((ev) => {
-        const label = labelByEvalId[ev.id] ?? "NOTE";
-        headers.push(`${label} (/${ev.scale})`);
-      });
-      headers.push(
-        "Moyenne officielle (/20)",
-        "Bonus",
-        "Rang",
-        "Évaluations publiées prises en compte",
-        "Évaluations prévues",
-        "Taux de saisie",
-        "Statut"
-      );
-      logInfo("exportToCsv -> headers", headers);
-
-      const rows: string[][] = [];
-      let globalWithAverage = 0;
-      let globalSuccess = 0;
-      let globalSum = 0;
-
-      roster.forEach((st, idx) => {
-        const row: (string | number | null | undefined)[] = [
-          idx + 1,
-          st.matricule ?? "",
-          st.full_name,
-        ];
-
-        let num = 0;
-        let den = 0;
-        let localPublishedCount = 0;
-
-        evaluations.forEach((ev) => {
-          const raw =
-            changed[ev.id]?.[st.id] ?? grades[ev.id]?.[st.id] ?? null;
-
-          row.push(raw == null ? "" : formatCsvNumber(Number(raw)));
-
-          if (raw != null && isEvaluationPublishedOfficial(ev)) {
-            const normalized = (Number(raw) / ev.scale) * 20;
-            const w = Number(ev.coeff || 1);
-            num += normalized * w;
-            den += w;
-            localPublishedCount += 1;
-          }
-        });
-
-        const avg20Local = den > 0 ? num / den : null;
-        const bonusLocal = bonusMap[st.id] ?? 0;
-        const finalLocal =
-          avg20Local === null
-            ? null
-            : Math.min(
-                20,
-                Math.max(0, Math.round((avg20Local + bonusLocal) * 100) / 100)
-              );
-
-        const apiRow = avgByStudent.get(st.id);
-        const apiFinal = apiRow
-          ? cleanAverage(apiRow.average_rounded ?? apiRow.average ?? null)
-          : null;
-        const finalValue = apiFinal ?? finalLocal;
-        const bonusValue = apiRow ? cleanAverage(apiRow.bonus) ?? bonusLocal : bonusLocal;
-        const rankValue = apiRow ? cleanAverage(apiRow.rank) : null;
-        const expectedCount = apiRow?.total_evals ?? evaluations.length;
-        const enteredCount = apiRow?.count_evals ?? localPublishedCount;
-        const completionRate = expectedCount > 0 ? (enteredCount * 100) / expectedCount : null;
-        const status =
-          finalValue === null
-            ? "NC"
-            : enteredCount < expectedCount
-              ? "Partiel"
-              : "Complet";
-
-        if (finalValue !== null) {
-          globalWithAverage += 1;
-          globalSum += finalValue;
-          if (finalValue >= 10) globalSuccess += 1;
-        }
-
-        row.push(
-          finalValue === null ? "NC" : formatCsvNumber(finalValue),
-          formatCsvNumber(bonusValue),
-          rankValue == null ? "" : rankValue,
-          enteredCount,
-          expectedCount,
-          formatCsvPct(completionRate),
-          status
-        );
-
-        rows.push(row.map((cell) => csvCell(cell)));
-      });
-
-      logInfo("exportToCsv -> nombre de lignes", rows.length);
-
-      const periodLabel = selectedPeriod
-        ? selectedPeriod.label || selectedPeriod.short_label || selectedPeriod.code || "Période"
-        : "Toutes périodes";
-      const exportDate = new Date().toLocaleDateString("fr-FR");
-      const globalAverage = globalWithAverage > 0 ? globalSum / globalWithAverage : null;
-      const globalSuccessRate =
-        globalWithAverage > 0 ? (globalSuccess * 100) / globalWithAverage : null;
-
-      const metaLines = [
-        csvLine(["Rapport", "Export des notes officielles - Mon Cahier"]),
-        csvLine(["Établissement", institutionName || ""]),
-        csvLine(["Année scolaire", academicYearLabel || ""]),
-        csvLine(["Classe", selected.class_label || ""]),
-        csvLine(["Discipline", selected.subject_name || "Discipline"]),
-        csvLine(["Période", periodLabel]),
-        csvLine(["Date export", exportDate]),
-        csvLine(["Moyenne globale", globalAverage == null ? "" : formatCsvNumber(globalAverage)]),
-        csvLine(["Taux de réussite", formatCsvPct(globalSuccessRate)]),
-        "",
-      ];
-
-      const headerStr = headers.map(csvCell).join(";");
-      const csvLines = [
-        "sep=;",
-        ...metaLines,
-        headerStr,
-        ...rows.map((r) => r.join(";")),
-      ];
-      const csvContent = `\ufeff${csvLines.join("\r\n")}`;
-
-      const blob = new Blob([csvContent], {
-        type: "text/csv;charset=utf-8;",
-      });
-
-      const safeClass = selected.class_label.replace(/\s+/g, "_");
-      const safeSubj = (selected.subject_name || "Discipline").replace(
-        /\s+/g,
-        "_"
-      );
-      const today = new Date().toISOString().slice(0, 10);
-      const filename = `notes_${safeClass}_${safeSubj}_${today}.csv`;
-
-      logInfo("exportToCsv -> téléchargement du fichier", filename);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-
-      setMsg("Export CSV généré ✅ (Excel : encodage et séparateur optimisés).");
-    } catch (e: any) {
-      logError("exportToCsv -> exception", e);
-      setMsg(e?.message || "Échec de génération du CSV.");
-    }
-  }
 
   function formatDateFr(value: string | null | undefined) {
     if (!value) return "";
@@ -3049,15 +2825,8 @@ export default function ClassDeviceNotesPage() {
               )}
               {isPrimaryProgram && (
                 <>
-                  <GhostButton
-                    tone="slate"
-                    onClick={() => setShowPublishPanel(true)}
-                    disabled={!evaluations.length || !isOnline || primaryCatalogEnabled}
-                  >
-                    Gérer la publication
-                  </GhostButton>
-                  <GhostButton tone="emerald" onClick={exportToCsv} disabled={!roster.length || !evaluations.length}>
-                    <FileSpreadsheet className="h-4 w-4" /> Exporter (Excel/CSV)
+                  <GhostButton tone="emerald" onClick={() => setShowPublishPanel(true)} disabled={!evaluations.length}>
+                    <FileText className="h-4 w-4" /> Statistiques
                   </GhostButton>
                   <Button
                     onClick={() => { void saveAllChanges(); }}
@@ -3795,155 +3564,6 @@ export default function ClassDeviceNotesPage() {
         </div>
       )}
 
-{isPrimaryProgram && showPublishPanel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
-          <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl border border-slate-200 p-4 md:p-6">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="text-base md:text-lg font-semibold">
-                Gérer la publication des évaluations
-              </h2>
-              <GhostButton
-                onClick={() => {
-                  logInfo("UI -> fermeture panneau publication");
-                  setShowPublishPanel(false);
-                }}
-              >
-                Fermer
-              </GhostButton>
-            </div>
-
-            <p className="text-xs md:text-sm text-slate-600 mb-3">
-              Soumettez ou publiez les évaluations selon le mode configuré par l’établissement.
-              Une évaluation soumise ou publiée ne peut plus être modifiée directement.
-            </p>
-
-            {evaluations.length === 0 ? (
-              <div className="text-sm text-slate-500">
-                Aucune évaluation pour le moment.
-              </div>
-            ) : (
-              <div className="max-h-[60vh] overflow-y-auto rounded-xl border">
-                <table className="min-w-full text-xs md:text-sm">
-                  <thead className="bg-slate-50">
-                    <tr className="text-left text-slate-600">
-                      <th className="px-3 py-2">Date</th>
-                      <th className="px-3 py-2">Type</th>
-                      <th className="px-3 py-2">Détails</th>
-                      <th className="px-3 py-2">État</th>
-                      <th className="px-3 py-2 text-right">Publication</th>
-                      <th className="px-3 py-2 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {evaluations.map((ev) => {
-                      const typeLabel = getTypeLabel(ev.eval_kind);
-                      const shortLabel = labelByEvalId[ev.id] ?? "";
-                      const comp = ev.subject_component_id
-                        ? componentById[ev.subject_component_id]
-                        : undefined;
-                      const rubLabel = comp?.short_label || comp?.label || "";
-                      const status = getPublicationStatus(ev);
-
-                      return (
-                        <tr key={ev.id} className="hover:bg-slate-50/60">
-                          <td className="px-3 py-2">
-                            {formatDateFr(ev.eval_date)}
-                          </td>
-                          <td className="px-3 py-2">
-                            {typeLabel}
-                            {shortLabel && (
-                              <span className="ml-1 text-[11px] text-slate-400">
-                                ({shortLabel})
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-slate-600 text-xs md:text-sm">
-                            /{ev.scale} • coeff {ev.coeff}
-                            {rubLabel && (
-                              <span className="ml-2 text-[11px] text-emerald-700">
-                                • {rubLabel}
-                              </span>
-                            )}
-                            {ev.published_at && (
-                              <span className="ml-2 text-[11px] text-slate-400">
-                                {`(publié le ${formatDateFr(ev.published_at)})`}
-                              </span>
-                            )}
-                            {status === "changes_requested" && ev.review_comment && (
-                              <div className="mt-1 text-[11px] text-rose-700">
-                                Motif : {ev.review_comment}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span
-                              className={[
-                                "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
-                                publicationBadgeClass(ev),
-                              ].join(" ")}
-                            >
-                              {publicationStatusLabel(ev)}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <Button
-                              type="button"
-                              tone={publicationActionTone(ev)}
-                              onClick={() => togglePublish(ev)}
-                              disabled={
-                                !isOnline ||
-                                !!publishBusy[ev.id] ||
-                                status === "submitted"
-                              }
-                              className="px-3 py-1.5 text-xs"
-                              title={
-                                status === "submitted"
-                                  ? "En attente de validation administrative"
-                                  : undefined
-                              }
-                            >
-                              {publishBusy[ev.id] ? "Traitement…" : publicationActionLabel(ev)}
-                            </Button>
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <div className="flex flex-wrap justify-end gap-2">
-                              <GhostButton
-                                tone="emerald"
-                                type="button"
-                                onClick={() => openStatsPdfForEvaluation(ev)}
-                                disabled={!roster.length}
-                              >
-                                Fiche statistique (PDF)
-                              </GhostButton>
-                              <GhostButton
-                                tone="red"
-                                type="button"
-                                onClick={() => requestDeleteEvaluation(ev)}
-                                disabled={
-                                  !isOnline ||
-                                  !!publishBusy[ev.id] ||
-                                  !isEvaluationDeletable(ev)
-                                }
-                                title={
-                                  isEvaluationDeletable(ev)
-                                    ? undefined
-                                    : "Évaluation soumise ou publiée : suppression bloquée"
-                                }
-                              >
-                                Supprimer la note
-                              </GhostButton>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       {/* Confirmation intégrée : évite les boîtes de dialogue PWA natives non fiables. */}
       {deleteTarget && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/65 p-4" role="presentation">
@@ -3974,7 +3594,7 @@ export default function ClassDeviceNotesPage() {
           </div>
         </div>
       )}
-      {!isPrimaryProgram && showPublishPanel && (
+      {showPublishPanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
           <div className="w-full max-w-xl rounded-2xl border bg-white p-4 shadow-xl">
             <div className="mb-3 flex items-center justify-between">
@@ -3995,7 +3615,7 @@ export default function ClassDeviceNotesPage() {
                     </GhostButton>
                     <GhostButton
                       tone="red"
-                      onClick={() => deleteEvaluation(ev)}
+                      onClick={() => requestDeleteEvaluation(ev)}
                       disabled={!isOnline || selectedPeriodClosed || !isEvaluationDeletable(ev) || !!publishBusy[ev.id]}
                     >
                       Supprimer
@@ -4010,3 +3630,4 @@ export default function ClassDeviceNotesPage() {
     </main>
   );
 }
+
