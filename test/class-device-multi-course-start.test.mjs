@@ -91,6 +91,8 @@ function scenario({ available = subjects, online = true, manual = false, relay =
     periodsByDay: { 5: [period] },
     inst: { tz: "Africa/Abidjan", default_session_minutes: 60 },
     duration: 60,
+    manualDuration: 55,
+    manualDurationValid: true,
     loadClassDeviceSnapshot: () => null,
     setSubjects(list) { state.subjects = list; },
     setSubjectId(value) {
@@ -294,11 +296,16 @@ test("retour Internet : le vrai journal hors ligne rejoue l'ID choisi et le mêm
   }
 });
 
-test("mode Autre cours garde son comportement sans relais obligatoire", async () => {
+test("Autre cours exige un choix humain, fonctionne hors créneau et utilise sa durée propre", async () => {
   const call = scenario({ manual: true });
+  assert.equal(call.state.subjectId, "");
+  assert.equal(call.refresh().button.props.disabled, true);
+  call.state.subjectId = "subject-de"; // choix explicite de l'enseignant
   assert.equal(call.refresh().button.props.disabled, false);
   await call.start();
   assert.equal(call.cloud[0].init.body.manual_course, true);
+  assert.equal(call.cloud[0].init.body.period_id, null);
+  assert.equal(call.cloud[0].init.body.expected_minutes, 55);
   assert.equal(call.cloud[0].init.body.subject_id, "subject-de");
   assert.equal(call.state.open.subject_id, "subject-de");
   assert.equal(call.state.runtime, "open_cloud_fallback");
