@@ -1,0 +1,46 @@
+name: Render exceptional course regression gate
+
+on:
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - 'src/app/class/page.tsx'
+      - 'src/app/api/class/subjects/route.ts'
+      - 'src/lib/offline-readiness.ts'
+      - 'test/class-device-other-course-ui.test.mjs'
+      - 'test/class-device-multi-course-start.test.mjs'
+      - '.github/workflows/render-other-course-gate.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-other-course-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: https://example.invalid
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-ci-anon
+      SUPABASE_URL: https://example.invalid
+      SUPABASE_SERVICE_ROLE_KEY: isolated-ci-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: TypeScript check
+        run: npm run typecheck
+      - name: Exceptional course and class-device regressions
+        run: |
+          node --test test/class-device-other-course-ui.test.mjs test/class-device-multi-course-start.test.mjs test/class-session-manual-route.test.mjs test/class-device-subject-transition.test.mjs test/class-device-minimal-preparation.test.mjs
+          node --import tsx --test test/class-device-offline-readiness.test.ts test/attendance-auto-close.test.ts
+      - name: Next.js optimized build
+        run: npm run build
