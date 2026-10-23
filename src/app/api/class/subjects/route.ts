@@ -362,6 +362,7 @@ export async function GET(req: NextRequest) {
 
     const url = new URL(req.url);
     const preparingOffline = url.searchParams.get("offline_preparation") === "v1";
+    const manualCourse = url.searchParams.get("manual_course") === "1";
     const class_id = (url.searchParams.get("class_id") ?? "").trim();
     const slotRaw = (url.searchParams.get("slot") ?? "").trim() || null;
     const periodIdRaw = (url.searchParams.get("period_id") ?? "").trim() || null;
@@ -514,6 +515,75 @@ export async function GET(req: NextRequest) {
       }
 
       return scheduleJson([]);
+    }
+
+    // Voie exceptionnelle explicite : pas de filtre par EDT, mais seulement
+    // les disciplines ayant un UNIQUE enseignant effectivement affecté.
+    // Une seule lecture des affectations et jamais de scan des notes.
+    if (manualCourse) {
+      const dateParts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: tz,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(new Date());
+      const dayPart = (type: string) => dateParts.find((p) => p.type === type)?.value || "";
+      const localDate = `${dayPart("year")}-${dayPart("month")}-${dayPart("day")}`;
+      const { data: assigned, error: assignedError } = await srv
+        .from("class_teachers")
+        .select("subject_id,teacher_id,start_date,end_date")
+        .eq("institution_id", institutionId)
+        .eq("class_id", class_id);
+      if (assignedError) {
+        return NextResponse.json({ error: "class_teacher_lookup_unavailable" }, { status: 503 });
+      }
+
+      const bySubject = new Map<string, Set<string>>();
+      for (const row of assigned || []) {
+        const subjectId = String(row.subject_id || "").trim();
+        const teacherId = String(row.teacher_id || "").trim();
+        const start = String(row.start_date || "").slice(0, 10);
+        const end = String(row.end_date || "").slice(0, 10);
+        if (!subjectId || !teacherId ||
+            (start && start > localDate) || (end && end < localDate)) continue;
+        if (!bySubject.has(subjectId)) bySubject.set(subjectId, new Set());
+        bySubject.get(subjectId)!.add(teacherId);
+      }
+      let assignedSubjectIds = Array.from(bySubject.entries())
+        .filter(([, teachers]) => teachers.size === 1)
+        .map(([subjectId]) => subjectId);
+
+      // Les classes spécialisées ne peuvent pas utiliser une matière absente
+      // du programme de leur formation/niveau.
+      if (nonGeneral && assignedSubjectIds.length) {
+        const { data: configured, error: configuredError } = await srv
+          .from("institution_level_subjects")
+          .select("subject_id")
+          .eq("institution_id", institutionId)
+          .eq("education_type", String((cls as any).education_type || ""))
+          .eq("formation_code", String((cls as any).formation_code || ""))
+          .eq("level_code", String((cls as any).formation_level_code || ""))
+          .eq("is_active", true);
+        if (configuredError) {
+          return NextResponse.json({ error: "formation_subject_lookup_unavailable" }, { status: 503 });
+        }
+        const allowed = new Set((configured || []).map((row) => String(row.subject_id || "")));
+        // Résolution des identifiants institutionnels et canoniques en aval.
+        const resolved = await mapSubjectIdsToItems(srv, institutionId, assignedSubjectIds);
+        const allowedItems: SubjectItem[] = [];
+        const { data: institutionRows, error: instSubjectsError } = await srv
+          .from("institution_subjects")
+          .select("id,subject_id")
+          .eq("institution_id", institutionId)
+          .in("id", resolved.map((item) => item.id));
+        if (instSubjectsError) return NextResponse.json({ error: "subject_lookup_unavailable" }, { status: 503 });
+        const canonicalById = new Map((institutionRows || []).map((row) => [String(row.id), String(row.subject_id || "")]));
+        for (const item of resolved) {
+          if (allowed.has(canonicalById.get(item.id) || item.id)) allowedItems.push(item);
+        }
+        return scheduleJson(allowedItems);
+      }
+      return scheduleJson(await mapSubjectIdsToItems(srv, institutionId, assignedSubjectIds));
     }
 
     // 2) Sans créneau demandé : constitution du cache de secours.

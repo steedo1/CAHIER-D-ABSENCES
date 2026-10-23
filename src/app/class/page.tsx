@@ -701,6 +701,8 @@ export default function ClassDevicePage() {
   );
   const [startTime, setStartTime] = useState<string>(defTime);
   const [duration, setDuration] = useState<number>(60);
+  // Une séance exceptionnelle n'hérite jamais de la durée du créneau normal.
+  const [manualDuration, setManualDuration] = useState<number>(60);
   const [locked, setLocked] = useState<boolean>(true);
 
   const [open, setOpen] = useState<OpenSession | null>(null);
@@ -2403,12 +2405,27 @@ export default function ClassDevicePage() {
   }, [classId]);
 
   const canUseFallbackLegacyFlow = isOnline && !!activeConfiguredSlot;
+  const manualDurationValid =
+    Number.isSafeInteger(manualDuration) && manualDuration >= 1 && manualDuration <= 240;
+
+  function chooseCourseMode(nextManual: boolean) {
+    if (open || nextManual === manualSubjectMode) return;
+    setManualSubjectMode(nextManual);
+    if (nextManual) {
+      setManualDuration(Math.max(1, Math.min(240, Math.floor(inst.default_session_minutes || 60))));
+    }
+    setSubjects([]);
+    setSubjectId("");
+    setSubjectLoadMode("empty");
+    setSubjectScheduleIssue(null);
+  }
+
   const usingUnverifiedLegacySubjects =
     subjectLoadMode === "legacy-offline" ||
     subjectLoadMode === "legacy-fallback";
   const canStartAttendanceNow =
     manualSubjectMode
-      ? !!classId
+      ? !!classId && manualDurationValid
       : !!activeConfiguredSlot && !usingUnverifiedLegacySubjects;
   const hasSelectedSubject =
     !!subjectId && subjects.some((subject) => subject.id === subjectId);
@@ -2477,6 +2494,10 @@ export default function ClassDevicePage() {
           return prev;
         }
 
+        // « Autre cours » exige un vrai choix humain à chaque ouverture :
+        // jamais la première matière ni l'ancien cours mémorisé automatiquement.
+        if (manualSubjectMode) return "";
+
         if (snapSubjectId && list.some((subject) => subject.id === snapSubjectId)) {
           return snapSubjectId;
         }
@@ -2490,16 +2511,24 @@ export default function ClassDevicePage() {
     };
 
     const loadLegacySubjects = async () => {
-      const localScheduleSubjects = relaySubjectsForClass(
-        relayClassSchedule,
-        classId,
-      );
-      const payload = await offlineGetJson(
-        `/api/class/subjects?class_id=${classId}`,
+      // Même API, mais filtrage sur les affectations valides : pas de requête
+      // supplémentaire au chargement normal, ni de lecture de notes pour ce mode.
+      try {
+        const payload = await offlineGetJson(
+          `/api/class/subjects?class_id=${encodeURIComponent(classId)}&manual_course=1`,
+          `classDevice:manual-subjects:${classId}`,
+        );
+        // Un résultat vide vérifié ne doit jamais se transformer en une liste
+        // d'anciennes disciplines grâce à un cache de secours.
+        if (Array.isArray(payload?.items)) return payload.items as Subject[];
+      } catch {
+        // Anciens téléphones déjà préparés : repli local, sans nouvel appel API.
+      }
+      const cached = await cacheGet<{ items?: Subject[] }>(
         `classDevice:subjects:${classId}`,
-      ).catch(() => ({ items: localScheduleSubjects }));
-      const loaded = (payload?.items || []) as Subject[];
-      return loaded.length > 0 ? loaded : localScheduleSubjects;
+      ).catch(() => null);
+      if (Array.isArray(cached?.items) && cached.items.length) return cached.items;
+      return relaySubjectsForClass(relayClassSchedule, classId);
     };
 
     (async () => {
@@ -2964,6 +2993,10 @@ export default function ClassDevicePage() {
       setMsg("Choisissez une discipline avant de démarrer l’appel.");
       return;
     }
+    if (manualSubjectMode && !manualDurationValid) {
+      setMsg("Pour « Autre cours », choisissez une durée entre 1 et 240 minutes.");
+      return;
+    }
 
     if (!manualSubjectMode && !activeConfiguredSlot?.id) {
       setMsg("L’appel n’est autorisé que pendant un créneau ouvert par l’administration.");
@@ -3071,10 +3104,9 @@ export default function ClassDevicePage() {
       const dateKey = dateKeyInTZ(observedAt, inst.tz || "Africa/Abidjan");
 
       let started = observedAt;
-      let effectiveDuration = Math.max(
-        1,
-        Number(duration || inst.default_session_minutes || 60),
-      );
+      let effectiveDuration = manualSubjectMode
+        ? manualDuration
+        : Math.max(1, Number(duration || inst.default_session_minutes || 60));
 
       if (!manualSubjectMode) {
         if (!verifiedPeriod?.id) {
@@ -4112,12 +4144,32 @@ export default function ClassDevicePage() {
           </div>
 
           <div>
+            {!open && classId ? (
+              <div role="group" aria-label="Mode d'appel" className="mb-4 grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1.5">
+                <button
+                  type="button"
+                  aria-pressed={!manualSubjectMode}
+                  onClick={() => chooseCourseMode(false)}
+                  className={`min-h-11 rounded-xl px-2 py-2 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600 ${!manualSubjectMode ? "bg-white text-emerald-800 shadow-sm" : "text-slate-600"}`}
+                >
+                  Cours prévu
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={manualSubjectMode}
+                  onClick={() => chooseCourseMode(true)}
+                  className={`min-h-11 rounded-xl px-2 py-2 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600 ${manualSubjectMode ? "bg-indigo-700 text-white shadow-sm" : "text-slate-600"}`}
+                >
+                  Autre cours
+                </button>
+              </div>
+            ) : null}
             <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
               <BookOpen className="h-3.5 w-3.5" />
               Discipline
             </div>
             <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)} disabled={!!open || subjects.length === 0}>
-              {!manualSubjectMode && subjects.length > 1 ? (
+              {manualSubjectMode || subjects.length > 1 ? (
                 <option value="">— Choisissez la discipline du professeur présent —</option>
               ) : subjects.length === 0 ? (
                 <option value="">
@@ -4138,23 +4190,6 @@ export default function ClassDevicePage() {
                 </option>
               ))}
             </Select>
-            {classId && !open ? (
-              <div className="mt-1 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setManualSubjectMode((current) => !current);
-                    setSubjects([]);
-                    setSubjectId("");
-                    setSubjectLoadMode("empty");
-                    setSubjectScheduleIssue(null);
-                  }}
-                  className="text-[11px] font-semibold text-indigo-700 hover:underline"
-                >
-                  {manualSubjectMode ? "Retour auto" : "Autre cours"}
-                </button>
-              </div>
-            ) : null}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -4184,18 +4219,33 @@ export default function ClassDevicePage() {
                 <Clock className="h-3.5 w-3.5" />
                 Durée (min)
               </div>
-              <Select
-                value={String(duration)}
-                onChange={(e) => setDuration(parseInt(e.target.value, 10))}
-                disabled={locked}
-              >
-                {[duration].map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </Select>
-              <div className="mt-1 text-[11px] text-slate-500">Verrouillée par l’établissement.</div>
+              {manualSubjectMode && !open ? (
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={240}
+                  step={1}
+                  aria-label="Durée du cours exceptionnel en minutes"
+                  value={manualDuration}
+                  onChange={(e) => setManualDuration(e.target.value === "" ? 0 : Number(e.target.value))}
+                />
+              ) : (
+                <Select
+                  value={String(open?.expected_minutes ?? duration)}
+                  onChange={(e) => setDuration(parseInt(e.target.value, 10))}
+                  disabled={locked || !!open}
+                >
+                  {[open?.expected_minutes ?? duration].map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </Select>
+              )}
+              <div className="mt-1 text-[11px] text-slate-500">
+                {manualSubjectMode && !open
+                  ? "Durée exceptionnelle modifiable (1 à 240 min)."
+                  : "Verrouillée par l’établissement."}
+              </div>
             </div>
           </div>
         </div>

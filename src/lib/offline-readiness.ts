@@ -2315,10 +2315,28 @@ async function prepareClassDevice(
   if (cloudRevision !== null) {
     onProgress("Préparation des disciplines de la classe…");
     try {
-      await fetchAndCache(
-        `/api/class/subjects?class_id=${encodeURIComponent(classId)}`,
-        allSubjectsCacheKey,
+      // Une seule lecture Cloud pendant la préparation : précharge aussi les
+      // disciplines éligibles au mode « Autre cours » hors créneau.
+      const manualSubjects = await fetchAndCache<{
+        institution_id?: string;
+        class_id?: string;
+        actor_profile_id?: string;
+        schedule_revision?: number;
+        items?: Array<{ id: string; label: string }>;
+      }>(
+        `/api/class/subjects?class_id=${encodeURIComponent(classId)}&manual_course=1`,
+        `classDevice:manual-subjects:${classId}`,
       );
+      if (
+        manualSubjects.institution_id === institutionId &&
+        manualSubjects.class_id === classId &&
+        manualSubjects.actor_profile_id === actorProfileId &&
+        manualSubjects.schedule_revision === selectedScope.revision &&
+        Array.isArray(manualSubjects.items)
+      ) {
+        // Maintien du cache historique pour les anciens téléphones PWA.
+        await cacheSet(allSubjectsCacheKey, manualSubjects);
+      }
     } catch {
       // Le planning préparé reste valide ; le cache hebdomadaire reste utilisable.
     }
