@@ -106,3 +106,19 @@ export function ciPrimaryFrenchBulletinRows<T extends {
   });
   return [...ordered, ...scored.filter(row => !used.has(row.id))];
 }
+
+/** Appreciation grid printed in the school's CI primary booklet.
+ * Normalize the mark to /10 without changing or rounding the stored score.
+ * Null is unevaluated; an actual zero receives the booklet's zero label. */
+export function ciPrimaryFrenchAppreciation(score: number | null | undefined, denominator: number): string | null {
+  if (score == null || !Number.isFinite(score) || !Number.isFinite(denominator) ||
+      denominator <= 0 || score < 0 || score > denominator) return null;
+  const outOfTen = score / denominator * 10;
+  if (outOfTen >= 10) return "Très bien";
+  if (outOfTen >= 8) return "Bien";
+  if (outOfTen >= 6) return "Assez bien";
+  if (outOfTen >= 5) return "Passable";
+  if (outOfTen >= 3) return "Médiocre";
+  if (outOfTen >= 1) return "Mal";
+  return "Travail très mal";
+}
