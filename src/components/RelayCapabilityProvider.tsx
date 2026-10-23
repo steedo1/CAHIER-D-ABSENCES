@@ -16,6 +16,7 @@ import { getOfflineAccessIntent } from "@/lib/offline-auth-client";
 import {
   readRelayCapability,
   rememberRelayCapability,
+  RELAY_LOCAL_DISABLED,
 } from "@/lib/relay-capability";
 
 type RelayCapabilityContextValue = {
@@ -62,9 +63,11 @@ export default function RelayCapabilityProvider({ children }: { children: ReactN
     const cached = readRelayCapability(nextInstitutionId);
     setInstitutionId(nextInstitutionId || null);
     setRelayEnabled(
-      cached
-        ? cached.relay_enabled === true
-        : nextInstitutionId === institutionIdRef.current && relayEnabledRef.current,
+      !RELAY_LOCAL_DISABLED && (
+        cached
+          ? cached.relay_enabled === true
+          : nextInstitutionId === institutionIdRef.current && relayEnabledRef.current
+      ),
     );
     setResolved(true);
   }, []);
@@ -82,7 +85,7 @@ export default function RelayCapabilityProvider({ children }: { children: ReactN
       const payload = await response.json().catch(() => ({}));
       if (sessionRef.current?.user.id !== actorId) return;
       const nextInstitutionId = String(payload?.institution_id || "").trim();
-      const nextRelayEnabled = payload?.relay_enabled === true;
+      const nextRelayEnabled = !RELAY_LOCAL_DISABLED && payload?.relay_enabled === true;
       if (nextInstitutionId) {
         rememberRelayCapability({
           institutionId: nextInstitutionId,
