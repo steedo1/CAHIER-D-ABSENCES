@@ -8,7 +8,6 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
-  FileSpreadsheet,
   Trash2,
   FileText,
   Lock,
@@ -258,8 +257,8 @@ function isEvaluationChangesRequested(ev: Evaluation) {
   return getPublicationStatus(ev) === "changes_requested";
 }
 
-function isEvaluationEditableForTeacher(ev: Evaluation, allowPublishedPrimaryCorrection = false) {
-  if (allowPublishedPrimaryCorrection && isEvaluationPublished(ev)) return true;
+function isEvaluationEditableForTeacher(ev: Evaluation, allowPrimarySave = false) {
+  if (allowPrimarySave) return true;
   return getPublicationStatus(ev) !== "submitted";
 }
 
@@ -1109,7 +1108,7 @@ export default function TeacherNotesPage() {
     if (selectedPeriodClosed) return;
 
     const ev = evaluations.find((e) => e.id === evId);
-    if (ev && !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)) return;
+    if (ev && !isEvaluationEditableForTeacher(ev, isPrimaryProgram)) return;
 
     if (isEvalLocked(evId)) return;
 
@@ -1150,12 +1149,12 @@ export default function TeacherNotesPage() {
     );
     const blockedByPublication = perEvalAll.filter(([evaluation_id]) => {
       const ev = evaluationById.get(evaluation_id);
-      return ev ? !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication) : false;
+      return ev ? !isEvaluationEditableForTeacher(ev, isPrimaryProgram) : false;
     });
 
     const perEval = perEvalAll.filter(([evaluation_id]) => {
       const ev = evaluationById.get(evaluation_id);
-      const editable = ev ? isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication) : true;
+      const editable = ev ? isEvaluationEditableForTeacher(ev, isPrimaryProgram) : true;
       return editable && !isEvalLocked(evaluation_id);
     });
 
@@ -1217,7 +1216,7 @@ export default function TeacherNotesPage() {
       }
 
       const savedEvalIds = new Set(perEval.map(([evaluation_id]) => evaluation_id));
-      if (isPrimaryProgram && directGradePublication) {
+      if (isPrimaryProgram) {
         setEvaluations(prev => prev.map(ev => savedEvalIds.has(ev.id) && isEvaluationPublished(ev)
           ? { ...ev, is_published: true, publication_status: "published" }
           : ev));
@@ -1261,8 +1260,8 @@ export default function TeacherNotesPage() {
       setMsg(
         notes.length > 0
           ? `Notes enregistrées ✅ (${notes.join(" ; ")})`
-          : isPrimaryProgram && directGradePublication
-            ? "Notes enregistrées ✅ (les corrections de notes publiées sont republiées automatiquement)"
+          : isPrimaryProgram
+            ? "Notes enregistrées et disponibles pour le bulletin ✅"
             : "Notes enregistrées ✅"
       );
       return true;
@@ -2216,199 +2215,6 @@ export default function TeacherNotesPage() {
   }
 
   /* ==========================================
-     Export CSV / Excel
-     ✅ Rendu enrichi : BOM UTF-8, séparateur Excel, contexte, indicateurs utiles.
-  ========================================== */
-  async function exportToCsv() {
-    if (!selected) {
-      setMsg("Sélectionnez une classe/discipline avant d’exporter.");
-      return;
-    }
-    if (!roster.length) {
-      setMsg("Aucun élève à exporter pour cette classe.");
-      return;
-    }
-
-    try {
-      const csvCell = (cell: string | number | null | undefined) => {
-        const v = cell == null ? "" : String(cell);
-        return `"${v.replace(/"/g, '""')}"`;
-      };
-      const csvLine = (cells: (string | number | null | undefined)[]) =>
-        cells.map(csvCell).join(";");
-      const formatCsvNumber = (v: number | null | undefined) =>
-        v == null || Number.isNaN(v) ? "" : v.toFixed(2).replace(".", ",");
-      const formatCsvPct = (v: number | null | undefined) =>
-        v == null || Number.isNaN(v) ? "" : `${v.toFixed(1).replace(".", ",")}%`;
-
-      // On tente de récupérer les moyennes consolidées.
-      let avgByStudent = new Map<string, AverageApiRow>();
-      try {
-        const params = buildAverageParams();
-        const r = await fetch(
-          `/api/teacher/grades/averages?${params.toString()}`,
-          { cache: "no-store" }
-        );
-        const j = await r.json().catch(() => ({}));
-        if (r.ok && j?.ok && Array.isArray(j.items)) {
-          const arr = j.items as AverageApiRow[];
-          avgByStudent = new Map(
-            arr.map((row) => [row.student_id, row] as const)
-          );
-        }
-      } catch {
-        avgByStudent = new Map();
-      }
-
-      const headers: string[] = ["N°", "Matricule", "Nom complet"];
-      evaluations.forEach((ev) => {
-        const label = labelByEvalId[ev.id] ?? "NOTE";
-        headers.push(`${label} (/${ev.scale})`);
-      });
-      headers.push(
-        "Moyenne finale (/20)",
-        "Bonus",
-        "Rang",
-        "Évaluations saisies",
-        "Évaluations prévues",
-        "Taux de saisie",
-        "Statut"
-      );
-
-      let globalWithAverage = 0;
-      let globalSuccess = 0;
-      let globalSum = 0;
-      const rowsCsv: string[][] = [];
-
-      roster.forEach((st, idx) => {
-        const row: (string | number | null | undefined)[] = [
-          idx + 1,
-          st.matricule ?? "",
-          st.full_name,
-        ];
-
-        let num = 0;
-        let den = 0;
-        let localCount = 0;
-
-        evaluations.forEach((ev) => {
-          const raw =
-            changed[ev.id]?.[st.id] ?? grades[ev.id]?.[st.id] ?? null;
-
-          row.push(raw == null ? "" : formatCsvNumber(Number(raw)));
-
-          if (raw != null) {
-            const normalized = (Number(raw) / ev.scale) * 20;
-            const w = Number(ev.coeff || 1);
-            num += normalized * w;
-            den += w;
-            localCount += 1;
-          }
-        });
-
-        const avg20Local = den > 0 ? num / den : null;
-        const bonusLocal = bonusMap[st.id] ?? 0;
-        const finalLocal =
-          avg20Local !== null
-            ? Math.min(
-                20,
-                Math.max(0, Math.round((avg20Local + bonusLocal) * 100) / 100)
-              )
-            : null;
-
-        const apiRow = avgByStudent.get(st.id);
-        const finalFromApi = apiRow
-          ? cleanAvgValue(apiRow.average_rounded ?? apiRow.average) ?? finalLocal
-          : finalLocal;
-        const bonusFromApi = apiRow ? cleanAvgValue(apiRow.bonus) ?? bonusLocal : bonusLocal;
-        const rankFromApi = apiRow ? cleanAvgValue(apiRow.rank) : null;
-        const expectedCount = apiRow?.total_evals ?? evaluations.length;
-        const enteredCount = apiRow?.count_evals ?? localCount;
-        const completionRate = expectedCount > 0 ? (enteredCount * 100) / expectedCount : null;
-        const status =
-          finalFromApi === null
-            ? "NC"
-            : enteredCount < expectedCount
-              ? "Partiel"
-              : "Complet";
-
-        if (finalFromApi !== null) {
-          globalWithAverage += 1;
-          globalSum += finalFromApi;
-          if (finalFromApi >= 10) globalSuccess += 1;
-        }
-
-        row.push(
-          finalFromApi === null ? "NC" : formatCsvNumber(finalFromApi),
-          formatCsvNumber(bonusFromApi),
-          rankFromApi == null ? "" : rankFromApi,
-          enteredCount,
-          expectedCount,
-          formatCsvPct(completionRate),
-          status
-        );
-
-        rowsCsv.push(row.map((cell) => csvCell(cell)));
-      });
-
-      const periodLabel = selectedPeriod
-        ? selectedPeriod.label || selectedPeriod.short_label || selectedPeriod.code || "Période"
-        : "Toutes périodes";
-      const exportDate = new Date().toLocaleDateString("fr-FR");
-      const globalAverage = globalWithAverage > 0 ? globalSum / globalWithAverage : null;
-      const globalSuccessRate =
-        globalWithAverage > 0 ? (globalSuccess * 100) / globalWithAverage : null;
-
-      const metaLines = [
-        csvLine(["Rapport", "Export des notes - Mon Cahier"]),
-        csvLine(["Établissement", institutionName || ""]),
-        csvLine(["Année scolaire", academicYearLabel || ""]),
-        csvLine(["Classe", selected.class_label || ""]),
-        csvLine(["Discipline", selected.subject_name || "Discipline"]),
-        csvLine(["Période", periodLabel]),
-        csvLine(["Date export", exportDate]),
-        csvLine(["Moyenne globale", globalAverage == null ? "" : formatCsvNumber(globalAverage)]),
-        csvLine(["Taux de réussite", formatCsvPct(globalSuccessRate)]),
-        "",
-      ];
-
-      const headerStr = headers.map(csvCell).join(";");
-      const csvLines = [
-        "sep=;",
-        ...metaLines,
-        headerStr,
-        ...rowsCsv.map((r) => r.join(";")),
-      ];
-      const csvContent = `\ufeff${csvLines.join("\r\n")}`;
-
-      const blob = new Blob([csvContent], {
-        type: "text/csv;charset=utf-8;",
-      });
-
-      const safeClass = selected.class_label.replace(/\s+/g, "_");
-      const safeSubj = (selected.subject_name || "Discipline").replace(
-        /\s+/g,
-        "_"
-      );
-      const today = new Date().toISOString().slice(0, 10);
-      const filename = `notes_${safeClass}_${safeSubj}_${today}.csv`;
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-
-      setMsg("Export CSV généré ✅ (Excel : encodage et séparateur optimisés).");
-    } catch (e: any) {
-      setMsg(e?.message || "Échec de génération du CSV.");
-    }
-  }
-
-  /* ==========================================
      Dérivés UI
   ========================================== */
   const totalChanges = useMemo(
@@ -2841,39 +2647,14 @@ export default function TeacherNotesPage() {
                   <Save className="h-4 w-4" /> Enregistrer
                 </Button>
               )}
+              {isPrimaryProgram && (
+                <GhostButton tone="emerald" onClick={() => setShowPublishPanel(true)} disabled={!evaluations.length}>
+                  <FileText className="h-4 w-4" /> Statistiques
+                </GhostButton>
+              )}
             </div>
           </div>
 
-          {isPrimaryProgram && !isPreschoolProgram && (
-            <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-3">
-              <h2 className="text-sm font-semibold text-emerald-950">Publication des évaluations</h2>
-              <p className="mt-1 text-xs text-emerald-900">
-                {directGradePublication ? "Enregistrez les notes, puis publiez directement chaque évaluation. Aucune validation de l’administration n’est nécessaire."
-                  : publicationRequiresValidation ? "Enregistrez les notes, puis soumettez chaque évaluation à la direction selon la politique de votre établissement."
-                  : "Enregistrez les notes, puis publiez chaque évaluation pour les bulletins et les parents."}
-              </p>
-              {evaluations.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {evaluations.map((ev) => (
-                    <button
-                      type="button"
-                      key={ev.id}
-                      onClick={() => togglePublish(ev)}
-                      disabled={isEvaluationPublished(ev) || (!directGradePublication && isEvaluationSubmitted(ev)) || !!publishBusy[ev.id] || !isOnline ||
-                        selectedPeriodClosed || !!Object.keys(changed[ev.id] || {}).length}
-                      className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 disabled:cursor-not-allowed disabled:opacity-50"
-                      title={Object.keys(changed[ev.id] || {}).length
-                        ? "Enregistrez d’abord les notes modifiées."
-                        : undefined}
-                    >
-                      {labelByEvalId[ev.id] || "Évaluation"} : {isEvaluationPublished(ev)
-                        ? "Publiée" : isEvaluationSubmitted(ev) && !directGradePublication ? "Soumise" : publishBusy[ev.id] ? "Publication…" : publicationRequiresValidation ? "Soumettre" : "Publier"}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
           {isPreschoolProgram && (
             <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
               Au préscolaire, les apprentissages sont évalués par compétences. La création d’évaluations chiffrées est désactivée pour ce cycle afin de ne pas produire de bulletins inadaptés.
@@ -2889,7 +2670,7 @@ export default function TeacherNotesPage() {
                 gradeWritesBlocked ||
                 selectedPeriodClosed ||
                 isEvalLocked(ev.id) ||
-                !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication),
+                !isEvaluationEditableForTeacher(ev, isPrimaryProgram),
               disabledReason: selectedPeriodClosed
                 ? "Cette période est clôturée."
                 : gradeWritesBlocked
@@ -2970,11 +2751,11 @@ export default function TeacherNotesPage() {
                     disabled={
                       !isOnline ||
                       selectedPeriodClosed ||
-                      !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication) ||
+                      !isEvaluationEditableForTeacher(ev, isPrimaryProgram) ||
                       !!lockBusy[ev.id]
                     }
                     title={
-                      !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)
+                      !isEvaluationEditableForTeacher(ev, isPrimaryProgram)
                         ? publicationLockReason(ev, directGradePublication) || "Évaluation non modifiable"
                         : locked
                         ? "Déverrouiller cette évaluation (PIN)"
@@ -3062,7 +2843,7 @@ export default function TeacherNotesPage() {
                               disabled={
                                 !isOnline ||
                                 selectedPeriodClosed ||
-                                !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication) ||
+                                !isEvaluationEditableForTeacher(ev, isPrimaryProgram) ||
                                 !!lockBusy[ev.id]
                               }
                               className={[
@@ -3160,7 +2941,7 @@ export default function TeacherNotesPage() {
                                   gradeWritesBlocked ||
                                   selectedPeriodClosed ||
                                   isEvalLocked(ev.id) ||
-                                  !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)
+                                  !isEvaluationEditableForTeacher(ev, isPrimaryProgram)
                                 }
                                 title={
                                   gradeWritesBlocked
@@ -3169,7 +2950,7 @@ export default function TeacherNotesPage() {
                                     ? "Période clôturée"
                                     : isEvalLocked(ev.id)
                                     ? "Évaluation verrouillée"
-                                    : !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)
+                                    : !isEvaluationEditableForTeacher(ev, isPrimaryProgram)
                                     ? publicationLockReason(ev, directGradePublication) || "Évaluation non modifiable"
                                     : undefined
                                 }
@@ -3271,7 +3052,7 @@ export default function TeacherNotesPage() {
                                   gradeWritesBlocked ||
                                   selectedPeriodClosed ||
                                   isEvalLocked(ev.id) ||
-                                  !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)
+                                  !isEvaluationEditableForTeacher(ev, isPrimaryProgram)
                                 }
                                 title={
                                   gradeWritesBlocked
@@ -3280,7 +3061,7 @@ export default function TeacherNotesPage() {
                                     ? "Période clôturée"
                                     : isEvalLocked(ev.id)
                                     ? "Évaluation verrouillée"
-                                    : !isEvaluationEditableForTeacher(ev, isPrimaryProgram && directGradePublication)
+                                    : !isEvaluationEditableForTeacher(ev, isPrimaryProgram)
                                     ? publicationLockReason(ev, directGradePublication) || "Évaluation non modifiable"
                                     : undefined
                                 }
@@ -3633,7 +3414,7 @@ export default function TeacherNotesPage() {
       )}
 
       {/* Statistiques par évaluation */}
-      {!isPrimaryProgram && !isPreschoolProgram && showPublishPanel && (
+      {!isPreschoolProgram && showPublishPanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
           <div className="w-full max-w-xl rounded-2xl border bg-white p-4 shadow-xl">
             <div className="mb-3 flex items-center justify-between">
@@ -3771,3 +3552,4 @@ export default function TeacherNotesPage() {
 </main>
   );
   }
+
