@@ -564,7 +564,9 @@ test("la préparation reste stricte et l'ancien endpoint délègue au démarrage
     source.indexOf("async function startSession()"),
     source.indexOf("async function endSession()"),
   );
-  assert.match(start, /relayDelivery\.state === "blocked"/);
+  assert.match(start, /const relayDelivery = relayUiEnabled/);
+  assert.match(start, /relayDelivery\\?\\.state === "blocked"/);
+  assert.match(start, /queueCloudStartForRetry/);
   assert.match(start, /\/api\/class\/sessions\/start/);
   assert.match(start, /"local_pending"/);
   const legacyRoute = await readFile(
