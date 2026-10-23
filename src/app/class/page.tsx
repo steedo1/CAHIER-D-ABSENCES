@@ -1313,7 +1313,9 @@ export default function ClassDevicePage() {
         }
 
         const relay = selectedClass?.attendance_presence;
+        // Reprise Cloud/PWA uniquement, sans relancer l'ancien relais.
         if (
+          relayUiEnabled &&
           selectedClass?.institution_id &&
           selectedClass.id &&
           selectedClass.actor_profile_id &&
@@ -2496,7 +2498,7 @@ export default function ClassDevicePage() {
 
         // « Autre cours » exige un vrai choix humain à chaque ouverture :
         // jamais la première matière ni l'ancien cours mémorisé automatiquement.
-        if (manualSubjectMode) return "";
+        if (manualSubjectMode) return prev && list.some((subject) => subject.id === prev) ? prev : "";
 
         if (snapSubjectId && list.some((subject) => subject.id === snapSubjectId)) {
           return snapSubjectId;
@@ -3228,18 +3230,23 @@ export default function ClassDevicePage() {
 
       // 2) Le relais puis le Cloud améliorent la réplication, sans bloquer l'écran.
       const relayAttemptStartedAt = performance.now();
-      const relayDelivery = await openTeacherAttendanceSessionOnRelay({
-        institutionId,
-        classId,
-        periodId: deliveryPeriodKey,
-        subjectId,
-        attemptKey,
-        relayBaseUrl: manualSubjectMode ? null : classRelayBaseUrl(selectedClass),
-        relayAccessToken: manualSubjectMode ? null : relayPolicy?.relay_access_token,
-      });
+      // Cloud/PWA est la voie de référence : ne plus générer de tentative
+      // « relay_configuration_missing » lorsqu'aucun relais n'est autorisé.
+      // Le journal local créé ci-dessus est conservé pour le rejeu Cloud.
+      const relayDelivery = relayUiEnabled
+        ? await openTeacherAttendanceSessionOnRelay({
+            institutionId,
+            classId,
+            periodId: deliveryPeriodKey,
+            subjectId,
+            attemptKey,
+            relayBaseUrl: manualSubjectMode ? null : classRelayBaseUrl(selectedClass),
+            relayAccessToken: manualSubjectMode ? null : relayPolicy?.relay_access_token,
+          })
+        : null;
       const relayAttemptDuration = performance.now() - relayAttemptStartedAt;
 
-      if (relayDelivery.state === "relay_opened" && relayDelivery.session_id) {
+      if (relayDelivery?.state === "relay_opened" && relayDelivery.session_id) {
         setRelayStatus("connected");
         if (relayDelivery.relay_time) {
           relayClockRef.current = captureLiveRelayClock(
@@ -3272,16 +3279,18 @@ export default function ClassDevicePage() {
         return;
       }
 
-      setRelayStatus(
-        relayDelivery.last_status && relayDelivery.last_status > 0
-          ? relayAttemptDuration >= 2_500
-            ? "slow"
-            : "connected"
-          : relayAttemptDuration >= 2_500
-            ? "slow"
-            : "unavailable",
-      );
-      const relayIssue = relayDelivery.state === "blocked"
+      if (relayDelivery) {
+        setRelayStatus(
+          relayDelivery.last_status && relayDelivery.last_status > 0
+            ? relayAttemptDuration >= 2_500
+              ? "slow"
+              : "connected"
+            : relayAttemptDuration >= 2_500
+              ? "slow"
+              : "unavailable",
+        );
+      }
+      const relayIssue = relayDelivery?.state === "blocked"
         ? teacherSessionDeliveryMessage(relayDelivery)
         : null;
 
@@ -3875,7 +3884,9 @@ export default function ClassDevicePage() {
           });
         }
         const relay = selectedClass?.attendance_presence;
+        // Reprise Cloud/PWA uniquement, sans relancer l'ancien relais.
         if (
+          relayUiEnabled &&
           selectedClass?.institution_id &&
           selectedClass.id &&
           selectedClass.actor_profile_id &&
@@ -4145,22 +4156,18 @@ export default function ClassDevicePage() {
 
           <div>
             {!open && classId ? (
-              <div role="group" aria-label="Mode d'appel" className="mb-4 grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1.5">
-                <button
-                  type="button"
-                  aria-pressed={!manualSubjectMode}
-                  onClick={() => chooseCourseMode(false)}
-                  className={`min-h-11 rounded-xl px-2 py-2 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600 ${!manualSubjectMode ? "bg-white text-emerald-800 shadow-sm" : "text-slate-600"}`}
-                >
-                  Cours prévu
-                </button>
+              <div className="mb-3 flex justify-end">
                 <button
                   type="button"
                   aria-pressed={manualSubjectMode}
-                  onClick={() => chooseCourseMode(true)}
-                  className={`min-h-11 rounded-xl px-2 py-2 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600 ${manualSubjectMode ? "bg-indigo-700 text-white shadow-sm" : "text-slate-600"}`}
+                  onClick={() => chooseCourseMode(!manualSubjectMode)}
+                  className={
+                    manualSubjectMode
+                      ? "rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600"
+                      : "rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-800 transition-colors hover:bg-indigo-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600"
+                  }
                 >
-                  Autre cours
+                  {manualSubjectMode ? "Retour à l’appel normal" : "Autre cours"}
                 </button>
               </div>
             ) : null}

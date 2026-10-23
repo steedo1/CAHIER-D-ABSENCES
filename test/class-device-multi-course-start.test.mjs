@@ -191,12 +191,12 @@ test("choisir la première discipline active le bouton et conserve cours et cré
   assert.equal(call.refresh().button.props.disabled, false);
   await call.start();
   assert.equal(call.staged[0].subjectId, "subject-de");
-  assert.equal(call.relayed[0].subjectId, "subject-de");
+  assert.equal(call.relayed.length, 0);
   assert.equal(call.cloud[0].init.body.subject_id, "subject-de");
   assert.equal(call.cloud[0].init.body.period_id, period.id);
 });
 
-test("avec relais, une discipline choisie ouvre la séance du cours sélectionné", async () => {
+test("un ancien scénario avec relais explicite reste compatible pour la reprise d’anciens appels", async () => {
   const call = scenario({ online: false, relay: true });
   call.refresh().select.props.onChange({ target: { value: "subject-es" } });
   await call.start();
@@ -214,7 +214,7 @@ test("changer de discipline avant de démarrer utilise la dernière choisie", as
   assert.equal(call.refresh().button.props.disabled, false);
   await call.start();
   assert.equal(call.staged[0].subjectId, "subject-es");
-  assert.equal(call.relayed[0].subjectId, "subject-es");
+  assert.equal(call.relayed.length, 0);
   assert.equal(call.cloud[0].init.body.subject_id, "subject-es");
   assert.equal(call.state.open.subject_id, "subject-es");
 });

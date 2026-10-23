@@ -1,5 +1,10 @@
 const RELAY_CAPABILITY_PREFIX = "moncahier:relay-capability:v1:";
 
+/** Nouveau mode produit : le réseau local n'est plus un canal d'appel.
+ * On conserve les anciennes capacités en stockage pour diagnostic uniquement.
+ * Les journaux d'appels restent intacts et sont réconciliés par le Cloud. */
+export const RELAY_LOCAL_DISABLED = true;
+
 export type RelayCapabilityRecord = {
   version: 1;
   institution_id: string;
@@ -66,5 +71,5 @@ export function readRelayCapability(
 export function relayEnabledForInstitution(
   institutionId: string | null | undefined,
 ) {
-  return readRelayCapability(institutionId)?.relay_enabled === true;
+  return !RELAY_LOCAL_DISABLED && readRelayCapability(institutionId)?.relay_enabled === true;
 }

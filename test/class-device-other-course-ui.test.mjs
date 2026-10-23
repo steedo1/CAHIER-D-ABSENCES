@@ -14,10 +14,10 @@ test("Autre cours is selectable even without a configured slot", () => {
 });
 
 test("exceptional discipline requires explicit selection and no automatic fallback", () => {
-  assert.match(page, /if \(manualSubjectMode\) return "";/);
+  assert.match(page, /if \(manualSubjectMode\) return prev && list\.some/);
   assert.match(page, /manualSubjectMode \|\| subjects\.length > 1/);
-  assert.match(page, /chooseCourseMode\(true\)/);
-  assert.match(page, /chooseCourseMode\(false\)/);
+  assert.match(page, /chooseCourseMode\(!manualSubjectMode\)/);
+  assert.doesNotMatch(page, />\s*Cours prévu\s*</);
   assert.match(page, /manual_course=1/);
 });
 
@@ -42,4 +42,27 @@ test("exceptional subject endpoint filters current teacher assignments without s
   assert.match(manual, /return scheduleJson/);
   assert.doesNotMatch(manual, /grade_flat_marks/);
   assert.doesNotMatch(manual, /teacher_timetables/);
+});
+
+test("Cloud + PWA remain the only new-call path; legacy pending operations stay untouched", () => {
+  const flags = readFileSync(new URL("../src/lib/relay-capability.ts", import.meta.url), "utf8");
+  const provider = readFileSync(new URL("../src/components/RelayCapabilityProvider.tsx", import.meta.url), "utf8");
+  const readiness = readFileSync(new URL("../src/lib/offline-readiness.ts", import.meta.url), "utf8");
+  const legacy = readFileSync(new URL("../src/lib/teacher-session-delivery.ts", import.meta.url), "utf8");
+
+  assert.match(flags, /export const RELAY_LOCAL_DISABLED = true/);
+  assert.match(flags, /!RELAY_LOCAL_DISABLED && readRelayCapability/);
+  assert.match(provider, /const nextRelayEnabled = !RELAY_LOCAL_DISABLED &&/);
+  assert.match(provider, /!RELAY_LOCAL_DISABLED && \(/);
+  assert.match(page, /const relayDelivery = relayUiEnabled\s*\? await openTeacherAttendanceSessionOnRelay/);
+  assert.match(page, /: null;\s*const relayAttemptDuration/);
+  assert.match(readiness, /if \(RELAY_LOCAL_DISABLED\) throw cloudError/);
+  assert.match(readiness, /const context = RELAY_LOCAL_DISABLED\s*\? null/);
+  assert.match(readiness, /let lastSourceError: unknown = RELAY_LOCAL_DISABLED \? null : accessError/);
+  assert.match(readiness, /if \(!RELAY_LOCAL_DISABLED && relayPolicy\)/);
+  assert.match(readiness, /existingBundle!\.schedule/);
+  assert.match(page, /stageTeacherAttendanceSessionOpen\(/);
+  assert.match(page, /relayUiEnabled &&\s*selectedClass\?\.institution_id/);
+  assert.match(page, /offlineMutateJson<\{/);
+  assert.match(legacy, /async function getOrCreateRecord/);
 });
