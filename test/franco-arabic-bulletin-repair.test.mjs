@@ -27,7 +27,7 @@ test("empty primary event retains subjects, teacher and selected title without i
   assert.match(html, /Mathématiques/);
   assert.match(html, /Instituteur titulaire/);
   assert.match(html, /Composition de décembre/);
-  assert.match(html, /Aucune note exploitable/);
+  assert.doesNotMatch(html, /Bulletins en préparation|bg-amber-50|Vérifier les matières et les barèmes/);
   assert.match(html, /specialized-print-blocked/);
   assert.doesNotMatch(html, /qr[_-]|qrcode|verify\/bulletin/i);
   assert.equal(db.calls.some(call => call.op !== "read"), false);
