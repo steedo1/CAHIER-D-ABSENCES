@@ -66,7 +66,8 @@ async function publish(db, code, track, ratio) {
   assert.equal(saved.status, 200, JSON.stringify(await saved.clone().json()));
   const result = await db.teacher("src/lib/grades/publication.ts").publishEvaluationOfficially({ evaluationId: ev.id, actorProfileId: teacher, queuePush: false });
   assert.equal(result.ok, true, JSON.stringify(result));
-  assert.equal(result.official_rows, items.length);
+  assert.equal(result.action, "already_published", "Enregistrer already created the official snapshot");
+  assert.equal(db.tables.grade_published_scores.filter(row => row.evaluation_id === ev.id && row.is_current).length, items.length);
   return ev;
 }
 async function report(db, code) {
@@ -75,3 +76,4 @@ async function report(db, code) {
 }
 
 export { setup, create, publish, report, req, calendarPath, year, cls, math, teacher, pupil0, pupil1, evaluationPath };
+
