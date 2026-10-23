@@ -1313,7 +1313,9 @@ export default function ClassDevicePage() {
         }
 
         const relay = selectedClass?.attendance_presence;
+        // Reprise Cloud/PWA uniquement, sans relancer l'ancien relais.
         if (
+          relayUiEnabled &&
           selectedClass?.institution_id &&
           selectedClass.id &&
           selectedClass.actor_profile_id &&
@@ -3882,7 +3884,9 @@ export default function ClassDevicePage() {
           });
         }
         const relay = selectedClass?.attendance_presence;
+        // Reprise Cloud/PWA uniquement, sans relancer l'ancien relais.
         if (
+          relayUiEnabled &&
           selectedClass?.institution_id &&
           selectedClass.id &&
           selectedClass.actor_profile_id &&
