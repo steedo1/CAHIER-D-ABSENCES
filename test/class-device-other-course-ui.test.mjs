@@ -14,10 +14,10 @@ test("Autre cours is selectable even without a configured slot", () => {
 });
 
 test("exceptional discipline requires explicit selection and no automatic fallback", () => {
-  assert.match(page, /if \(manualSubjectMode\) return "";/);
+  assert.match(page, /if \(manualSubjectMode\) return prev && list\.some/);
   assert.match(page, /manualSubjectMode \|\| subjects\.length > 1/);
-  assert.match(page, /chooseCourseMode\(true\)/);
-  assert.match(page, /chooseCourseMode\(false\)/);
+  assert.match(page, /chooseCourseMode\(!manualSubjectMode\)/);
+  assert.doesNotMatch(page, />\s*Cours prévu\s*</);
   assert.match(page, /manual_course=1/);
 });
 
