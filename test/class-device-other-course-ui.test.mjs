@@ -62,6 +62,7 @@ test("Cloud + PWA remain the only new-call path; legacy pending operations stay 
   assert.match(readiness, /if \(!RELAY_LOCAL_DISABLED && relayPolicy\)/);
   assert.match(readiness, /existingBundle!\.schedule/);
   assert.match(page, /stageTeacherAttendanceSessionOpen\(/);
+  assert.match(page, /relayUiEnabled &&\s*selectedClass\?\.institution_id/);
   assert.match(page, /offlineMutateJson<\{/);
   assert.match(legacy, /async function getOrCreateRecord/);
 });
