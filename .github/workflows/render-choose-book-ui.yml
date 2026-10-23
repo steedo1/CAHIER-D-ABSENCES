@@ -1,0 +1,38 @@
+name: Render teacher notebook UI gate
+
+on:
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - 'src/app/choose-book/**'
+      - 'test/choose-book-premium.test.mjs'
+      - '.github/workflows/render-choose-book-ui.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-choose-book-ui-gate
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: https://example.invalid
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-ci-anon
+      SUPABASE_URL: https://example.invalid
+      SUPABASE_SERVICE_ROLE_KEY: isolated-ci-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: node --test test/choose-book-premium.test.mjs
+      - run: npm run build
