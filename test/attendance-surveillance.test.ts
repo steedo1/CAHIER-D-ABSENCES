@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { attendanceReceiptLabel, cappedAttendanceLostMinutes, readAttendancePages, sessionBelongsToSlot } from "../src/lib/attendance-surveillance";
 import { parseAttendanceEndAt } from "../src/lib/attendance-end-time";
-import { attendanceCloudAvailableForSync, attendanceConnectionConstrained } from "../src/lib/attendance-network";
+import { attendanceCloudAvailableForSync, attendanceConnectionConstrained, resetAttendanceCloudProbe } from "../src/lib/attendance-network";
 
 test("lost time is capped by the planned course duration", () => {
   assert.equal(cappedAttendanceLostMinutes({ planned_minutes: 5, late_minutes: 2, early_departure_minutes: 4 }), 5);
@@ -64,6 +64,7 @@ test("2G and saveData do not prevent a real sync probe; concurrent probes share 
   } });
   globalThis.fetch = async () => { requests++; return new Response("{}", { status: 200 }); };
   try {
+    resetAttendanceCloudProbe();
     assert.equal(attendanceConnectionConstrained(), true);
     assert.deepEqual(await Promise.all([attendanceCloudAvailableForSync(), attendanceCloudAvailableForSync()]), [true, true]);
     assert.equal(requests, 1);
@@ -71,11 +72,14 @@ test("2G and saveData do not prevent a real sync probe; concurrent probes share 
     assert.equal(await attendanceCloudAvailableForSync(), false);
     assert.equal(requests, 1);
     online = true;
+    resetAttendanceCloudProbe(); // L'événement online invalide le cache sur un vrai navigateur.
     globalThis.fetch = async () => new Response("{}", { status: 503 });
     assert.equal(await attendanceCloudAvailableForSync(), false);
+    resetAttendanceCloudProbe();
     globalThis.fetch = async () => new Response("{}", { status: 401 });
     assert.equal(await attendanceCloudAvailableForSync(), true);
   } finally {
+    resetAttendanceCloudProbe();
     globalThis.fetch = previousFetch;
     if (descriptor) Object.defineProperty(globalThis, "navigator", descriptor);
     else Reflect.deleteProperty(globalThis, "navigator");

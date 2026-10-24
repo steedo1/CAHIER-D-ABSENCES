@@ -1276,6 +1276,9 @@ async function buildClassDeviceScheduleFromCloud(input: {
     `classDevice:roster:${input.classId}`,
   );
   const rosterItems = Array.isArray(roster?.items) ? roster.items : [];
+  if (rosterItems.length === 0 || rosterItems.some((student) => !String(student?.id || "").trim())) {
+    throw new Error("La liste des élèves de cette classe est absente ou incomplète. La préparation ne peut pas être confirmée.");
+  }
 
   const slots: Array<RelayTeacherOfflineSchedule["slots"][number] | null> =
     Array.from({ length: periods.length }, () => null);
@@ -1300,6 +1303,9 @@ async function buildClassDeviceScheduleFromCloud(input: {
       `/api/class/subjects?${params.toString()}`,
       `classDevice:subjects:${input.classId}:${key}`,
     );
+    if (!Array.isArray(subjects?.items)) {
+      throw new Error("La liste des disciplines d’un créneau est incomplète. La préparation ne peut pas être confirmée.");
+    }
     const items = (Array.isArray(subjects?.items) ? subjects.items : [])
       .map((subject) => ({
         class_id: input.classId,
@@ -2323,32 +2329,35 @@ async function prepareClassDevice(
   await cacheSet(allSubjectsCacheKey, { items: scheduledSubjects });
   if (cloudRevision !== null) {
     onProgress("Préparation des disciplines de la classe…");
-    try {
       // Une seule lecture Cloud pendant la préparation : précharge aussi les
       // disciplines éligibles au mode « Autre cours » hors créneau.
-      const manualSubjects = await fetchAndCache<{
+      const manualSubjects = await fetchFreshJson<{
         institution_id?: string;
         class_id?: string;
         actor_profile_id?: string;
         schedule_revision?: number;
+        preparation_revision?: number | null;
         items?: Array<{ id: string; label: string }>;
       }>(
-        `/api/class/subjects?class_id=${encodeURIComponent(classId)}&manual_course=1`,
-        `classDevice:manual-subjects:${classId}`,
+        `/api/class/subjects?class_id=${encodeURIComponent(classId)}&manual_course=1&offline_preparation=v1`,
       );
       if (
         manualSubjects.institution_id === institutionId &&
         manualSubjects.class_id === classId &&
         manualSubjects.actor_profile_id === actorProfileId &&
-        manualSubjects.schedule_revision === selectedScope.revision &&
-        Array.isArray(manualSubjects.items)
+        (safeRevision(schedule.preparation_revision) == null
+          ? manualSubjects.schedule_revision === selectedScope.revision
+          : safeRevision(manualSubjects.preparation_revision) === safeRevision(schedule.preparation_revision) &&
+            Number(manualSubjects.schedule_revision) >= selectedScope.revision) &&
+        Array.isArray(manualSubjects.items) && manualSubjects.items.length > 0 &&
+        manualSubjects.items.every((item) => Boolean(String(item?.id || "").trim()))
       ) {
+        await cacheSet(`classDevice:manual-subjects:${classId}`, manualSubjects);
         // Maintien du cache historique pour les anciens téléphones PWA.
         await cacheSet(allSubjectsCacheKey, manualSubjects);
+      } else {
+        throw new Error("Les disciplines autorisées de cette classe sont absentes ou incohérentes. Actualisez la préparation avant de travailler hors connexion.");
       }
-    } catch {
-      // Le planning préparé reste valide ; le cache hebdomadaire reste utilisable.
-    }
 
     try {
       await fetchAndCache(

@@ -211,6 +211,8 @@ type OpenSession = {
   delivery_origin?: SessionDeliveryOrigin;
   open_operation_id?: string | null;
   period_id?: string | null;
+  manual_course?: boolean;
+  hors_edt?: boolean;
   scheduled_end_at?: string | null;
   grace_expires_at?: string | null;
   session_state?: "open" | "finalizing" | "closed";
@@ -3198,6 +3200,7 @@ export default function ClassDevicePage() {
               : "local_pending",
         open_operation_id: operationId,
         period_id: persistedPeriodId,
+        manual_course: manualSubjectMode,
         scheduled_end_at: stagedOpen.scheduled_end_at,
         grace_expires_at: stagedOpen.grace_expires_at,
         session_state: stagedOpen.session_state || "open",

@@ -22,9 +22,12 @@ function fakeService(input: {
   profiles?: Row[];
   userRoles?: Row[];
   authUsers?: Row[];
+  academicYears?: Row[];
 }) {
   const tables: Record<string, Row[]> = {
-    classes: input.classes || [],
+    classes: (input.classes || []).map((row) => ({ academic_year: "2026-2027", ...row })),
+    academic_years: input.academicYears || Array.from(new Set((input.classes || []).map((row) => row.institution_id)))
+      .map((institution_id) => ({ institution_id, code: "2026-2027", is_current: true })),
     institutions: input.institutions || [],
     profiles: input.profiles || [],
     user_roles: input.userRoles || [],

@@ -3,9 +3,12 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { execFileSync } from "node:child_process";
 
 const root = new URL("../", import.meta.url);
-const read = (file) => fs.readFileSync(new URL(file, root), "utf8");
+const read = (file) => process.env.MON_CAHIER_AUDIT_BASELINE === "1" && file === "src/app/api/class/sessions/start/route.ts"
+  ? execFileSync("git", ["show", `c68bae86:${file}`], { encoding: "utf8" })
+  : fs.readFileSync(new URL(file, root), "utf8");
 const compile = (source) => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -51,7 +54,7 @@ function at(hour, minute = 0) {
   return value.toISOString();
 }
 
-function makeCloud(overrides = {}) {
+function makeCloud(overrides = {}, authorized = true) {
   const tables = {
     classes: [{
       id: "class-5e2", label: "5e2", level: "5e", institution_id: "csca",
@@ -122,7 +125,7 @@ function makeCloud(overrides = {}) {
       resolveAttendanceEducationContext: () => ({ education_type: "general_secondary" }),
     },
     "@/lib/class-device-cloud-session": cloudIds,
-    "@/lib/class-device-identity": { classDeviceMayAccessClass: async () => true },
+    "@/lib/class-device-identity": { classDeviceMayAccessClass: async () => authorized },
   });
 
   async function start(body, operationId = "operation-info-001") {
@@ -175,6 +178,30 @@ test("deux disciplines prévues : le Cloud rattache l'appel à l'enseignant choi
   assert.equal(cloud.tables.teacher_sessions[0].teacher_id, "teacher-info");
 });
 
+test("l'appel automatique ne peut pas utiliser une matière affectée mais absente du créneau", async () => {
+  const cloud = makeCloud();
+  const result = await cloud.start({ manual_course: false, actual_call_at: at(9, 12), period_id: "period-0905" });
+  assert.equal(result.status, 409);
+  assert.equal(result.body.error, "subject_not_scheduled_for_slot");
+  assert.equal(cloud.tables.teacher_sessions.length, 0);
+});
+
+test("la durée automatique est imposée par l'établissement et son ACK reste récupérable", async () => {
+  const cloud = makeCloud();
+  const payload = {
+    manual_course: false, subject_id: "inst-eps", actual_call_at: at(9, 12),
+    period_id: "period-0905", expected_minutes: 13,
+  };
+  const first = await cloud.start(payload, "automatic-duration-ack");
+  assert.equal(first.status, 200);
+  assert.equal(cloud.tables.teacher_sessions[0].expected_minutes, 55);
+  const retry = await cloud.start(payload, "automatic-duration-ack");
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.item.id, first.body.item.id);
+  assert.equal(retry.body.item.expected_minutes, 55);
+  assert.equal(cloud.tables.teacher_sessions.length, 1);
+});
+
 test("Autre cours démarre hors créneau tandis que le cours automatique y est refusé", async () => {
   const cloud = makeCloud();
   const automatic = await cloud.start({ manual_course: false, actual_call_at: at(7) }, "operation-auto-001");
@@ -188,6 +215,75 @@ test("Autre cours démarre hors créneau tandis que le cours automatique y est r
   assert.equal(manual.body.item.hors_edt, true);
   assert.equal(manual.body.item.actual_call_at, at(7));
   assert.equal(cloud.tables.teacher_sessions[0].teacher_id, "teacher-info");
+});
+
+test("une ouverture trop ancienne reste à réconcilier sans créer un cours à la date du rejeu", async () => {
+  const cloud = makeCloud();
+  const oldCapture = new Date(Date.now() - 35 * 86_400_000).toISOString();
+  const result = await cloud.start({ manual_course: true, actual_call_at: oldCapture }, "old-september-opening");
+  assert.equal(result.status, 422);
+  assert.equal(result.body.error, "session_capture_requires_reconciliation");
+  assert.equal(cloud.tables.teacher_sessions.length, 0);
+});
+
+test("le serveur refuse une durée exceptionnelle hors limites sans écrire de séance", async () => {
+  for (const minutes of [0, -1, 241, 1.5, "invalide", null]) {
+    const cloud = makeCloud();
+    const result = await cloud.start({ manual_course: true, actual_call_at: at(7), expected_minutes: minutes });
+    assert.equal(result.status, 422, `durée ${minutes}`);
+    assert.equal(result.body.error, "invalid_exceptional_duration");
+    assert.equal(cloud.tables.teacher_sessions.length, 0);
+  }
+});
+
+test("le serveur conserve une durée exceptionnelle indépendante du cours prévu et un marqueur durable", async () => {
+  const cloud = makeCloud({ institution_periods: [{
+    id: "long-period", institution_id: "csca", weekday: 1, period_no: 1,
+    start_time: "09:00:00", end_time: "11:00:00", duration_min: 120,
+  }] });
+  const result = await cloud.start({ manual_course: true, actual_call_at: at(9, 12) });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.item.expected_minutes, 55);
+  assert.equal(cloud.tables.teacher_sessions[0].notes, "mon-cahier:autre-cours:v1");
+  assert.equal(cloud.tables.teacher_timetables.length, 1);
+});
+
+test("aucune ouverture ne contourne l'autorisation du téléphone", async () => {
+  const cloud = makeCloud({}, false);
+  assert.equal((await cloud.start({ manual_course: true, actual_call_at: at(7) })).status, 403);
+  assert.equal(cloud.tables.teacher_sessions.length, 0);
+});
+
+test("le rejeu ne modifie jamais la capture ni la durée d'une opération déjà appliquée", async () => {
+  const cloud = makeCloud();
+  const original = { manual_course: true, actual_call_at: at(7), expected_minutes: 40 };
+  assert.equal((await cloud.start(original)).status, 200);
+  const before = structuredClone(cloud.tables.teacher_sessions);
+  for (const changed of [{ ...original, actual_call_at: at(7, 5) }, { ...original, expected_minutes: 50 }]) {
+    const result = await cloud.start(changed);
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, "session_operation_payload_mismatch");
+    assert.deepEqual(cloud.tables.teacher_sessions, before);
+  }
+});
+
+test("un ACK d'ouverture perdu reste récupérable après clôture et ouverture du cours suivant", async () => {
+  const cloud = makeCloud();
+  const payload = { manual_course: true, actual_call_at: at(7), expected_minutes: 40 };
+  const first = await cloud.start(payload, "lost-ack-open-001");
+  assert.equal(first.status, 200);
+  cloud.tables.teacher_sessions[0].status = "submitted";
+  cloud.tables.teacher_sessions[0].ended_at = at(7, 40);
+  cloud.tables.teacher_sessions.push({
+    id: "next-course", institution_id: "csca", class_id: "class-5e2",
+    subject_id: "inst-eps", status: "open", ended_at: null,
+  });
+  const before = structuredClone(cloud.tables.teacher_sessions);
+  const retry = await cloud.start(payload, "lost-ack-open-001");
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.item.id, first.body.item.id);
+  assert.equal(retry.body.item.idempotent, true);
+  assert.deepEqual(cloud.tables.teacher_sessions, before);
 });
 
 test("Autre cours refuse une matière sans affectation ou affectée à plusieurs enseignants", async () => {

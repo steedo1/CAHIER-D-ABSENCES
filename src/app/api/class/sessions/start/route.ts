@@ -176,6 +176,7 @@ export async function POST(req: NextRequest) {
     const clientObservedAt =
       parseIsoDate((b as any)?.actual_call_at) ||
       parseIsoDate((b as any)?.client_call_at) ||
+      parseIsoDate(b?.started_at) ||
       null;
     const clientClockSkewMs = clientObservedAt
       ? clientObservedAt.getTime() - serverNow.getTime()
@@ -216,6 +217,21 @@ export async function POST(req: NextRequest) {
     });
     if (!match) {
       return NextResponse.json({ error: "forbidden_not_class_device" }, { status: 403 });
+    }
+
+    const cloudSessionId = classDeviceCloudSessionId({
+      institutionId: String(cls.institution_id), classId: class_id,
+      actorProfileId: user.id, operationId,
+    });
+    // Un ACK perdu doit rester récupérable même après clôture, changement
+    // d'affectation ou expiration du délai de rejeu. Cette lecture ne crée rien.
+    const { data: recordedSession, error: recordedError } = await srv
+      .from("teacher_sessions")
+      .select("id,institution_id,created_by,class_id,subject_id,started_at,actual_call_at,expected_minutes,notes")
+      .eq("id", cloudSessionId)
+      .maybeSingle();
+    if (recordedError) {
+      return NextResponse.json({ error: "session_lookup_unavailable" }, { status: 503 });
     }
 
     let instSubjectId: string | null = null;
@@ -259,6 +275,43 @@ export async function POST(req: NextRequest) {
         },
         { status: 400 }
       );
+    }
+
+    if (recordedSession) {
+      if (String(recordedSession.institution_id) !== String(cls.institution_id) ||
+          String(recordedSession.class_id) !== class_id ||
+          String(recordedSession.created_by) !== user.id) {
+        return NextResponse.json({ error: "session_operation_scope_mismatch" }, { status: 409 });
+      }
+      if (String(recordedSession.subject_id) !== instSubjectId) {
+        return NextResponse.json({ error: "session_slot_already_bound_to_other_subject" }, { status: 409 });
+      }
+      // La durée automatique est calculée par le serveur, indépendamment de
+      // la valeur envoyée ; un ACK perdu doit accepter ce même corps d'origine.
+      if ((clientObservedAt && recordedSession.actual_call_at &&
+           clientObservedAt.getTime() !== Date.parse(recordedSession.actual_call_at)) ||
+          (manualCourse && b.expected_minutes !== undefined && b.expected_minutes !== recordedSession.expected_minutes)) {
+        return NextResponse.json({ error: "session_operation_payload_mismatch" }, { status: 409 });
+      }
+      return NextResponse.json({ item: {
+        ...recordedSession, class_label: cls.label, subject_id,
+        operation_id: operationId, idempotent: true,
+        delivery_origin: "cloud_fallback", server_time: serverNow.toISOString(),
+        period_id: requestedPeriodId || null,
+        hors_edt: recordedSession.notes === "mon-cahier:autre-cours:v1",
+      } });
+    }
+
+    if (!clientObservedAt || !clientObservedAtAccepted) {
+      return NextResponse.json({
+        error: "session_capture_requires_reconciliation",
+        message: "L’heure d’origine de cet appel nécessite une réconciliation. L’opération reste conservée sur le téléphone ; aucun cours n’a été créé à l’heure du rejeu.",
+      }, { status: 422 });
+    }
+    if (manualCourse && b.expected_minutes !== undefined &&
+        (typeof b.expected_minutes !== "number" || !Number.isInteger(b.expected_minutes) ||
+         b.expected_minutes < 1 || b.expected_minutes > 240)) {
+      return NextResponse.json({ error: "invalid_exceptional_duration" }, { status: 422 });
     }
 
     const classEducationType = String(
@@ -452,10 +505,13 @@ export async function POST(req: NextRequest) {
     const sessionDate = ymdInTZ(actualCallAt, tz);
     let teacher_id = scheduledTeacherIds[0] || "";
     let isHorsEdt = manualCourse;
+    if (!manualCourse && !teacher_id) {
+      return NextResponse.json({ error: "subject_not_scheduled_for_slot" }, { status: 409 });
+    }
 
     // En mode "Autre cours", l'enseignant vient toujours de l'affectation
     // classe + discipline, jamais du cours programmé sur le créneau.
-    if (manualCourse || !teacher_id) {
+    if (manualCourse) {
       const assignmentSubjectIds = uniq<string>(
         [instSubjectId, canonicalSubjectId]
           .map((value) => String(value || "").trim())
@@ -511,12 +567,12 @@ export async function POST(req: NextRequest) {
     }
 
     let expected_minutes: number | null;
-    if (b?.expected_minutes === null) {
-      expected_minutes = null;
+    if (!manualCourse) {
+      expected_minutes = periodDuration ?? defSessionMin;
     } else if (Number.isFinite(Number(b?.expected_minutes))) {
       expected_minutes = Math.max(1, Math.floor(Number(b!.expected_minutes)));
     } else {
-      expected_minutes = periodDuration ?? defSessionMin;
+      expected_minutes = manualCourse ? defSessionMin : periodDuration ?? defSessionMin;
     }
 
     const ymd = sessionDate;
@@ -556,13 +612,6 @@ export async function POST(req: NextRequest) {
           subject_id: string | null;
         }
       | null = null;
-
-    const cloudSessionId = classDeviceCloudSessionId({
-      institutionId: String(cls.institution_id),
-      classId: class_id,
-      actorProfileId: user.id,
-      operationId,
-    });
 
     // Protection propre au mode "Autre cours" : il peut ignorer l'EDT,
     // mais jamais ouvrir une deuxième séance sur LA MEME CLASSE.
@@ -608,6 +657,8 @@ export async function POST(req: NextRequest) {
       status: "open",
       created_by: user.id,
       origin: "class_device",
+      // Marqueur durable ; l'EDT officiel reste inchangé.
+      notes: manualCourse ? "mon-cahier:autre-cours:v1" : null,
     };
 
     const { data: inserted, error: insertErr } = await srv
@@ -618,6 +669,8 @@ export async function POST(req: NextRequest) {
 
     if (!insertErr && inserted) {
       session = inserted as any;
+    } else if (insertErr?.code === "PT409" && insertErr.message === "class_session_already_open") {
+      return NextResponse.json({ error: "class_session_already_open" }, { status: 409 });
     } else if (
       insertErr &&
       String(insertErr.message || "").toLowerCase().includes("duplicate")
@@ -691,34 +744,12 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const patch: any = {};
-      const existingCall = parseIsoDate(session.actual_call_at);
-      const candidate = actualCallAt;
-
-      const windowMin = slotStartedAt.getTime() - 8 * 60 * 60_000;
-      const windowMax = slotStartedAt.getTime() + 12 * 60 * 60_000;
-      const candidateOk = candidate.getTime() >= windowMin && candidate.getTime() <= windowMax;
-
-      if (!existingCall) {
-        patch.actual_call_at = callISO;
-      } else if (candidateOk) {
-        const diffMs = existingCall.getTime() - candidate.getTime();
-        if (diffMs > 60_000) patch.actual_call_at = callISO;
-      }
-
-      if (session.expected_minutes == null && expected_minutes != null) patch.expected_minutes = expected_minutes;
-      if (!session.subject_id && instSubjectId) patch.subject_id = instSubjectId;
-      if (!session.class_id && class_id) patch.class_id = class_id;
-
-      if (Object.keys(patch).length) {
-        const { data: upd, error: updErr } = await srv
-          .from("teacher_sessions")
-          .update(patch)
-          .eq("id", session.id)
-          .select("id,started_at,expected_minutes,actual_call_at,class_id,subject_id")
-          .maybeSingle();
-
-        if (!updErr && upd) session = upd as any;
+      // Même en cas de course entre deux requêtes du même operation_id,
+      // une réponse ambiguë ne doit jamais réécrire l'heure ou la durée.
+      if (session.id === cloudSessionId &&
+          (Date.parse(session.actual_call_at || "") !== actualCallAt.getTime() ||
+           session.expected_minutes !== expected_minutes)) {
+        return NextResponse.json({ error: "session_operation_payload_mismatch" }, { status: 409 });
       }
     }
 

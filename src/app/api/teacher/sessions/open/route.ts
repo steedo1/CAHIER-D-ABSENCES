@@ -14,7 +14,7 @@ export async function GET() {
 
   const sessionSelect = `
     id, institution_id, class_id, subject_id, started_at, actual_call_at,
-    expected_minutes, presence_method, presence_distance_m, origin, created_by,
+    expected_minutes, presence_method, presence_distance_m, origin, created_by, notes,
     cls:class_id(label,level,education_type,formation_code,formation_level_code),
     subj:subject_id(custom_name)
   `;
@@ -101,6 +101,7 @@ export async function GET() {
     started_at: data.started_at as string,
     actual_call_at: data.actual_call_at as string | null,
     expected_minutes: (data.expected_minutes as number) ?? null,
+    hors_edt: data.notes === "mon-cahier:autre-cours:v1",
     presence_method: data.presence_method as string | null,
     presence_distance_m: data.presence_distance_m as number | null,
     local_relay: false,

@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { syncTeacherAttendanceOperationsToCloud } from "@/lib/teacher-attendance-cloud-sync";
 import { syncDurableAttendanceOperationsToRelay } from "@/lib/teacher-attendance-relay-sync";
-import { attendanceCloudAvailableForSync } from "@/lib/attendance-network";
+import { RELAY_LOCAL_DISABLED } from "@/lib/relay-capability";
 
 /**
  * Rejoue silencieusement les appels durables dès qu'un chemin redevient disponible.
@@ -31,10 +31,10 @@ export default function BackgroundAttendanceDeliverySync() {
       // profite de cette fenêtre pour vider l'outbox.
       running = true;
       try {
-        const cloudAvailable = await attendanceCloudAvailableForSync();
-        if (cloudAvailable) {
-          await syncTeacherAttendanceOperationsToCloud();
-        } else {
+        // Le synchroniseur consulte d'abord les données locales : zéro sondage
+        // Cloud quand aucune opération ne peut être rejouée.
+        const result = await syncTeacherAttendanceOperationsToCloud();
+        if (!RELAY_LOCAL_DISABLED && result.retryableFailure) {
           await syncDurableAttendanceOperationsToRelay();
         }
       } catch {
@@ -62,6 +62,7 @@ export default function BackgroundAttendanceDeliverySync() {
     const interval = window.setInterval(() => void run(), 20_000);
     window.addEventListener("online", wake);
     window.addEventListener("offline", wake);
+    window.addEventListener("class-device-sync-updated", wake);
     document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
@@ -70,6 +71,7 @@ export default function BackgroundAttendanceDeliverySync() {
       window.clearInterval(interval);
       window.removeEventListener("online", wake);
       window.removeEventListener("offline", wake);
+      window.removeEventListener("class-device-sync-updated", wake);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
