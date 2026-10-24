@@ -1263,7 +1263,7 @@ async function buildClassDeviceScheduleFromCloud(input: {
     ],
     (payload) => Array.isArray(payload?.periods),
   );
-  if (basics.periods.length === 0) {
+  if (!Array.isArray(basics.periods) || basics.periods.length === 0) {
     // Un établissement peut être enregistré avant la réception de ses emplois du temps.
     // Ne pas assimiler cette situation à une panne réseau ni préparer des horaires fictifs.
     throw new Error("institution_schedule_not_configured");
