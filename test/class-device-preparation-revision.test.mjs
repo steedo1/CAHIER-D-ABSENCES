@@ -178,6 +178,23 @@ function cloudPreparation(finalOverrides = {}, initialOverrides = {}, rosterOver
     actorProfileId: fixture.actor_profile_id, selectedClass: { label: "TA", level: "TA" }, scheduleRevision: 100,
     preparationRevision: 100, generatedAt: null, onProgress: () => {}, ...initialOverrides }) };
 }
+test("établissement sans emploi du temps : attente explicite, sans faux créneaux ni appel automatique", async () => {
+  const f = cloudPreparation();
+  f.fixture.periods.length = 0;
+  await assert.rejects(f.run(), /institution_schedule_not_configured/);
+  assert.equal(f.downloaded.length, 0);
+  assert.equal(f.confirmations.length, 0);
+  const cause = new Error("institution_schedule_not_configured");
+  assert.equal(failures.retryableOfflinePreparationFailure(cause), false);
+  assert.match(failures.offlinePreparationFailureMessage(cause), /Emplois du temps en attente/);
+});
+
+test("l'identité de l'établissement accompagne les paramètres même sans créneaux", () => {
+  const source = read("src/app/api/teacher/institution/basics/route.ts");
+  assert.match(source, /\\.select\\("name, tz, default_session_minutes, auto_lateness"\\)/);
+  assert.match(source, /institution_name: String\\(inst\\?\\.name/);
+});
+
 test("37 créneaux et 66 élèves : la préparation Cloud aboutit pendant des appels d'autres classes, sans relais", async () => {
   const f = cloudPreparation(); const schedule = await f.run();
   assert.equal(f.fixture.periods.length, 37); assert.equal(f.fixture.student_count, 66);
