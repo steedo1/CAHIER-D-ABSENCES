@@ -62,23 +62,34 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), "mon-cahier-pwa-audit-"));
 const executablePath = process.env.MON_CAHIER_AUDIT_BROWSER;
 const options = { headless: true, ...(executablePath ? { executablePath } : {}) };
 let context;
+let stage = "launch";
+async function step(name, work) {
+  stage = name;
+  console.log(`PWA browser: ${name}`);
+  let timer;
+  try {
+    return await Promise.race([work(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`PWA browser timeout: ${name}`)), 45_000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 try {
-  context = await chromium.launchPersistentContext(profile, options);
+  context = await step("launch", () => chromium.launchPersistentContext(profile, options));
   let page = await context.newPage();
   await page.goto(`${origin}/class`);
   await page.waitForFunction(() => Boolean(window.audit));
-  await page.evaluate(async () => {
+  await step("register worker", () => page.evaluate(async () => {
     await navigator.serviceWorker.register("/moncahier-sw.js");
     await navigator.serviceWorker.ready;
-  });
+  }));
   await page.reload();
   await page.waitForFunction(() => Boolean(window.audit) && Boolean(navigator.serviceWorker.controller));
-  await page.evaluate(async () => {
+  await step("prepare shell and subjects", () => page.evaluate(async () => {
     await window.audit.warmOfflineShell(["/class"]);
     const subjects = await window.audit.offlineGetJson("/api/class/subjects?class_id=synthetic-class&manual_course=1", "classDevice:manual-subjects:synthetic-class");
     if (subjects.items.length !== 2) throw new Error("manual_subjects_intercepted");
     await window.audit.cacheSet("classDevice:roster:synthetic-class", { items: [{ id: "pupil-a" }, { id: "pupil-b" }] });
-  });
+  }));
   await context.setOffline(true);
   const captured = new Date().toISOString();
   await page.evaluate(async (captured) => {
@@ -96,8 +107,8 @@ try {
     await queue("/api/class/sessions/end", "synthetic-close-001", "session-end", { session_id: reference, actual_end_at: captured });
     if ((await api.outboxStats()).total !== 3) throw new Error("offline_queue_incomplete");
   }, captured);
-  await context.close();
-  context = await chromium.launchPersistentContext(profile, options);
+  await step("close browser offline", () => context.close());
+  context = await step("restart browser offline", () => chromium.launchPersistentContext(profile, { ...options, offline: true }));
   await context.setOffline(true);
   page = await context.newPage();
   await page.goto(`${origin}/class`);
@@ -122,5 +133,6 @@ try {
     lostStartResponse: true, cloudSessions: sessions.size, attendanceReceipts: marks.size, closeReceipts: closes.size,
     origin, browser: await context.browser()?.version() }));
 } finally {
-  await context?.close(); await new Promise((resolve) => server.close(resolve));
+  console.log(`PWA browser: cleanup after ${stage}`);
+  await context?.close(); server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
 }
