@@ -141,6 +141,7 @@ export default function OfflineReadinessCard({
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [failureStep, setFailureStep] = useState<string | null>(null);
+  const [configurationPending, setConfigurationPending] = useState(false);
   const [reconnectRequired, setReconnectRequired] = useState(false);
   const reconnectRequiredRef = useRef(false);
   const [assessment, setAssessment] =
@@ -152,6 +153,9 @@ export default function OfflineReadinessCard({
   const refreshingRef = useRef(false);
   const preparationRef = useRef<Promise<void> | null>(null);
   const lastAutomaticPrepareAtRef = useRef(0);
+  // En attente d'horaires, ne réessayer automatiquement qu'après une nouvelle révision Cloud.
+  const missingScheduleRevisionRef = useRef<string | null>(null);
+  const latestCloudRevisionRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
   const isAutomaticAttendance = automaticAttendanceRole(role);
 
@@ -195,6 +199,16 @@ export default function OfflineReadinessCard({
       if (!mountedRef.current) return;
       setAssessment(next);
       setReadiness(next.readiness);
+      latestCloudRevisionRef.current = String(next.cloud_revision ?? "unknown");
+      if (
+        missingScheduleRevisionRef.current !== null &&
+        missingScheduleRevisionRef.current !== latestCloudRevisionRef.current
+      ) {
+        missingScheduleRevisionRef.current = null;
+        setConfigurationPending(false);
+        setError(null);
+        setFailureStep(null);
+      }
       if (notify && next.readiness) {
         await onPreparedRef.current?.(next.readiness);
       }
@@ -229,6 +243,10 @@ export default function OfflineReadinessCard({
 
       const task = (async () => {
         let lastStep = "";
+        if (!automatic) {
+          missingScheduleRevisionRef.current = null;
+          setConfigurationPending(false);
+        }
         if (mountedRef.current) {
           setPreparing(true);
           setError(null);
@@ -359,6 +377,12 @@ export default function OfflineReadinessCard({
             const needsReconnect = role === "teacher" && cause?.message === "teacher_phone_account_conflict";
             setReconnectRequired(needsReconnect);
             reconnectRequiredRef.current = needsReconnect;
+            const missingSchedule = role === "class-device" &&
+              cause?.message === "institution_schedule_not_configured";
+            setConfigurationPending(missingSchedule);
+            if (missingSchedule) {
+              missingScheduleRevisionRef.current = latestCloudRevisionRef.current ?? "unknown";
+            }
             setError(offlinePreparationFailureMessage(cause));
             setFailureStep(lastStep || null);
             setProgress("");
@@ -392,6 +416,13 @@ export default function OfflineReadinessCard({
       if (!mountedRef.current) return;
       await applyAssessment(next, false);
 
+      if (
+        role === "class-device" &&
+        missingScheduleRevisionRef.current === String(next.cloud_revision ?? "unknown")
+      ) {
+        // Configuration encore absente : pas de téléchargements inutiles chaque minute.
+        return;
+      }
       if (shouldPrepareAutomatically(next, stored)) {
         await runPreparation(true);
         return;
@@ -559,6 +590,39 @@ export default function OfflineReadinessCard({
               <p className="mt-1 text-xs font-medium text-sky-700">
                 Ne fermez pas cette page.
               </p>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    if (isClassDevice && configurationPending && !preparing) {
+      return (
+        <section
+          className={["overflow-hidden rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm", className].join(" ")}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-start gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-100 text-amber-700">
+              <AlertTriangle className="h-6 w-6" aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-amber-950">Emplois du temps en attente</p>
+              <p className="mt-1 text-sm leading-5 text-amber-900">
+                L’établissement n’a pas encore configuré ses horaires officiels. Les classes et les élèves restent accessibles, mais les appels automatiques ne peuvent pas démarrer.
+              </p>
+              <p className="mt-2 text-xs text-amber-800">
+                Aucun horaire fictif ne sera créé. Actualisez après la saisie des emplois du temps par l’établissement.
+              </p>
+              <button
+                type="button"
+                onClick={() => void runPreparation(false)}
+                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-amber-700 px-3.5 py-2 text-sm font-semibold text-white hover:bg-amber-800"
+              >
+                <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                Vérifier après configuration
+              </button>
             </div>
           </div>
         </section>
