@@ -286,9 +286,11 @@ export async function POST(req: NextRequest) {
       if (String(recordedSession.subject_id) !== instSubjectId) {
         return NextResponse.json({ error: "session_slot_already_bound_to_other_subject" }, { status: 409 });
       }
+      // La durée automatique est calculée par le serveur, indépendamment de
+      // la valeur envoyée ; un ACK perdu doit accepter ce même corps d'origine.
       if ((clientObservedAt && recordedSession.actual_call_at &&
            clientObservedAt.getTime() !== Date.parse(recordedSession.actual_call_at)) ||
-          (b.expected_minutes !== undefined && b.expected_minutes !== recordedSession.expected_minutes)) {
+          (manualCourse && b.expected_minutes !== undefined && b.expected_minutes !== recordedSession.expected_minutes)) {
         return NextResponse.json({ error: "session_operation_payload_mismatch" }, { status: 409 });
       }
       return NextResponse.json({ item: {

@@ -186,6 +186,22 @@ test("l'appel automatique ne peut pas utiliser une matière affectée mais absen
   assert.equal(cloud.tables.teacher_sessions.length, 0);
 });
 
+test("la durée automatique est imposée par l'établissement et son ACK reste récupérable", async () => {
+  const cloud = makeCloud();
+  const payload = {
+    manual_course: false, subject_id: "inst-eps", actual_call_at: at(9, 12),
+    period_id: "period-0905", expected_minutes: 13,
+  };
+  const first = await cloud.start(payload, "automatic-duration-ack");
+  assert.equal(first.status, 200);
+  assert.equal(cloud.tables.teacher_sessions[0].expected_minutes, 55);
+  const retry = await cloud.start(payload, "automatic-duration-ack");
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.item.id, first.body.item.id);
+  assert.equal(retry.body.item.expected_minutes, 55);
+  assert.equal(cloud.tables.teacher_sessions.length, 1);
+});
+
 test("Autre cours démarre hors créneau tandis que le cours automatique y est refusé", async () => {
   const cloud = makeCloud();
   const automatic = await cloud.start({ manual_course: false, actual_call_at: at(7) }, "operation-auto-001");
