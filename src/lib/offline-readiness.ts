@@ -1261,8 +1261,13 @@ async function buildClassDeviceScheduleFromCloud(input: {
         key: "classDevice:inst:basics:institution",
       },
     ],
-    (payload) => Array.isArray(payload?.periods) && payload.periods.length > 0,
+    (payload) => Array.isArray(payload?.periods),
   );
+  if (!Array.isArray(basics.periods) || basics.periods.length === 0) {
+    // Un établissement peut être enregistré avant la réception de ses emplois du temps.
+    // Ne pas assimiler cette situation à une panne réseau ni préparer des horaires fictifs.
+    throw new Error("institution_schedule_not_configured");
+  }
   const periods = (Array.isArray(basics.periods) ? basics.periods : []).filter(
     (period) => Boolean(String(period?.id || "").trim()) && classDevicePeriodKey(period),
   );

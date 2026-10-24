@@ -59,7 +59,7 @@ export async function GET(request: Request) {
   // 3) Paramètres d’établissement
   const { data: inst, error: ierr } = await supabase
     .from("institutions")
-    .select("tz, default_session_minutes, auto_lateness")
+    .select("name, tz, default_session_minutes, auto_lateness")
     .eq("id", instId)
     .maybeSingle();
 
@@ -158,6 +158,7 @@ export async function GET(request: Request) {
   }
   return NextResponse.json({
     institution_id: instId,
+    institution_name: String(inst?.name || "").trim() || null,
     actor_profile_id: me.user.id,
     schedule_revision: finalPreparation?.schedule_revision ?? revision,
     ...(finalPreparation ? { preparation_revision: finalPreparation.preparation_revision } : {}),

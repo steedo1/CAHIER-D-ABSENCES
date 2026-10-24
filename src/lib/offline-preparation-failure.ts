@@ -10,6 +10,8 @@ export function offlinePreparationFailureMessage(cause: unknown) {
   const name = String((cause as { name?: unknown } | null)?.name || "");
   if (message === "teacher_phone_account_conflict")
     return "Ce téléphone est connecté à un ancien compte sans cours. Reconnectez-vous avec votre numéro complet à 10 chiffres, en conservant le zéro initial. Les actions locales restent conservées sur cet appareil.";
+  if (message === "institution_schedule_not_configured")
+    return "Emplois du temps en attente : aucun créneau d’appel n’a encore été configuré par l’établissement. Les appels automatiques seront disponibles après l’enregistrement des horaires officiels.";
   if (/QuotaExceededError|quota|storage.*full|disk.*full/i.test(name + " " + message))
     return "L’espace disponible sur cet appareil est insuffisant. Libérez de l’espace sans effacer les données de Mon Cahier, puis réessayez.";
   if (/unauthorized|http 401/i.test(message))

@@ -171,7 +171,7 @@ test("the rendered badge stops spinning after a failed attempt and clears immedi
     assert.equal(host.querySelector("a").getAttribute("href"), "/class/recover-sync-v2?class_id=TA");
     current = { total: 0, blocked: 0, retryable: false, localOpen: null, completion: null };
     await React.act(async () => { browser.dispatchEvent(new browser.Event("class-device-sync-updated")); });
-    assert.match(host.textContent, /Prêt/);
+    assert.match(host.textContent, /Envois à jour/);
     assert.doesNotMatch(host.textContent, /action\(s\) à vérifier|Synchronisation en cours/);
     assert.equal(repairs, 1, "a display refresh does not restart the network pipeline");
   } finally {

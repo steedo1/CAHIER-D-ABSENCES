@@ -6,7 +6,7 @@ import { getClassDeviceLocalSyncStatus, repairClassDeviceSyncV2 } from "@/lib/cl
 import { classDeviceFriendlySyncState, type ClassDeviceFriendlySyncState, type ClassDeviceSyncScope } from "@/lib/class-device-sync-state";
 
 const presentations: Record<ClassDeviceFriendlySyncState, { label: string; tone: string; title: string }> = {
-  ready: { label: "✓ Prêt", tone: "bg-slate-500/30 text-slate-100", title: "Aucun appel de cette classe n’attend de confirmation." },
+  ready: { label: "✓ Envois à jour", tone: "bg-slate-500/30 text-slate-100", title: "Aucun appel de cette classe n’attend de confirmation." },
   in_progress: { label: "● Appel en cours", tone: "bg-indigo-500/25 text-indigo-100", title: "Un appel est ouvert pour cette classe." },
   saved_on_device: { label: "📱 En attente d’envoi", tone: "bg-amber-500/20 text-amber-100", title: "Les données sont conservées sur ce téléphone. L’envoi sera réessayé automatiquement." },
   syncing: { label: "↻ Synchronisation en cours…", tone: "bg-amber-500/20 text-amber-100", title: "Une tentative d’envoi est en cours pour cette classe." },
