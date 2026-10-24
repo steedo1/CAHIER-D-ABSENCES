@@ -21,6 +21,7 @@ La validation du code et du laboratoire doit être distinguée d'une recette sur
 | Déploiement automatique / previews | désactivés / désactivées lors de l'inspection |
 | Branche corrective | `codex/audit-cloud-pwa-20261024` |
 | Premier commit correctif | `0162e8ed66e84f4a1f06cd7c3e1499c7d1053e73` ; les contrôles finaux portent sur la révision indiquée dans la CI de la PR |
+| Révision finale du code | `78bf19e38c837639d8da44d14688d42fa6605118` ; la mise à jour documentaire ultérieure ne modifie pas le code testé |
 | Supabase | `nnxgxxktjvgnnbcedmvv`, interrogé en lecture seule |
 
 Le domaine public a répondu lors de la consultation. Cela confirme son accessibilité, pas la réussite d'un appel authentifié. Aucun redéploiement n'a été déclenché pour l'audit.
@@ -113,11 +114,27 @@ Cette configuration nécessite une correction dédiée des accès directs et des
 - Les nouveaux scénarios exécutés contre le code historique `c68bae86` reproduisent 12 échecs sur un ensemble de 59 cas ; 47 cas restent réussis. Il ne s'agit pas d'une affirmation fondée uniquement sur la lecture du code.
 - Premier lot correctif : 61 tests ciblés réussis, dont API d'ouverture, worker réel en machine virtuelle, préparation incomplète et absence de sondage avec file vide.
 - PostgreSQL local 17 : deux connexions concurrentes, une seule ouverture ; le cours suivant est accepté après clôture. La migration est aussi exécutée dans PGlite avec contrôle des privilèges et préservation des cours groupés.
+- Navigateur Edge local `155.0.4283.62`, scénario synthétique sur serveur de boucle locale : vrai service worker et vrai IndexedDB, fermeture complète hors connexion, redémarrage avec conservation de trois opérations, de deux élèves et des disciplines, puis reconnexion avec perte volontaire de la première réponse d'ouverture. Résultat observé : une séance, un reçu de marques absence/retard, un reçu de clôture, zéro opération restante ; heures originales préservées. Ce test n'utilise ni le profil navigateur personnel ni les appareils scolaires.
 - La commande `npm run test:cloud-pwa` regroupe les régressions d'appels, autorisations de classe, horodatage, clôture, outbox, reconnexion, ACK, anciens journaux, PWA et comptes enseignants. Les anciens tests de relais ont été actualisés sans modifier leurs mécanismes d'autorisation.
 - La CI vérifie le typage, cette suite, la concurrence PostgreSQL, le navigateur avec vrai service worker/IndexedDB, puis la compilation Next.js. Elle utilise des identités synthétiques et des URL Supabase invalides, sans secrets de production. L'historique Git est récupéré pour les tests reproduisant d'anciennes versions.
 - Le disque local a saturé pendant l'installation des dépendances. Les résultats de typage/build faisant autorité sont ceux de la CI avec le lockfile exact, pas les premières commandes locales interrompues avec une installation partielle.
 
-Les identifiants des exécutions finales et leurs résultats sont renseignés après la fin des contrôles. Le workflow est accessible depuis la [PR #224](https://github.com/steedo1/CAHIER-D-ABSENCES/pull/224/checks).
+### Résultats finaux sur `78bf19e38c837639d8da44d14688d42fa6605118`
+
+| Contrôle | Résultat et preuve |
+|---|---|
+| Suite Cloud/PWA, 47 fichiers | **431 tests réussis, zéro échec, zéro ignoré** |
+| TypeScript | **RÉUSSI** |
+| PostgreSQL 17, deux connexions | **RÉUSSI** : une ouverture, puis cours suivant après clôture |
+| Chromium `151.0.7922.34` | **RÉUSSI** : redémarrage hors ligne, trois opérations restaurées, première réponse d'ouverture perdue, puis trois ACK exacts et file vide ; une séance Cloud synthétique |
+| Compilation Next.js avec lockfile exact | **RÉUSSIE**, 64 pages statiques générées |
+| Workflow principal | [40096827318 — réussi](https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/40096827318), job `120880767958`, le 24/10 à 13:12 UTC |
+| Régressions origine publique | [40096827325 — réussi](https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/40096827325) |
+| Régressions notes/cycles scolaires et dépendances de production | [40096827335 — réussi](https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/40096827335) : typage, notes, Parent Connect/SMS, EPC/QR, audit des dépendances hautes/critiques et seconde compilation |
+
+Le test navigateur attend l'événement de retour en ligne et respecte les délais de reprise réels ; il ne supprime aucune protection de l'outbox pour obtenir un résultat vert. Le reçu d'un appel habituel reste récupérable lorsque le serveur a remplacé la durée envoyée par celle de l'établissement.
+
+La compilation émet deux avertissements non bloquants concernant les accès à `process.version(s)` des bibliothèques Supabase importées par le middleware Edge. Les fichiers du middleware et les versions de ces dépendances n'ont pas été modifiés par cette PR. La compilation et son contrôle de types se terminent avec succès ; ESLint est désactivé dans la commande de build existante et n'est donc pas revendiqué comme contrôle réussi.
 
 ## Mise en production et retour arrière
 
