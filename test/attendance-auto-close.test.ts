@@ -23,6 +23,18 @@ test("legacy restored cloud sessions find their slot; local date and timezone de
   assert.equal(attendanceAutoCloseAt({ started_at: "2026-10-14T22:00:00Z", period_id: "p1" }, periods, "Asia/Tokyo"), "2026-10-14T23:02:00.000Z");
   assert.equal(attendanceAutoCloseAt({ started_at: "2026-10-15T07:25:00Z", expected_minutes: 25 }, {}, "Africa/Abidjan"), "2026-10-15T07:52:00.000Z");
 });
+
+test("Autre cours utilise sa durée propre pendant un créneau et après restauration Cloud", () => {
+  for (const flag of [{ manual_course: true }, { hors_edt: true }]) {
+    assert.equal(attendanceAutoCloseAt({
+      started_at: "2026-10-15T07:15:00Z", period_id: "p1", expected_minutes: 90,
+      scheduled_end_at: "2026-10-15T08:00:00Z", ...flag,
+    }, periods, "Africa/Abidjan"), "2026-10-15T08:47:00.000Z");
+    assert.equal(attendanceAutoCloseAt({
+      started_at, expected_minutes: 20, ...flag,
+    }, {}, "Africa/Abidjan"), "2026-10-15T07:22:00.000Z");
+  }
+});
 test("incomplete or corrupt session metadata never closes prematurely", () => {
   for (const session of [null, { started_at: "bad" }, { started_at }, { started_at, expected_minutes: 0 }, { started_at, expected_minutes: NaN }, { started_at, scheduled_end_at: started_at }]) {
     assert.equal(attendanceAutoCloseAt(session, {}, "Africa/Abidjan"), null);

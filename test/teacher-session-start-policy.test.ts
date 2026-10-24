@@ -33,7 +33,7 @@ test("relais obsolète mais Cloud confirmé : aucune preuve relais périmée n'e
   );
 });
 
-test("sans Cloud, seul un relais joignable et concordant autorise l'appel", () => {
+test("sans Cloud, le journal PWA conserve l'appel même si l'ancien relais est inutilisable", () => {
   assert.equal(
     decideTeacherSessionStart({ ...base, cloud_available: false }).mode,
     "relay_only",
@@ -44,7 +44,7 @@ test("sans Cloud, seul un relais joignable et concordant autorise l'appel", () =
       cloud_available: false,
       relay_schedule_matches: false,
     }).mode,
-    "blocked",
+    "device_only",
   );
 });
 

@@ -478,7 +478,7 @@ export async function GET(req: NextRequest) {
     // 1) Si un slot est fourni, le filtrage par emploi du temps est strict.
     //    Une réponse vide signifie qu'aucun cours n'est prévu : ne jamais exposer
     //    toutes les matières de la classe dans ce cas.
-    if (slotRaw && !slotRaw.startsWith("closed|") && !slotRaw.startsWith("no-config|")) {
+    if (!manualCourse && slotRaw && !slotRaw.startsWith("closed|") && !slotRaw.startsWith("no-config|")) {
       const periodIds = await resolveAutoPeriodIds(
         srv,
         institutionId,

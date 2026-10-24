@@ -398,6 +398,15 @@ export async function syncTeacherAttendanceOperationsToCloud(
   institutionId?: string | null,
 ): Promise<TeacherAttendanceCloudSyncResult> {
   const institutionIds = await knownInstitutionIds(institutionId);
+  const before = await getTeacherAttendanceSyncStatus(institutionId);
+  // Ne pas sonder le Cloud avec une file vide ; conserver la reprise des anciens journaux relayés.
+  if (before.pending === 0 && before.securedOnRelay === 0) {
+    return {
+      flushed: 0, remaining: before.total, blocked: before.blocked,
+      conflicts: before.conflicts, authRequired: before.authRequired,
+      retryableFailure: false, lastError: before.lastError, lastStatus: before.lastStatus,
+    };
+  }
   if (!(await attendanceCloudAvailableForSync())) {
     const status = await getTeacherAttendanceSyncStatus(institutionId);
     return {

@@ -34,7 +34,10 @@ test("un échec Cloud ne déclenche ni shell ni navigation Relais", async () => 
     guard,
     /intent\.payload\.role === "admin" &&[\s\S]*?pathname\.startsWith\("\/admin"\) &&[\s\S]*?!relayEnabled/,
   );
-  assert.doesNotMatch(guard, /window\.location|router\.(?:push|replace)/);
+  const protectedPageGuard = guard.slice(guard.indexOf("const logoutLock = getOfflineLogoutLock();"));
+  // Le lancement /login peut reprendre la destination PWA préparée ; une
+  // panne sur une page déjà protégée ne doit pas déclencher une redirection.
+  assert.doesNotMatch(protectedPageGuard, /window\.location|router\.(?:push|replace)/);
 });
 
 test("sans capacité, snapshot, sondes locales et fallback Relais sont court-circuités", async () => {

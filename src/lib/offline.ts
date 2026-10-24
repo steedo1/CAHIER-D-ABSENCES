@@ -1827,7 +1827,12 @@ async function flushOutboxInternal(
           break;
         }
 
-        if (isRetryableStatus(res.status)) {
+        // Deux cours successifs hors ligne sont rejoués en phases. Le second
+        // attend la clôture du premier ; ce refus temporaire n'est pas une
+        // raison de bloquer définitivement son opération ni de changer son ID.
+        if (isRetryableStatus(res.status) ||
+            (operationType === "session-start" && res.status === 409 &&
+             msg === "class_session_already_open")) {
           retryableFailure = true;
           await outboxUpdate(row.id, {
             state: "pending",

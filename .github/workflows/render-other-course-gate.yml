@@ -6,7 +6,23 @@ on:
     paths:
       - 'src/app/class/page.tsx'
       - 'src/app/api/class/subjects/route.ts'
+      - 'src/app/api/class/sessions/**'
+      - 'src/app/api/teacher/sessions/open/route.ts'
+      - 'src/components/BackgroundAttendanceDeliverySync.tsx'
+      - 'public/moncahier-sw.js'
+      - 'src/lib/attendance-auto-close.ts'
+      - 'src/lib/offline.ts'
+      - 'src/lib/offlineClassDevice.ts'
+      - 'src/lib/offline-release.ts'
+      - 'src/lib/teacher-attendance-cloud-sync.ts'
       - 'src/lib/offline-readiness.ts'
+      - 'supabase/migrations/*class_exceptional_session_guard.sql'
+      - 'scripts/test-cloud-pwa.mjs'
+      - 'scripts/verify-class-exceptional-concurrency.mjs'
+      - 'scripts/verify-cloud-pwa-browser.mjs'
+      - 'test/attendance-*.test.*'
+      - 'test/class-*.test.*'
+      - 'test/offline-*.test.*'
       - 'test/class-device-other-course-ui.test.mjs'
       - 'test/class-device-multi-course-start.test.mjs'
       - '.github/workflows/render-other-course-gate.yml'
@@ -22,6 +38,16 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: audit
+          POSTGRES_PASSWORD: isolated-audit
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U audit"
+          --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       NODE_OPTIONS: --max-old-space-size=4096
       NEXT_TELEMETRY_DISABLED: '1'
@@ -39,8 +65,15 @@ jobs:
       - name: TypeScript check
         run: npm run typecheck
       - name: Exceptional course and class-device regressions
-        run: |
-          node --test test/class-device-other-course-ui.test.mjs test/class-device-multi-course-start.test.mjs test/class-session-manual-route.test.mjs test/class-device-subject-transition.test.mjs test/class-device-minimal-preparation.test.mjs
-          node --import tsx --test test/class-device-offline-readiness.test.ts test/attendance-auto-close.test.ts
+        run: npm run test:cloud-pwa
+      - name: Real PostgreSQL concurrent session opening
+        env:
+          MON_CAHIER_AUDIT_PG_PORT: '5432'
+          PGPASSWORD: isolated-audit
+        run: node scripts/verify-class-exceptional-concurrency.mjs
+      - name: Install isolated browser
+        run: npx playwright install --with-deps chromium
+      - name: Real service worker and IndexedDB offline restart
+        run: node scripts/verify-cloud-pwa-browser.mjs
       - name: Next.js optimized build
         run: npm run build

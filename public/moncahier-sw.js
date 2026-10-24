@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-10-21-class-subjects-timeout-v1";
+const VERSION = "2026-10-24-cloud-pwa-audit-v1";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -508,6 +508,7 @@ async function replayAttendanceOutboxFromWorkerInternal() {
   );
   const blockedSessions = new Set();
   let flushed = 0;
+  let waitingForClassClose = false;
 
   for (const row of callRows) {
     const operationType = attendanceOperationType(row);
@@ -646,6 +647,15 @@ async function replayAttendanceOutboxFromWorkerInternal() {
         break;
       }
 
+      if (operationType === "session-start" && response.status === 409 &&
+          errorCode === "class_session_already_open") {
+        waitingForClassClose = true;
+        await patchAttendanceOutboxRow(row.id, { ...patch, state: "pending" });
+        if (normalizedDependency) blockedSessions.add(normalizedDependency);
+        // Continuer permet de livrer puis fermer le cours précédent.
+        continue;
+      }
+
       if (attendanceRetryableStatus(response.status)) {
         await patchAttendanceOutboxRow(row.id, {
           ...patch,
@@ -714,6 +724,10 @@ async function replayAttendanceOutboxFromWorkerInternal() {
     ATTENDANCE_CALL_OPERATION_TYPES.has(attendanceOperationType(row)),
   ).length;
   await notifyAttendanceSyncClients({ flushed, remaining });
+  if (waitingForClassClose && remaining > 0) {
+    // Le navigateur reprogramme Background Sync, y compris sans fenêtre ouverte.
+    throw new Error("attendance_background_waiting_for_class_close");
+  }
   return { flushed, remaining };
 }
 
@@ -742,13 +756,14 @@ function requestPathFromReferrer(request) {
 async function classDeviceSubjectsResponse(request, url) {
   const classId = String(url.searchParams.get("class_id") || "").trim();
   const slot = String(url.searchParams.get("slot") || "").trim();
+  const manualCourse = url.searchParams.get("manual_course") === "1";
   const fromClassDevice = requestPathFromReferrer(request) === "/class";
 
   if (!classId) return await fetch(request);
 
   // Le téléphone de classe ne doit jamais retomber sur la liste générale de
   // toutes les matières : sans créneau précis, aucune discipline n'est sûre.
-  if (!slot && fromClassDevice) {
+  if (!slot && fromClassDevice && !manualCourse) {
     return jsonResponse(
       { items: [], diagnostic: "class_device_subject_slot_required" },
       200,
@@ -756,7 +771,7 @@ async function classDeviceSubjectsResponse(request, url) {
     );
   }
 
-  if (!slot) return await fetch(request);
+  if (!slot && !manualCourse) return await fetch(request);
 
   let networkResponse = null;
   try {

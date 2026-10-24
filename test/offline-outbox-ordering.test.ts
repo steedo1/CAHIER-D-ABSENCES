@@ -271,6 +271,28 @@ test("une présence bloquée empêche seulement la fermeture du même cours", as
 });
 
 
+test("un cours successif attend la clôture précédente sans devenir définitivement bloqué", async () => {
+  const restoreIndexedDb = installFakeIndexedDb();
+  const previousFetch = globalThis.fetch;
+  let occupied = true;
+  globalThis.fetch = (async () => Response.json(occupied
+    ? { error: "class_session_already_open" }
+    : { item: { id: "server-next", operation_id: "next-course-opening" } },
+    { status: occupied ? 409 : 200 })) as typeof fetch;
+  try {
+    await offlineMutateJson("/api/class/sessions/start", { method: "POST", body: { subject_id: "info" } }, {
+      operationId: "next-course-opening", queueOnly: true,
+      meta: { operationType: "session-start", clientSessionId: "client:next-course-opening" },
+    });
+    assert.equal((await flushOutbox({ releaseNetworkBackoff: true })).flushed, 0);
+    assert.equal((await outboxStats()).pending, 1);
+    assert.equal((await outboxStats()).blocked, 0);
+    occupied = false;
+    assert.equal((await flushOutbox({ releaseNetworkBackoff: true })).flushed, 1);
+    assert.equal((await outboxStats()).total, 0);
+  } finally { globalThis.fetch = previousFetch; restoreIndexedDb(); }
+});
+
 test("un accusé Cloud avec un autre operation_id est bloqué", async () => {
   const restoreIndexedDb = installFakeIndexedDb();
   const previousFetch = globalThis.fetch;

@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { execFileSync } from "node:child_process";
 
-const read = (file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+const read = (file) => process.env.MON_CAHIER_AUDIT_BASELINE === "1" && file === "src/lib/offline-readiness.ts"
+  ? execFileSync("git", ["show", `c68bae86:${file}`], { encoding: "utf8" })
+  : fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
 const compile = (source) => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -152,7 +155,7 @@ function preparationFixture() {
   return { class_id: "TA", actor_profile_id: "tablet-TA", institution_id: "CSCA", student_count: 66,
     periods, subject_refs: periods.map((period, i) => ({ period: period.id, subject: `subject-${i % 9}` })) };
 }
-function cloudPreparation(finalOverrides = {}, initialOverrides = {}) {
+function cloudPreparation(finalOverrides = {}, initialOverrides = {}, rosterOverride) {
   const fixture = preparationFixture(); const downloaded = [], confirmations = [];
   const finalStatus = { ...cloud(), institution_id: fixture.institution_id, actor_profile_id: fixture.actor_profile_id, ...finalOverrides };
   const build = isolatedFunction("buildClassDeviceScheduleFromCloud", {
@@ -162,7 +165,7 @@ function cloudPreparation(finalOverrides = {}, initialOverrides = {}) {
     },
     fetchClassPreparationAndCache: async (url) => {
       downloaded.push(url);
-      if (url.startsWith("/api/class/roster")) return { items: Array.from({ length: fixture.student_count }, (_, i) => ({ id: `student-${i}` })) };
+      if (url.startsWith("/api/class/roster")) return rosterOverride ?? { items: Array.from({ length: fixture.student_count }, (_, i) => ({ id: `student-${i}` })) };
       assert.equal(new URL(url, "https://fixture.invalid").searchParams.get("offline_preparation"), "v1");
       const periodId = new URL(url, "https://fixture.invalid").searchParams.get("period_id");
       return { items: fixture.subject_refs.filter((item) => item.period === periodId).map((item) => ({ id: item.subject, label: "Matière" })) };
@@ -185,6 +188,15 @@ test("37 créneaux et 66 élèves : la préparation Cloud aboutit pendant des ap
   assert.equal(schedule.source, "cloud"); assert.equal(schedule.relay_time, null);
   assert.equal(f.confirmations.length, 1);
 });
+
+for (const roster of [{}, { items: [] }, { items: [{ name: "sans identifiant" }] }]) {
+  test(`la préparation refuse un roster incomplet : ${JSON.stringify(roster)}`, async () => {
+    const f = cloudPreparation({}, {}, roster);
+    await assert.rejects(f.run(), /liste des élèves/);
+    assert.equal(f.confirmations.length, 0);
+    assert.equal(f.downloaded.length, 1);
+  });
+}
 for (const [name, final, initial] of [
   ["planning modifié", { preparation_revision: 101 }, {}],
   ["compte remplacé", { actor_profile_id: "other" }, {}],

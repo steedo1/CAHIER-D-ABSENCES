@@ -307,6 +307,7 @@ export function validateClassDeviceScheduleScope(
     rosterKeys.length !== 1 ||
     rosterKeys[0] !== classId ||
     !Array.isArray(roster?.items) ||
+    roster.items.length === 0 ||
     !assignmentsAreScoped
   ) {
     return { ok: false, status: "class_data_missing" };

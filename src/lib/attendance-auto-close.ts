@@ -6,6 +6,8 @@ type Session = {
   expected_minutes?: number | null;
   scheduled_end_at?: string | null;
   period_id?: string | null;
+  manual_course?: boolean;
+  hors_edt?: boolean;
 };
 type Period = { id: string | null; weekday: number; start_time: string; end_time: string };
 
@@ -23,8 +25,9 @@ export function attendanceAutoCloseAt(
   if (!session) return null;
   const start = Date.parse(session.started_at);
   if (!Number.isFinite(start)) return null;
-  let end = Date.parse(session.scheduled_end_at || "");
-  if (!Number.isFinite(end)) {
+  const exceptional = session.manual_course === true || session.hors_edt === true;
+  let end = exceptional ? NaN : Date.parse(session.scheduled_end_at || "");
+  if (!Number.isFinite(end) && !exceptional) {
     try {
       const formatter = new Intl.DateTimeFormat("en-CA", {
         timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
