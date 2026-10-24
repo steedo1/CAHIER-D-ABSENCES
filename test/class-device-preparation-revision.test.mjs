@@ -191,8 +191,8 @@ test("établissement sans emploi du temps : attente explicite, sans faux crénea
 
 test("l'identité de l'établissement accompagne les paramètres même sans créneaux", () => {
   const source = read("src/app/api/teacher/institution/basics/route.ts");
-  assert.match(source, /\\.select\\("name, tz, default_session_minutes, auto_lateness"\\)/);
-  assert.match(source, /institution_name: String\\(inst\\?\\.name/);
+  assert.ok(source.includes('.select("name, tz, default_session_minutes, auto_lateness")'));
+  assert.ok(source.includes("institution_name: String(inst?.name"));
 });
 
 test("37 créneaux et 66 élèves : la préparation Cloud aboutit pendant des appels d'autres classes, sans relais", async () => {
