@@ -120,9 +120,14 @@ try {
   }));
   assert.deepEqual(restored, { count: 3, pupils: 2, subjects: 2 });
   await context.setOffline(false);
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await page.evaluate(() => window.audit.flushOutbox({ releaseNetworkBackoff: true }));
+  await page.waitForFunction(() => navigator.onLine);
+  // A lost response can be reported as HTTP failure by the worker. Respect
+  // the real retry delay instead of running all attempts in the same tick.
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const replay = await page.evaluate(() => window.audit.flushOutbox({ releaseNetworkBackoff: true }));
+    console.log(`PWA replay ${attempt + 1}: ${JSON.stringify(replay)}`);
     if (await page.evaluate(async () => (await window.audit.outboxStats()).total === 0)) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
   assert.equal(await page.evaluate(async () => (await window.audit.outboxStats()).total), 0);
   assert.equal(sessions.size, 1); assert.equal(marks.size, 1); assert.equal(closes.size, 1);
