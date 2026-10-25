@@ -1,30 +1,30 @@
 [
   {
     "count": 500,
-    "rosterMs": 52.3,
-    "prepareMs": 117.1,
-    "pdfMs": 2257.9,
+    "rosterMs": 40.9,
+    "prepareMs": 39.2,
+    "pdfMs": 1460,
     "loadSqlReads": 19,
     "prepareSqlReads": 40,
     "sqlWrites": 0,
     "qrTableCalls": 0,
     "reprintSqlReads": 0,
-    "pdfBytes": 3424319,
-    "peakRssMiB": 356.6,
+    "pdfBytes": 3426357,
+    "peakRssMiB": 361.7,
     "scope": "local synthetic transport; not live Supabase latency or browser RAM"
   },
   {
     "count": 1000,
-    "rosterMs": 242.3,
-    "prepareMs": 528.6,
-    "pdfMs": 4949.6,
+    "rosterMs": 84.6,
+    "prepareMs": 179,
+    "pdfMs": 2530.1,
     "loadSqlReads": 31,
     "prepareSqlReads": 80,
     "sqlWrites": 0,
     "qrTableCalls": 0,
     "reprintSqlReads": 0,
-    "pdfBytes": 6853808,
-    "peakRssMiB": 400.5,
+    "pdfBytes": 6855396,
+    "peakRssMiB": 461.8,
     "scope": "local synthetic transport; not live Supabase latency or browser RAM"
   }
 ]
