@@ -91,7 +91,7 @@ jobs:
           NATIVE_PID=$!
           trap 'kill "$NATIVE_PID"' EXIT
           for attempt in $(seq 1 30); do curl -fs http://localhost:4398/verifier-carte > /dev/null && break || sleep 1; done
-          node scripts/verify-school-cards-native.mjs
+          CARD_NATIVE_PID="$NATIVE_PID" node scripts/verify-school-cards-native.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
