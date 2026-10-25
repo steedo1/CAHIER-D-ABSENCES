@@ -124,3 +124,12 @@ test("chunked signature upload rejects more than 6 MiB before multipart parsing 
   assert.equal(response.status, 413);
   assert.equal(db.files.size, 0);
 });
+
+test("chunked preparation rejects over 24 KB without Supabase queries", async () => {
+  const db = schoolCardFixture(1), api = db.admin(path), before = db.calls.length;
+  const req = request("/api/admin/school-cards", { year, enrollmentIds: Array(700).fill(randomUUID()) });
+  assert.equal(req.headers.has("content-length"), false);
+  assert.equal((await api.POST(req)).status, 413);
+  assert.equal(db.calls.filter(call => call.table === "class_enrollments").length,
+    0, "oversized requests must be rejected before roster loading");
+});
