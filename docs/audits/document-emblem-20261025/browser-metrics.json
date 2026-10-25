@@ -1,0 +1,30 @@
+[
+  {
+    "count": 500,
+    "fontRequests": 1,
+    "elapsedMs": 8756,
+    "heapBeforeMiB": 26.2,
+    "heapAfterMiB": 26.6,
+    "serverRssMiB": 220.1,
+    "groupedTransportCalls": 59,
+    "storageSigningBatches": 6,
+    "sqlWrites": 0,
+    "pdfs": 5,
+    "pdfBytes": 31515901,
+    "scope": "headless Chrome desktop; synthetic transport and 240x320 JPEG textures; not real pupil photos or live Supabase latency"
+  },
+  {
+    "count": 1000,
+    "fontRequests": 1,
+    "elapsedMs": 15515,
+    "heapBeforeMiB": 31.2,
+    "heapAfterMiB": 37.6,
+    "serverRssMiB": 225,
+    "groupedTransportCalls": 111,
+    "storageSigningBatches": 12,
+    "sqlWrites": 0,
+    "pdfs": 10,
+    "pdfBytes": 63032469,
+    "scope": "headless Chrome desktop; synthetic transport and 240x320 JPEG textures; not real pupil photos or live Supabase latency"
+  }
+]
