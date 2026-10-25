@@ -83,13 +83,19 @@ const anonymous=await fetch(origin+rosterPath);assert.equal(anonymous.status,401
 const statsSchema=sql("select n.nspname from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='pg_stat_statements'");
 if(!/^[a-z_]+$/.test(statsSchema))throw Error("local_sql_metrics_extension_unavailable");
 sql(`select ${statsSchema}.pg_stat_statements_reset()`);
+const sqlSnapshot=()=>JSON.parse(sql(`select json_build_object('calls',coalesce(sum(calls),0),'mutations',coalesce(sum(calls) filter (where query ~* '(INSERT INTO|UPDATE |DELETE FROM)'),0)) from ${statsSchema}.pg_stat_statements where query ilike 'WITH pgrst_source%'`));
 for(const count of [500,1000]){
   const before=JSON.parse(sql("select json_build_object('settings',(select count(*) from school_card_settings),'audit',(select count(*) from school_card_audit),'revocations',(select count(*) from school_card_revocations))"));
+  const initialSql=sqlSnapshot(),loadStart=Date.now();let loaded=0,offset=0;
+  do { const roster=await api(first,`${rosterPath}?year=${year}&offset=${offset}`);assert.equal(roster.response.status,200);loaded+=roster.data.items.length;offset=roster.data.nextOffset; }while(offset!==null&&loaded<count);
+  const loadMs=Date.now()-loadStart,loadedSql=sqlSnapshot();
   const start=Date.now(),prepared=[];
   for(let i=0;i<count;i+=100){const result=await api(first,rosterPath,{year,enrollmentIds:first.enrollments.slice(i,i+100).map(row=>row.id)});assert.equal(result.response.status,200,JSON.stringify(result.data));prepared.push(...result.data.items)}
+  const preparedMs=Date.now()-start,preparedSql=sqlSnapshot();
   const again=await api(first,rosterPath,{year,enrollmentIds:first.enrollments.slice(0,100).map(row=>row.id)});assert.deepEqual(again.data.items.map(row=>row.token),prepared.slice(0,100).map(row=>row.token));
   const after=JSON.parse(sql("select json_build_object('settings',(select count(*) from school_card_settings),'audit',(select count(*) from school_card_audit),'revocations',(select count(*) from school_card_revocations))"));assert.deepEqual(after,before,"real preparation/reprint created no persistent rows");
-  metrics.push({count,prepareAndReprintMs:Date.now()-start,persistentCardRowsBefore:before,persistentCardRowsAfter:after,scope:"real ephemeral local Supabase Auth/PostgREST/Storage via native Next handlers; excludes PDF timing"});
+  const reprintedSql=sqlSnapshot();assert.equal(reprintedSql.mutations,initialSql.mutations,"no PostgREST SQL mutation during roster/preparation/reprint");
+  metrics.push({count,loadMs,preparedMs,prepareAndReprintMs:Date.now()-start,loadPostgrestSqlCalls:loadedSql.calls-initialSql.calls,preparePostgrestSqlCalls:preparedSql.calls-loadedSql.calls,serverReprepare100PostgrestSqlCalls:reprintedSql.calls-preparedSql.calls,postgrestSqlMutations:reprintedSql.mutations-initialSql.mutations,persistentCardRowsBefore:before,persistentCardRowsAfter:after,scope:"real ephemeral local Supabase Auth/PostgREST/Storage via native Next handlers; excludes PDF timing"});
 }
 const card=(await api(first,rosterPath,{year,enrollmentIds:[first.enrollments[0].id]})).data.items[0];assert.ok(card.photoUrl);
 assert.equal((await fetch(card.photoUrl)).status,200,"actual signed private photo download");

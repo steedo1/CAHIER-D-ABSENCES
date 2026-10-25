@@ -9,7 +9,24 @@ export async function POST(req: NextRequest) {
   if (!cardFeatureEnabled()) return cardJson({ error: "verification_indisponible" }, 503);
   if (!requireCardOrigin(req)) return cardJson({ error: "origine_invalide" }, 403);
   if (Number(req.headers.get("content-length") || 0) > 1000) return cardJson({ valid: false }, 400);
-  const body = await req.json().catch(() => null), token = body?.token;
+  // Do not trust Content-Length: a chunked public request must also have a
+  // hard body cap, before JSON parsing or any database work.
+  let body: { token?: unknown } | null = null;
+  const reader = req.body?.getReader();
+  if (reader) {
+    let bytes = 0; const chunks: Uint8Array[] = [];
+    try {
+      for (;;) {
+        const { done, value } = await reader.read(); if (done) break;
+        bytes += value.byteLength;
+        if (bytes > 1000) { await reader.cancel(); return cardJson({ valid: false }, 413); }
+        chunks.push(value);
+      }
+      body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch { /* malformed JSON is treated as an invalid token */ }
+    finally { reader.releaseLock(); }
+  }
+  const token = typeof body?.token === "string" ? body.token : "";
   // Render sets X-Forwarded-For; use the rightmost (proxy appended) entry.
   const ip = (req.headers.get("x-forwarded-for") || "unknown").split(",").at(-1)!.trim();
   if (!allow(ip, typeof token === "string" ? token.slice(0, 200) : "")) {

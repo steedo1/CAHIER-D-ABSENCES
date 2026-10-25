@@ -9,6 +9,13 @@ const path="src/app/api/admin/school-cards/route.ts";
 const settings="src/app/api/admin/school-cards/settings/route.ts";
 const revoke="src/app/api/admin/school-cards/revoke/route.ts";
 const verify="src/app/api/public/school-cards/verify/route.ts";
+test("public chunked requests are size-bounded before JSON or database work",async()=>{
+  const db=schoolCardFixture(1),scanner=db.admin(verify),before=db.calls.length;
+  const req=request("/api/public/school-cards/verify",{token:"x".repeat(1001)});
+  assert.equal(req.headers.has("content-length"),false);
+  assert.equal((await scanner.POST(req)).status,413);
+  assert.equal(db.calls.length,before);
+});
 async function prepare(db,ids=db.tables.class_enrollments.map(row=>row.id)) {
   return db.admin(path).POST(request("/api/admin/school-cards",{year,enrollmentIds:ids}));
 }
