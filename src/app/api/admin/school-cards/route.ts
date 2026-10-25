@@ -26,7 +26,25 @@ export async function POST(req: NextRequest) {
   try {
     const ctx = await cardScope(); if ("error" in ctx) return ctx.error;
     if (!ctx.configuration.enabled) return cardJson({ error: "cartes_suspendues" }, 403);
-    const body = await req.json();
+    // Content-Length is optional with chunked requests; enforce a real cap
+    // before parsing JSON to protect Render's limited server memory.
+    const reader = req.body?.getReader();
+    if (!reader) return cardJson({ error: "selection_invalide" }, 400);
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > 24_000) {
+          await reader.cancel();
+          return cardJson({ error: "lot_trop_grand" }, 413);
+        }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     if (!Array.isArray(body.enrollmentIds) || body.enrollmentIds.length < 1 || body.enrollmentIds.length > 100 || !body.enrollmentIds.every((id: unknown) => typeof id === "string" && CARD_UUID.test(id)) || typeof body.year !== "string") return cardJson({ error: "selection_invalide" }, 400);
     const years = await readCardYears(ctx.service, ctx.instId);
     if (!isCardYearValid(years.find(y => y.code === body.year))) return cardJson({ error: "annee_non_active_ou_expiree" }, 409);
