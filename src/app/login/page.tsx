@@ -57,7 +57,7 @@ function LoginPageInner() {
       <div
         aria-hidden
         className="absolute inset-0 -z-20 bg-cover bg-center"
-        style={{ backgroundImage: "url(/admin.png)" }}
+        style={{ backgroundImage: "url(/admin.v2.webp)" }}
       />
       <div
         aria-hidden
@@ -70,7 +70,7 @@ function LoginPageInner() {
           <div className="flex min-w-0 items-center gap-3">
             <div className="relative h-10 w-10 shrink-0 rounded-xl bg-white/10 p-1.5 shadow-sm backdrop-blur-sm md:h-12 md:w-12">
               <Image
-                src="/nexa-digital-logo.png"
+                src="/nexa-digital-logo.v2.webp"
                 alt="NEXA DIGITAL FOR EDUCATION"
                 fill
                 className="object-contain"

@@ -111,7 +111,7 @@ export default function ParentsLoginPage() {
               <div className="flex items-center gap-3">
                 <div className="relative h-10 w-10 rounded-xl bg-white shadow">
                   <Image
-                    src="/nexa-digital-logo.png"
+                    src="/nexa-digital-logo.v2.webp"
                     alt="NEXA DIGITAL FOR EDUCATION"
                     fill
                     className="object-contain"

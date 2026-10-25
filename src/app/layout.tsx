@@ -19,11 +19,11 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
-      { url: "/favicon.png", type: "image/png", sizes: "1024x1024" },
-      { url: "/icons/icon-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/favicon.v2.png", type: "image/png", sizes: "64x64" },
+      { url: "/icons/icon-192.v2.png", type: "image/png", sizes: "192x192" },
     ],
-    shortcut: "/favicon.png",
-    apple: [{ url: "/icons/icon-192.png", sizes: "192x192" }],
+    shortcut: "/favicon.v2.png",
+    apple: [{ url: "/icons/icon-192.v2.png", sizes: "192x192" }],
   },
 };
 

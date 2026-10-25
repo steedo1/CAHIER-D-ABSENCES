@@ -370,7 +370,7 @@ const homeSlides: HomeSlide[] = [
     accent: "sont suivies dès l’appel.",
     description:
       "L’appel est digitalisé, les retards et absences sont enregistrés immédiatement, puis les parents et la direction disposent d’une information claire.",
-    imageSrc: "/accueil.png",
+    imageSrc: "/accueil.v2.webp",
     imageAlt: "Cahier des absences Mon Cahier avec suivi des élèves en classe",
     href: "/parents/login",
     cta: "Voir les absences",
@@ -391,7 +391,7 @@ const homeSlides: HomeSlide[] = [
     accent: "sont centralisés par période.",
     description:
       "Les enseignants saisissent les évaluations, l’administration suit les moyennes et les parents consultent les résultats publiés.",
-    imageSrc: "/home/hero-notes.png",
+    imageSrc: "/home/hero-notes.v2.webp",
     imageAlt: "Cahier de notes Mon Cahier avec moyennes, matières et bulletin scolaire",
     href: "/parents/login",
     cta: "Voir les notes",
@@ -412,7 +412,7 @@ const homeSlides: HomeSlide[] = [
     accent: "restent accessibles à tout moment.",
     description:
       "Le professeur renseigne les séances, devoirs et ressources ; la direction suit l’avancement du programme et les familles restent informées.",
-    imageSrc: "/home/hero-textes.png",
+    imageSrc: "/home/hero-textes.v2.webp",
     imageAlt: "Cahier de textes numérique Mon Cahier avec professeur, tablette et progression pédagogique",
     href: "/login?space=enseignant",
     cta: "Voir le cahier de textes",
@@ -433,7 +433,7 @@ const homeSlides: HomeSlide[] = [
     accent: "sans attendre le papier.",
     description:
       "Les annonces, rappels et notifications importantes circulent plus vite entre l’école, les familles et les responsables d’élèves.",
-    imageSrc: "/home/hero-communication.png",
+    imageSrc: "/home/hero-communication.v2.webp",
     imageAlt: "Communication parents école Mon Cahier avec messages et notifications",
     href: "/parents/login",
     cta: "Voir les messages",
@@ -454,7 +454,7 @@ const homeSlides: HomeSlide[] = [
     accent: "sont suivis avec précision.",
     description:
       "La finance scolaire couvre les frais, paiements, reçus, soldes, rapports, dépenses et vues consolidées pour la direction ou le fondateur.",
-    imageSrc: "/home/hero-finance.png",
+    imageSrc: "/home/hero-finance.v2.webp",
     imageAlt: "Finance scolaire Mon Cahier avec paiements, reçus et suivi des frais",
     href: "/login?space=finance",
     cta: "Voir la finance",

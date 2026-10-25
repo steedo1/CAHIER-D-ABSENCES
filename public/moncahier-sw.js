@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-10-24-cloud-pwa-audit-v1";
+const VERSION = "2026-10-25-bandwidth-v1";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -20,8 +20,8 @@ const ATTENDANCE_CALL_OPERATION_TYPES = new Set([
 const PRECACHE_URLS = [
   OFFLINE_URL,
   "/manifest.webmanifest",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png",
+  "/icons/icon-192.v2.png",
+  "/icons/icon-512.v2.png",
   "/icons/badge-72.png",
 ];
 const OFFLINE_PAGE_PATHS = new Set([
@@ -962,9 +962,18 @@ async function warmDocument(rawUrl) {
   const html = await response.text();
   const assetUrls = extractDocumentAssetUrls(html, url);
 
+  const assetCache = await caches.open(ASSET_CACHE);
   const downloadedAssets = await Promise.all(
     Array.from(assetUrls).map(async (assetUrl) => {
       const assetRequest = new Request(assetUrl, { credentials: "include" });
+      // Les chunks Next portent leur identité dans l'URL. Plusieurs écrans
+      // partagent les mêmes chunks : réutiliser leur copie vérifiée au lieu
+      // de la retélécharger pour chaque écran préparé. Les documents et les
+      // ressources non immuables continuent d'être vérifiés sur le réseau.
+      if (new URL(assetUrl).pathname.startsWith("/_next/static/")) {
+        const cached = await assetCache.match(assetRequest);
+        if (isCacheable(cached)) return null;
+      }
       const assetResponseValue = await fetch(assetRequest);
       if (!isCacheable(assetResponseValue)) {
         throw new Error(
@@ -977,10 +986,9 @@ async function warmDocument(rawUrl) {
 
   // Publication en deux temps : tous les assets doivent être téléchargés avant
   // que le nouveau document HTML remplace la dernière version fonctionnelle.
-  const assetCache = await caches.open(ASSET_CACHE);
   await Promise.all(
-    downloadedAssets.map(({ assetRequest, assetResponseValue }) =>
-      assetCache.put(assetRequest, assetResponseValue),
+    downloadedAssets.map((asset) =>
+      asset ? assetCache.put(asset.assetRequest, asset.assetResponseValue) : undefined,
     ),
   );
   const shell = await caches.open(SHELL_CACHE);
@@ -1093,7 +1101,7 @@ self.addEventListener("push", (event) => {
   const title = payload.title || "Mon Cahier";
   const options = {
     body: payload.body || payload.message || "Nouvelle notification",
-    icon: payload.icon || "/icons/icon-192.png",
+    icon: payload.icon || "/icons/icon-192.v2.png",
     badge: payload.badge || "/icons/badge-72.png",
     tag: payload.tag || undefined,
     data: { url: payload.url || payload.data?.url || "/" },

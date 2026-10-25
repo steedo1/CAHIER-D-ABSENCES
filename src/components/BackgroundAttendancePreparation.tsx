@@ -7,7 +7,6 @@ import {
   prepareOffline,
 } from "@/lib/offline-readiness";
 import { probeCloudSchedule } from "@/lib/cloud-availability";
-import { prepareAdminEssentialOffline } from "@/lib/admin-essential-preparation";
 import { setAdminEssentialSessionUser } from "@/lib/admin-essential-fetch";
 import {
   getOfflineAccessIntent,
@@ -194,7 +193,10 @@ export default function BackgroundAttendancePreparation() {
             institutionId = active?.payload.institution_id || "";
           }
 
-          if (!role || !userId) return;
+          // Administration cloud-only : ne pas télécharger en arrière-plan
+          // toutes les listes, bulletins et conduites de l'établissement.
+          // Les caches/outbox existants restent intacts.
+          if (!role || !userId || role === "admin") return;
 
           const revisionChanged =
             cloudRoleVerified &&
@@ -204,17 +206,8 @@ export default function BackgroundAttendancePreparation() {
           const forcePreparation = force || revisionChanged;
 
           const scope = `${userId}:${role}`;
-          // Le paquet Admin essentiel est plus riche que l'ancienne préparation
-          // des appels : une nouvelle clé force donc sa première exécution sur les
-          // appareils déjà utilisés avant ce LOT, sans attendre l'ancien TTL 6 h.
-          const successKey =
-            role === "admin"
-              ? `mc:admin-essential-preparation:success:v1:${scope}`
-              : `mc:attendance-preparation:success:${scope}`;
-          const attemptKey =
-            role === "admin"
-              ? `mc:admin-essential-preparation:attempt:v1:${scope}`
-              : `mc:attendance-preparation:attempt:${scope}`;
+          const successKey = `mc:attendance-preparation:success:${scope}`;
+          const attemptKey = `mc:attendance-preparation:attempt:${scope}`;
           const now = Date.now();
           const lastSuccess = numberFromStorage(successKey);
           const lastAttempt = numberFromStorage(attemptKey);
@@ -235,29 +228,9 @@ export default function BackgroundAttendancePreparation() {
           writeStorage(attemptKey, now);
 
           await withCrossTabLock(async () => {
-            let prepared = false;
-
-            if (role === "admin") {
-              // Le vrai hors-ligne Admin est préparé uniquement après confirmation
-              // Cloud du compte ET de son établissement. L'utilisateur n'a pas à
-              // ouvrir Listes, Bulletins ou Conseil avant la panne.
-              if (
-                cloudRoleVerified &&
-                sessionRef.current &&
-                institutionId
-              ) {
-                await prepareAdminEssentialOffline({ userId, institutionId });
-                prepared = true;
-              }
-            } else {
-              await prepareOffline(role === "teacher" ? "teacher" : "class-device");
-              prepared = true;
-            }
-
-            // Une session Cloud résiduelle hors réseau sur une page Admin autre que
-            // Appels est un no-op : elle ne doit pas repousser la prochaine vraie
-            // préparation de six heures.
-            if (prepared) writeStorage(successKey, Date.now());
+            await prepareOffline(role === "teacher" ? "teacher" : "class-device");
+            // Marquer uniquement une préparation terminée sans erreur.
+            writeStorage(successKey, Date.now());
           });
         } catch {
           // Préparation opportuniste et silencieuse : une indisponibilité du Cloud,
