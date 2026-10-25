@@ -1,4 +1,4 @@
--- REVIEW ONLY: never apply to production without the owner's explicit approval.
+-- Applied to production after the owner's explicit approval on 2026-10-25; version 20261025144859. Do not reapply manually.
 -- Additive module storage. No student, enrollment, bulletin or institution write.
 begin;
 create table public.school_card_settings (

@@ -1,3 +1,5 @@
+> **ÉTAT ACTUALISÉ — 25/10/2026 :** migration additive `20261025144859_school_cards_private_configuration.sql` appliquée avec l'accord du propriétaire sur le projet Supabase existant (version enregistrée `20261025144859`). Trois nouvelles tables privées créées, RLS activée, accès anonymes/authentifiés refusés, deux triggers d'audit vérifiés, zéro élève/inscription/finance modifié. Le module reste non fusionné et non déployé sur la production Render ; la recette cloud fonctionnelle et l'impression physique restent à réaliser. Les constats d'avant cette date plus bas sont historiques.
+
 # Module cartes scolaires — recette du 25 octobre 2026
 
 État : développement livré en branche et recette Render isolée. **Non déployé en production. Intégration native Next + Supabase Auth/PostgREST/Storage validée sur une pile locale éphémère en CI. Recette Render publique sur données fictives ; base Supabase cloud de recette non disponible.**
@@ -116,7 +118,7 @@ Ces mesures sont celles de `pg_stat_statements` de la pile locale réelle, sépa
 ## Préparation de production — ordre obligatoire
 
 1. Rétablir le flux de création/confirmation d'une branche Supabase de test, ou fournir une base de test dédiée. Accepter son éventuel coût avant création. Ne pas utiliser la production comme substitut.
-2. Les tests CI natifs existent déjà ; pour compléter la recette hébergée, appliquer uniquement la migration additive `20261025101927_school_cards_private_configuration.sql` sur cette base de test ; peupler des écoles/inscriptions et comptes fictifs ; créer un bucket `signatures` privé et un bucket de photos privé. Réaliser la recette réelle Native Next → Auth → PostgREST → Storage → PDF → scan public et mesurer les requêtes.
+2. Les tests CI natifs existent déjà ; pour compléter la recette hébergée, appliquer uniquement la migration additive `20261025144859_school_cards_private_configuration.sql` sur cette base de test ; peupler des écoles/inscriptions et comptes fictifs ; créer un bucket `signatures` privé et un bucket de photos privé. Réaliser la recette réelle Native Next → Auth → PostgREST → Storage → PDF → scan public et mesurer les requêtes.
 3. Vérifier l'impression d'une feuille et le scan physique. Le rendu logiciel arabe a été corrigé et contrôlé sur PDF ; faire confirmer les noms exacts et les noms très longs par le responsable EPC avec des données autorisées, puis le rendu matériel.
 4. Faire relire la migration et obtenir l'approbation explicite de son application en production. Trois nouvelles tables privées uniquement : configuration, révocations et audit ; fonction trigger invoker, pas de SECURITY DEFINER, pas de transformation de données existantes.
 5. Configurer une clé `SCHOOL_CARD_QR_SECRET` aléatoire forte et durable, `SCHOOL_CARD_PUBLIC_ORIGIN=https://www.mon-cahier.com`, et `SCHOOL_CARDS_ENABLED=true` **seulement au moment de l'activation approuvée**. Le module est fermé par défaut si le drapeau manque ; aucun QR dégradé sans clé.
@@ -172,7 +174,7 @@ Liste exacte relative au dépôt, incluant le code, les contrôles et les preuve
 - `src/lib/school-cards.ts`
 - `src/lib/server/school-cards.ts`
 - `src/types/pdfkit-browser.d.ts`
-- `supabase/migrations/20261025101927_school_cards_private_configuration.sql`
+- `supabase/migrations/20261025144859_school_cards_private_configuration.sql`
 - `test/fixtures/school-cards-native-base.sql`
 - `test/helpers/school-card-fixture.mjs`
 - `test/school-cards-api.test.mjs`

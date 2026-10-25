@@ -18,7 +18,7 @@ const sql=query=>execFileSync("psql",[database,"-X","-At","-v","ON_ERROR_STOP=1"
 const check=result=>{if(result.error)throw Error(result.error.message);return result.data};
 const phase=process.argv[2]||"test";
 if(phase==="initialize"){
-  for(const path of ["test/fixtures/school-cards-native-base.sql","supabase/migrations/20261025101927_school_cards_private_configuration.sql"])
+  for(const path of ["test/fixtures/school-cards-native-base.sql","supabase/migrations/20261025144859_school_cards_private_configuration.sql"])
     execFileSync("psql",[database,"-X","-v","ON_ERROR_STOP=1","-f",path],{stdio:"inherit"});
   sql("notify pgrst, 'reload schema'");
   process.exit(0);

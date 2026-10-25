@@ -9,7 +9,7 @@ test("PostgreSQL migration: private tables, CAS revisions, transactional audits 
     insert into institutions values('11111111-1111-4111-8111-111111111111'),('22222222-2222-4222-8222-222222222222');
     insert into class_enrollments values('33333333-3333-4333-8333-333333333333','11111111-1111-4111-8111-111111111111');
     grant select on class_enrollments to service_role;`);
-  await db.exec(readFileSync(new URL("../supabase/migrations/20261025101927_school_cards_private_configuration.sql",import.meta.url),"utf8"));
+  await db.exec(readFileSync(new URL("../supabase/migrations/20261025144859_school_cards_private_configuration.sql",import.meta.url),"utf8"));
   const rls=await db.query("select relname,relrowsecurity from pg_class where relname in ('school_card_settings','school_card_revocations','school_card_audit')");
   assert.ok(rls.rows.every(row=>row.relrowsecurity));
   for(const role of ["anon","authenticated"]) {
