@@ -200,6 +200,7 @@ const PREDICTION_ITEMS: NavItem[] = [
    Groupe : Correspondant fichier
 ========================= */
 const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
+  { href: "/admin/cartes-scolaires", label: "Cartes scolaires", Icon: ShieldCheck },
   {
     href: "/admin/export-moyennes",
     label: "Export DESPS",
@@ -315,6 +316,7 @@ const ORGANISATION_ITEMS: NavItem[] = [
    Groupe : Administration & services
 ========================= */
 const ADMIN_ITEMS: NavItem[] = [
+  { href: "/admin/cartes-scolaires", label: "Cartes scolaires", Icon: ShieldCheck },
   {
     href: "/admin/communication",
     label: "Communication",
@@ -1096,6 +1098,7 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
     if (isFinanceOnlyShell || isFinanceManager) return [...FINANCE_FULL_ITEMS, PARENT_CONNECT_ITEM];
 
     return [...ADMIN_ITEMS, ...(isEducator || isInfirmier ? [] : [PARENT_CONNECT_ITEM])].flatMap((item) => {
+      if (item.href === "/admin/cartes-scolaires" && !isAdmin && !isEducator) return [];
       if (item.href.startsWith("/admin/finance")) {
         if (isAdmin) return canGeneralDirectorViewFinance
           ? [item, ADMIN_PAYROLL_ITEM]
