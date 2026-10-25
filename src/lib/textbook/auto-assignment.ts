@@ -4,6 +4,7 @@ import {
   textbookAssignmentMatchesClassTeacherRows,
 } from "@/lib/textbook/subject-matching";
 import { textbookProgressionMatchesClass } from "@/lib/textbook/progression-context";
+import { matchesTextbookGeneralLevel } from "@/lib/textbook/level-matching";
 
 type SyncInput = {
   srv: any;
@@ -33,50 +34,9 @@ function normalize(value: unknown) {
     .trim();
 }
 
-function normalizeLevel(value: unknown) {
-  const raw = normalize(value);
-  const aliases: Record<string, string> = {
-    sixieme: "6e",
-    "6eme": "6e",
-    cinquieme: "5e",
-    "5eme": "5e",
-    quatrieme: "4e",
-    "4eme": "4e",
-    troisieme: "3e",
-    "3eme": "3e",
-    seconde: "2nde",
-    "2de": "2nde",
-    "2eme": "2nde",
-    premiere: "1ere",
-    "1ere": "1ere",
-    terminale: "tle",
-  };
-  return aliases[raw] || raw;
-}
-
 function generalLevelMatches(progression: any, classRow: any) {
-  const progressionLevel = normalizeLevel(progression?.level);
-  if (!progressionLevel) return true;
-
-  const classLevel = normalizeLevel(classRow?.level);
-  const classLabel = normalize(classRow?.label || classRow?.name);
-
-  if (progressionLevel === classLevel) return true;
-
-  // Certains référentiels portent un niveau groupé comme "2nde A-C".
-  if (
-    (progressionLevel.includes("2ndea") && progressionLevel.includes("c")) ||
-    progressionLevel === "2ndeac"
-  ) {
-    return classLevel === "2ndea" || classLevel === "2ndec";
-  }
-
-  // Le libellé de classe peut contenir la division : "4e1", "4e 1", etc.
-  return Boolean(
-    classLabel &&
-      (classLabel.startsWith(progressionLevel) ||
-        classLabel.includes(progressionLevel)),
-  );
+  if (!clean(progression?.level)) return true;
+  return matchesTextbookGeneralLevel(progression, classRow);
 }
 
 function sameAcademicYear(progression: any, classRow: any, requested?: string | null) {
@@ -127,7 +87,7 @@ export async function syncTextbookAssignmentsFromTeaching(
   let classesQuery = srv
     .from("classes")
     .select(
-      "id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code",
+      "id,label,level,official_track_code,academic_year,institution_id,education_type,formation_code,formation_level_code",
     )
     .eq("institution_id", institutionId);
 
