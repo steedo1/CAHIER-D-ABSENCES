@@ -29,7 +29,8 @@ try {
     await page.getByLabel("Scénario de recette").selectOption(String(count));
     await page.getByRole("button",{name:`Tout l’établissement (${count})`,exact:true}).waitFor({timeout:60000});
     await page.getByRole("button",{name:`Tout l’établissement (${count})`,exact:true}).click();
-    await page.getByRole("checkbox",{name:/J’accepte d’imprimer/}).check();
+    const acceptMissing=page.getByRole("checkbox",{name:/J’accepte d’imprimer/});
+    if(await acceptMissing.count()) await acceptMissing.check();
     const cdp=await page.context().newCDPSession(page);
     const before=await cdp.send("Runtime.getHeapUsage"),start=Date.now();
     await page.getByRole("button",{name:"Générer les PDF A4 / Imprimer",exact:true}).click();
@@ -38,7 +39,7 @@ try {
     const data=await(await page.request.get(`${origin}/qa/metrics`)).json();
     const links=page.getByRole("link",{name:/Ouvrir pour imprimer/});assert.equal(await links.count(),count/100);
     const downloads=await page.locator('a[download]').evaluateAll(async elements=>Promise.all(elements.map(async el=>{const b=await(await fetch(el.href)).blob();return{name:el.download,size:b.size}})));
-    metrics.push({count,elapsedMs:Date.now()-start,heapBeforeMiB:+(before.usedSize/1048576).toFixed(1),heapAfterMiB:+(after.usedSize/1048576).toFixed(1),serverRssMiB:+(data.rss/1048576).toFixed(1),groupedTransportCalls:data.calls.length,sqlWrites:data.calls.filter(c=>!["read","sign-batch"].includes(c.op)).length,pdfs:downloads.length,pdfBytes:downloads.reduce((sum,x)=>sum+x.size,0),scope:"headless Chrome desktop, synthetic transport, no photos"});
+    metrics.push({count,elapsedMs:Date.now()-start,heapBeforeMiB:+(before.usedSize/1048576).toFixed(1),heapAfterMiB:+(after.usedSize/1048576).toFixed(1),serverRssMiB:+(data.rss/1048576).toFixed(1),groupedTransportCalls:data.calls.filter(c=>c.op==="read").length,storageSigningBatches:data.calls.filter(c=>c.op==="sign-batch").length,sqlWrites:data.calls.filter(c=>!["read","sign-batch"].includes(c.op)).length,pdfs:downloads.length,pdfBytes:downloads.reduce((sum,x)=>sum+x.size,0),scope:"headless Chrome desktop; synthetic transport and 240x320 JPEG textures; not real pupil photos or live Supabase latency"});
     await cdp.detach();
   }
   assert.deepEqual(errors,[]);

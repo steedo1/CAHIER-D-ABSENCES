@@ -44,6 +44,16 @@ test("roles: parent/teacher/other institution forbidden; educator limited to ass
   assert.equal((await apiCrossOrigin(db)).status,403);
 });
 function apiCrossOrigin(db){return db.admin(path).POST(request("/api/admin/school-cards",{year,enrollmentIds:[db.tables.class_enrollments[0].id]},"POST",{origin:"https://attacker.invalid"}));}
+test("Render TLS proxy: official public origin is accepted, internal/forged browser origins remain forbidden",()=>{
+  const db=schoolCardFixture(1),api=db.admin("src/lib/server/school-cards.ts"),previous=process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV="production";
+    const req=origin=>({headers:new Headers({origin}),nextUrl:{origin:"http://localhost:10000"}});
+    assert.equal(api.requireCardOrigin(req("https://www.mon-cahier.com")),true);
+    assert.equal(api.requireCardOrigin(req("http://localhost:10000")),false);
+    assert.equal(api.requireCardOrigin(req("https://attacker.invalid")),false);
+  }finally{if(previous===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=previous}
+});
 test("valid scan checks live enrollment, year, school, module suspension and revocation without exposing a pupil",async()=>{
   const db=schoolCardFixture(1),card=(await(await prepare(db)).json()).items[0];
   const scanner=db.admin(verify);

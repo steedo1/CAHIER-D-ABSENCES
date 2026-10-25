@@ -3,11 +3,17 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { issueCardToken, openCardToken, createCardScanLimiter } from "../src/lib/school-card-token";
-import { cardSheetPosition, signatureSlotForTracks } from "../src/lib/school-cards";
+import { cardSheetPosition, signatureSlotForTracks, schoolCardMinistry } from "../src/lib/school-cards";
 import { processSchoolCardSignature } from "../src/lib/school-card-image";
 
 const key = "isolated-test-secret-not-a-real-key-2026";
 const identity = () => ({ institutionId:randomUUID(),studentId:randomUUID(),enrollmentId:randomUUID(),classId:randomUUID(),year:"2026-2027" });
+test("2026 Ivorian card header uses the checked ministry name and preserves other countries/history/custom ministries",()=>{
+  const school={country_name:"République de Côte d’Ivoire",ministry_name:"Ministère de l’Éducation Nationale et de l’Alphabétisation"};
+  assert.ok(schoolCardMinistry(school,"2026-2027").includes("Enseignement Technique"));
+  assert.equal(schoolCardMinistry(school,"2025-2026"),school.ministry_name);
+  assert.equal(schoolCardMinistry({...school,country_name:"Autre pays"},"2026-2027"),school.ministry_name);
+});
 test("opaque authenticated tokens are stable across reprints, isolated by year/class/enrollment and reject forgery", () => {
   const p = identity(), token = issueCardToken(p,key);
   assert.equal(token.length,136); assert.equal(issueCardToken(p,key),token);

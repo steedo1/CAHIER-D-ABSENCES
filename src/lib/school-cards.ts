@@ -35,6 +35,17 @@ export type PreparedCard = SchoolCard & {
   token: string; verificationUrl: string; fingerprint: string;
   signatureSlot: CardSlot | null; signatoryName: string;
 };
+// Official source checked 2026-10-25: education.gouv.ci/index.php/Flash/details/46
+// Decree 2026-509 (2026-08-05). Only card headers change, never old documents.
+export function schoolCardMinistry(school: Pick<CardSchool, "country_name" | "ministry_name">, year: string) {
+  const country = (school.country_name || "Côte d’Ivoire").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z]/g, "");
+  const ministry = school.ministry_name || "";
+  const normalized = ministry.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z]/g, "");
+  if (country.includes("cotedivoire") && Number(year.slice(0,4)) >= 2026 && (!ministry || normalized === "ministeredeleducationnationaleetdelalphabetisation")) {
+    return "Ministère de l’Éducation Nationale, de l’Alphabétisation et de l’Enseignement Technique";
+  }
+  return ministry;
+}
 export type CardRoster = {
   school: CardSchool; years: CardYear[]; year: string; classes: CardClass[];
   items: SchoolCard[]; configuration: CardConfiguration; revision: number;

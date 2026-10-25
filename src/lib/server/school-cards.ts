@@ -9,13 +9,14 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/sch
 import { readStudentProgramSettings, programsForStudent, isBilingualSchool } from "@/lib/school-student-programs";
 import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
 import { issueCardToken, cardFingerprint } from "@/lib/school-card-token";
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 
 export const cardJson = (body: unknown, status = 200) => NextResponse.json(body, { status,
   headers: { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" } });
 export const cardFeatureEnabled = () => process.env.SCHOOL_CARDS_ENABLED === "true";
 export function requireCardOrigin(req: NextRequest) {
-  const origin = req.headers.get("origin");
-  return (!origin || origin === req.nextUrl.origin) && !["cross-site"].includes(req.headers.get("sec-fetch-site") || "");
+  return isTrustedAppOrigin(req, [process.env.SCHOOL_CARD_PUBLIC_ORIGIN || "", process.env.NEXT_PUBLIC_APP_URL || "", process.env.PUBLIC_APP_URL || "", process.env.APP_URL || ""]) &&
+    req.headers.get("sec-fetch-site") !== "cross-site";
 }
 export async function cardScope(write = false) {
   if (!cardFeatureEnabled()) return { error: cardJson({ error: "module_non_active" }, 404) } as const;

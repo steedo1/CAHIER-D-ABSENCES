@@ -36,7 +36,7 @@ export function schoolCardFixture(count = 10, bilingual = false) {
   db.service.storage = {
     getBucket: async () => ({ data: { public: false }, error: null }),
     from: bucket => ({
-      createSignedUrls: async paths => { db.calls.push({ table: `storage:${bucket}`, op: "sign-batch", count: paths.length }); return { data: paths.map(path => ({ path, signedUrl: `http://127.0.0.1/photo/${encodeURIComponent(path)}` })), error: null }; },
+      createSignedUrls: async paths => { db.calls.push({ table: `storage:${bucket}`, op: "sign-batch", count: paths.length }); return { data: paths.map(path => ({ path, signedUrl: `${process.env.SCHOOL_CARD_PUBLIC_ORIGIN || "http://localhost:4397"}/qa/photo.jpg?id=${path.split('/')[1]}` })), error: null }; },
       download: async path => ({ data: files.has(path) ? new Blob([files.get(path)], { type: "image/png" }) : null, error: files.has(path) ? null : { message: "missing" } }),
       upload: async (path,bytes) => { files.set(path,bytes); return { data: { path }, error: null }; },
       remove: async paths => { paths.forEach(path => files.delete(path)); return { error: null }; },

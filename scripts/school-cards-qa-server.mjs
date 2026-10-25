@@ -3,6 +3,7 @@
 import {createServer} from "node:http";
 import {randomUUID,randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
+import sharp from "sharp";
 import {schoolCardFixture} from "../test/helpers/school-card-fixture.mjs";
 process.env.SCHOOL_CARDS_ENABLED="true";
 process.env.SCHOOL_CARD_QR_SECRET=randomBytes(48).toString("base64url");
@@ -25,6 +26,14 @@ const server=createServer(async(req,res)=>{
     if(url.pathname==="/healthz") return send({ok:true,environment:"synthetic-qa",productionDatabase:false});
     if(url.pathname==="/qa/app.js"||url.pathname==="/qa/app.css") {res.setHeader("Content-Type",url.pathname.endsWith("js")?"application/javascript":"text/css");return res.end(await readFile(`tmp/school-cards-qa/${url.pathname.split("/").at(-1)}`));}
     if(url.pathname==="/card-fonts/DejaVuSans.ttf") {res.setHeader("Content-Type","font/ttf");return res.end(await readFile("public/card-fonts/DejaVuSans.ttf"));}
+    if(url.pathname==="/qa/photo.jpg") {
+      const id=(url.searchParams.get("id")||"").replace(/[^a-f0-9]/g,"").slice(0,32);
+      // Unique, synthetic photographic-size noise textures. No real pupil image.
+      const pixels=Buffer.alloc(240*320*3);let state=parseInt(id.slice(0,8)||"12345678",16);
+      for(let p=0;p<pixels.length;p++){state=(Math.imul(state,1664525)+1013904223)|0;pixels[p]=state>>>24;}
+      const jpg=await sharp(pixels,{raw:{width:240,height:320,channels:3}}).jpeg({quality:65}).toBuffer();
+      res.setHeader("Content-Type","image/jpeg");return res.end(jpg);
+    }
     let id=String(req.headers.cookie||"").split(";").map(s=>s.trim()).find(s=>s.startsWith("cardqa="))?.slice(7);
     if(!id||!sessions.has(id)){id=randomUUID();if(sessions.size>=20)sessions.delete(sessions.keys().next().value);sessions.set(id,{db:schoolCardFixture(12),actor:null});res.setHeader("Set-Cookie",`cardqa=${id}; Path=/; HttpOnly; SameSite=Lax${origin.startsWith("https")?"; Secure":""}`);}
     const session=sessions.get(id);
@@ -34,6 +43,7 @@ const server=createServer(async(req,res)=>{
     if(url.pathname==="/qa/setup"&&req.method==="POST"){
       const body=JSON.parse(raw);const n=body.scenario==="1000"?1000:body.scenario==="500"?500:12;
       const db=schoolCardFixture(n,body.scenario==="epc");session.db=db;session.actor=null;
+      if(n>=500) db.tables.students.forEach(student=>{student.photo_path=`${db.legacyId}/${student.id}/photo.jpg`});
       if(body.scenario==="dieudonne")db.tables.institutions[0].name="COLLÈGE DIEUDONNÉ — DONNÉES FICTIVES";
       if(body.scenario==="educator") {session.actor=db.addActor("educator");db.tables.educator_class_assignments=[{institution_id:db.legacyId,profile_id:session.actor,class_id:db.tables.classes[0].id,level:null}];}
       return send({ok:true,count:n});
