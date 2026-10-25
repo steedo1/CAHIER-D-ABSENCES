@@ -11,21 +11,17 @@ async function source() {
   return await readFile(sourcePath, "utf8");
 }
 
-test("la préparation Admin couvre les fonctions essentielles sans dépendre de la page ouverte", async () => {
+test("l'administration cloud-only ne lance plus de préparation massive automatique", async () => {
   const code = await source();
 
-  assert.match(code, /prepareAdminEssentialOffline/);
+  assert.doesNotMatch(code, /prepareAdminEssentialOffline/);
   assert.doesNotMatch(
     code,
     /role === "admin"\s*&&\s*!isAdminAttendancePath\(pathnameRef\.current\)\) return/,
   );
-  assert.match(code, /if \(role === "admin"\) \{/);
+  assert.match(code, /if \(!role \|\| !userId \|\| role === "admin"\) return/);
   assert.match(code, /cloudRoleVerified/);
   assert.match(code, /institutionId = String\(payload\.institution_id \|\| ""\)\.trim\(\)/);
-  assert.match(
-    code,
-    /await prepareAdminEssentialOffline\(\{ userId, institutionId \}\)/,
-  );
 });
 
 test("le scope cache est remplacé avant les effets de lecture des pages", async () => {
@@ -47,15 +43,10 @@ test("la page des appels reste seule propriétaire de son actualisation", async 
   assert.doesNotMatch(code, /warmOfflineShell/);
 });
 
-test("une session Cloud résiduelle hors réseau ne marque pas une fausse préparation réussie", async () => {
+test("une préparation échouée n'est pas marquée réussie", async () => {
   const code = await source();
 
-  assert.match(code, /let prepared = false/);
-  assert.match(code, /if \(prepared\) writeStorage\(successKey, Date\.now\(\)\)/);
-  assert.doesNotMatch(
-    code,
-    /await withCrossTabLock\([\s\S]*?\n\s*writeStorage\(successKey, Date\.now\(\)\);\n\s*\}\);/,
-  );
+  assert.match(code, /await prepareOffline\([^;]+;[\s\S]*?writeStorage\(successKey, Date\.now\(\)\)/);
 });
 
 test("la préparation globale reste silencieuse et ne pollue pas les écrans Admin", async () => {

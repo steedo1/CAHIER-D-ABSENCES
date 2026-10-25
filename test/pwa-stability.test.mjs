@@ -13,8 +13,8 @@ test("le manifeste installe Mon Cahier avec des icônes 192 et 512", async () =>
   assert.match(manifest, /name:\s*"Mon Cahier"/);
   assert.match(manifest, /short_name:\s*"Mon Cahier"/);
   assert.match(manifest, /display:\s*"standalone"/);
-  assert.match(manifest, /\/icons\/icon-192\.png/);
-  assert.match(manifest, /\/icons\/icon-512\.png/);
+  assert.match(manifest, /\/icons\/icon-192\.v2\.png/);
+  assert.match(manifest, /\/icons\/icon-512\.v2\.png/);
   assert.match(manifest, /purpose:\s*"maskable"/);
   assert.match(layout, /manifest:\s*"\/manifest\.webmanifest"/);
 });
@@ -60,7 +60,7 @@ test("le service worker migre les anciens caches avant leur suppression", async 
   assert.match(worker, /migrateLegacyCaches/);
   assert.match(worker, /name\.startsWith\("moncahier:"\)/);
   assert.match(worker, /await migrateLegacyCaches\(\)/);
-  assert.match(worker, /\/icons\/icon-192\.png/);
+  assert.match(worker, /\/icons\/icon-192\.v2\.png/);
   assert.match(worker, /\/icons\/badge-72\.png/);
   assert.doesNotMatch(worker, /shell-\$\{VERSION\}/);
   assert.doesNotMatch(worker, /assets-\$\{VERSION\}/);
