@@ -1,0 +1,31 @@
+{
+  "errors": [],
+  "metrics": [
+    {
+      "count": 500,
+      "elapsedMs": 8493,
+      "heapBeforeMiB": 20.6,
+      "heapAfterMiB": 27.7,
+      "serverRssMiB": 217,
+      "groupedTransportCalls": 59,
+      "storageSigningBatches": 6,
+      "sqlWrites": 0,
+      "pdfs": 5,
+      "pdfBytes": 31423845,
+      "scope": "headless Chrome desktop; synthetic transport and 240x320 JPEG textures; not real pupil photos or live Supabase latency"
+    },
+    {
+      "count": 1000,
+      "elapsedMs": 15107,
+      "heapBeforeMiB": 49.8,
+      "heapAfterMiB": 36.9,
+      "serverRssMiB": 205.3,
+      "groupedTransportCalls": 111,
+      "storageSigningBatches": 12,
+      "sqlWrites": 0,
+      "pdfs": 10,
+      "pdfBytes": 62834503,
+      "scope": "headless Chrome desktop; synthetic transport and 240x320 JPEG textures; not real pupil photos or live Supabase latency"
+    }
+  ]
+}
