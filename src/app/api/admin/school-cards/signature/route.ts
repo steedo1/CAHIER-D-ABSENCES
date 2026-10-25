@@ -24,7 +24,30 @@ export async function POST(req: NextRequest) {
   if (Number(req.headers.get("content-length") || 0) > 6 * 1024 * 1024) return cardJson({ error: "image_trop_lourde" }, 413);
   try {
     const ctx = await cardScope(true); if ("error" in ctx) return ctx.error;
-    const form = await req.formData(), file = form.get("file"), slot = form.get("slot") as CardSlot;
+    // Bound the actual streamed body: chunked uploads can omit Content-Length.
+    // Parsing multipart directly would otherwise buffer arbitrary bytes on Render.
+    const contentType = req.headers.get("content-type") || "";
+    if (!/^multipart\/form-data;\s*boundary=/i.test(contentType) || !req.body) return cardJson({ error: "formulaire_invalide" }, 400);
+    const reader = req.body.getReader(), chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > 6 * 1024 * 1024) {
+          await reader.cancel();
+          return cardJson({ error: "image_trop_lourde" }, 413);
+        }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+    const form = await new Request(req.url, {
+      method: "POST",
+      headers: { "content-type": contentType },
+      body: new Blob([new Uint8Array(Buffer.concat(chunks))]),
+    }).formData();
+    const file = form.get("file"), slot = form.get("slot") as CardSlot;
     if (!(file instanceof File) || !CARD_SLOTS.includes(slot) || !["image/jpeg", "image/png"].includes(file.type) || file.size > 5 * 1024 * 1024) return cardJson({ error: "image_invalide_maximum_5_mo" }, 400);
     const input = Buffer.from(await file.arrayBuffer());
     const processed = await processSchoolCardSignature(input, { removeBackground: form.get("removeBackground") === "true", tolerance: Number(form.get("tolerance") || 24), crop: form.get("crop") === "true" });
