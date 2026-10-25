@@ -110,3 +110,17 @@ test("private composite signature: preview before save, retained original, stale
   const loaded=await(await db.admin(path).GET(request("/api/admin/school-cards"))).json();
   assert.equal(loaded.configuration.signatures.general.original,"");assert.equal(JSON.stringify(loaded).includes(asset.original),false);
 });
+
+test("chunked signature upload rejects more than 6 MiB before multipart parsing or storage writes", async () => {
+  const db = schoolCardFixture(1);
+  const url = new URL("https://cards.example.invalid/api/admin/school-cards/signature");
+  const form = new FormData();
+  form.set("file", new File([new Uint8Array(6 * 1024 * 1024 + 1024)], "oversized.png", { type: "image/png" }));
+  form.set("slot", "general");
+  form.set("action", "preview");
+  const req = Object.assign(new Request(url, { method: "POST", headers: { origin: url.origin }, body: form }), { nextUrl: url });
+  assert.equal(req.headers.has("content-length"), false);
+  const response = await db.admin("src/app/api/admin/school-cards/signature/route.ts").POST(req);
+  assert.equal(response.status, 413);
+  assert.equal(db.files.size, 0);
+});
