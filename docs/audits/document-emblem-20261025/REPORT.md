@@ -1,8 +1,10 @@
 # Emblème ivoirien : cartes et attestations — contrôle du 25 octobre 2026
 
-## État exact
+> **Mise en production approuvée et réalisée le 25/10/2026 à 22:33 UTC.** PR 228 fusionnée au commit `34e72bc45e0a603fcdfb710795acd69587f107cd`, déploiement Render `dep-dbf857t9fdbs73963o50` confirmé `live`. Emblème visible et décodé dans l’aperçu de production, vrai QR valide et inchangé après déploiement, PDF individuel et réimpression sans erreur. Fenêtre d’attestation générée. Aucun SQL ni changement de données scolaires. Maximum mémoire observé sur la nouvelle instance : 306,8 Mio / 512 Mio, cinq relevés de 22:33 à 22:37. Aucun message d’erreur entre 22:33 et 22:38. Voir [le contrôle après déploiement](DEPLOYMENT.md) et [les relevés](deployment.json). Les sections suivantes conservent le compte rendu préparatoire.
 
-- Production auditée et toujours active : `910cf81422d7f349faa0cc2becea2aa3cb90fcdc`, déploiement Render `dep-dbf243om7kps73fg8170`, service `mon-cahier-test` (`srv-dbc291on74is73f4692g`). Les PR 226 (cartes) et 227 (transferts/cache) sont fusionnées et présentes.
+## État lors de l’audit avant validation
+
+- Production auditée avant validation : `910cf81422d7f349faa0cc2becea2aa3cb90fcdc`, déploiement Render `dep-dbf243om7kps73fg8170`, service `mon-cahier-test` (`srv-dbc291on74is73f4692g`). Les PR 226 (cartes) et 227 (transferts/cache) sont fusionnées et présentes.
 - Ajout de l'emblème : branche `feature/embleme-documents-20261025`, issue de cette production ; commit fonctionnel `c48511a915b47e568df41039c3edd8f1210ac82a`.
 - PR de revue : https://github.com/steedo1/CAHIER-D-ABSENCES/pull/228 . Elle n'est pas fusionnée. L'emblème n'est donc **pas encore affiché en production**. Aucune modification du service ni nouvelle dépense cloud n'a été effectuée.
 - CI complet réussi : https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/40237704237 . Les deux jobs, compilation/navigateur/PDF et intégration native Supabase, sont terminés avec succès.
@@ -83,10 +85,12 @@ Retour arrière : redéployer la version précédente compatible `910cf814…` (
 ## Fichiers modifiés / ajoutés
 
 - `.github/workflows/school-cards.yml`
+- `docs/audits/document-emblem-20261025/DEPLOYMENT.md`
 - `docs/audits/document-emblem-20261025/REPORT.md`
 - `docs/audits/document-emblem-20261025/attestation-apercu.png`
 - `docs/audits/document-emblem-20261025/browser-metrics.json`
 - `docs/audits/document-emblem-20261025/carte-apercu.png`
+- `docs/audits/document-emblem-20261025/deployment.json`
 - `docs/audits/document-emblem-20261025/local-after.json`
 - `docs/audits/document-emblem-20261025/local-before.json`
 - `docs/audits/document-emblem-20261025/native-metrics.json`
