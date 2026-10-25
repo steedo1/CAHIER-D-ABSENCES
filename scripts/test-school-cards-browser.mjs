@@ -1,6 +1,7 @@
 import { chromium } from "playwright";
 import { mkdir,writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 const origin=process.env.CARD_QA_ORIGIN || "http://localhost:4397";
 const browser=await chromium.launch({executablePath:process.env.CARD_CHROME || undefined,headless:true,args:["--no-sandbox"]});
 const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
@@ -13,6 +14,26 @@ try {
   await page.getByRole("button",{name:/Sélectionner les résultats/}).click();
   await page.getByRole("button",{name:"Aperçu recto verso",exact:true}).click();
   await page.getByAltText("QR obligatoire de vérification").waitFor();
+  const publicPage=await browser.newPage(),firstQr=await page.getByRole("link",{name:"Tester le QR de cette carte",exact:true}).getAttribute("href");
+  await publicPage.goto(firstQr,{waitUntil:"networkidle"});
+  assert.equal(await publicPage.getByRole("heading",{name:"Carte valide",exact:true}).count(),0,"displaying a scan never verifies automatically");
+  await publicPage.getByRole("button",{name:"Vérifier cette carte",exact:true}).click();
+  await publicPage.getByRole("heading",{name:"Carte valide",exact:true}).waitFor();
+  const selection=page.getByRole("checkbox",{name:/^Sélectionner /});
+  await selection.first().uncheck();
+  await page.getByRole("button",{name:"Aperçu recto verso",exact:true}).click();
+  await page.waitForFunction(previous=>Array.from(document.querySelectorAll("a")).some(link=>link.textContent==="Tester le QR de cette carte"&&link.href!==previous),firstQr);
+  const secondQr=await page.getByRole("link",{name:"Tester le QR de cette carte",exact:true}).getAttribute("href");assert.notEqual(secondQr,firstQr);
+  // Same pathname, new fragment: reusing a scan tab must replace the old token.
+  await publicPage.goto(secondQr,{waitUntil:"networkidle"});
+  await publicPage.waitForFunction(()=>location.hash==="");
+  await publicPage.getByRole("heading",{name:"Carte valide",exact:true}).waitFor({state:"hidden"});
+  assert.equal(await publicPage.getByRole("heading",{name:"Carte valide",exact:true}).count(),0);
+  await publicPage.getByRole("button",{name:"Vérifier cette carte",exact:true}).click();
+  await publicPage.getByRole("heading",{name:"Carte valide",exact:true}).waitFor();
+  const reference=createHash("sha256").update(secondQr.split("#")[1]).digest("hex").slice(0,10).toUpperCase();
+  assert.ok((await publicPage.locator("main").textContent()).includes(reference),"second card's own reference is verified");
+  await publicPage.close();await selection.first().check();
   await page.screenshot({path:"tmp/school-cards/workspace-desktop.png",fullPage:true});
   await page.getByRole("checkbox",{name:/J’accepte d’imprimer/}).check();
   await page.getByRole("button",{name:"Générer les PDF A4 / Imprimer",exact:true}).click();
