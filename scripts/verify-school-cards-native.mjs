@@ -8,7 +8,7 @@ import {createClient} from "@supabase/supabase-js";
 import sharp from "sharp";
 const localStatus=JSON.parse(await readFile(process.env.CARD_LOCAL_STATUS || "/tmp/card-supabase-status.json","utf8"));
 const get=key=>localStatus[key]||localStatus[key.toLowerCase()];
-const url=get("API_URL"),anon=get("ANON_KEY"),serviceKey=get("SERVICE_ROLE_KEY"),database=get("DB_URL");
+const url=get("API_URL"),anon=get("ANON_KEY")||get("PUBLISHABLE_KEY"),serviceKey=get("SERVICE_ROLE_KEY")||get("SECRET_KEY"),database=get("DB_URL");
 for(const endpoint of [url,database]) if(!endpoint || !["127.0.0.1","localhost"].includes(new URL(endpoint).hostname)) throw Error("native_card_test_refuses_non_loopback_database");
 if(!anon||!serviceKey) throw Error("local_supabase_keys_unavailable");
 const origin="http://localhost:4398",year="2026-2027",output="tmp/school-cards-native";
@@ -19,7 +19,9 @@ const check=result=>{if(result.error)throw Error(result.error.message);return re
 const phase=process.argv[2]||"test";
 if(phase==="prepare"){
   const secret=randomBytes(48).toString("base64url");
-  const variables={SUPABASE_URL:url,SUPABASE_ANON_KEY:anon,SUPABASE_SERVICE_ROLE_KEY:serviceKey,SCHOOL_CARDS_ENABLED:"true",SCHOOL_CARD_QR_SECRET:secret,SCHOOL_CARD_PUBLIC_ORIGIN:origin,NEXT_PUBLIC_APP_URL:origin};
+  // Production-mode Next correctly refuses HTTP printed origins. The reserved
+  // HTTPS example is never contacted; scans below target the real loopback API.
+  const variables={SUPABASE_URL:url,SUPABASE_ANON_KEY:anon,SUPABASE_SERVICE_ROLE_KEY:serviceKey,SCHOOL_CARDS_ENABLED:"true",SCHOOL_CARD_QR_SECRET:secret,SCHOOL_CARD_PUBLIC_ORIGIN:"https://cards.example.invalid",NEXT_PUBLIC_APP_URL:origin};
   if(!process.env.GITHUB_ENV)throw Error("prepare_requires_ephemeral_ci_environment");
   // GitHub's supported masking command prevents test credentials in step logs.
   for(const value of [serviceKey,secret])console.log(`::add-mask::${value}`);
@@ -71,7 +73,9 @@ for(const school of schools){
 const outsider=await api(schools[1],rosterPath,{year,enrollmentIds:[first.enrollments[0].id]});assert.equal(outsider.response.status,403);
 const anonymous=await fetch(origin+rosterPath);assert.equal(anonymous.status,401);
 // Reset only this ephemeral local database's SQL counters, after seeding.
-sql("select extensions.pg_stat_statements_reset()");
+const statsSchema=sql("select n.nspname from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='pg_stat_statements'");
+if(!/^[a-z_]+$/.test(statsSchema))throw Error("local_sql_metrics_extension_unavailable");
+sql(`select ${statsSchema}.pg_stat_statements_reset()`);
 for(const count of [500,1000]){
   const before=JSON.parse(sql("select json_build_object('settings',(select count(*) from school_card_settings),'audit',(select count(*) from school_card_audit),'revocations',(select count(*) from school_card_revocations))"));
   const start=Date.now(),prepared=[];
@@ -102,6 +106,6 @@ assert.equal((await api(first,"/api/admin/school-cards/settings",{revision:confi
 const ready=await api(first,rosterPath,{year,enrollmentIds:[card.enrollmentId]});assert.equal(ready.data.items[0].signatureSlot,"general");assert.ok(ready.data.signatureImages.general.startsWith("data:image/png;base64,"));
 const rawStamp=await fetch(`${url}/storage/v1/object/public/signatures/${config.configuration.signatures.general.original}`);assert.notEqual(rawStamp.status,200);
 const unprivileged=createClient(url,anon,{auth:{persistSession:false}});const direct=await unprivileged.from("school_card_settings").select("*");assert.ok(direct.error||direct.data.length===0);
-const stats=JSON.parse(sql(`select coalesce(json_agg(x),'[]'::json) from (select query,calls,rows from extensions.pg_stat_statements where query like 'WITH pgrst_source%' and (query ilike '%school_card_%' or query ilike '%class_enrollments%' or query ilike '%students%') order by calls desc) x`));
+const stats=JSON.parse(sql(`select coalesce(json_agg(x),'[]'::json) from (select query,calls,rows from ${statsSchema}.pg_stat_statements where query like 'WITH pgrst_source%' and (query ilike '%school_card_%' or query ilike '%class_enrollments%' or query ilike '%students%') order by calls desc) x`));
 const report={ok:true,environment:"ephemeral local Supabase, real HTTP services",metrics,checks:["real verified Auth cookies","PostgREST nested joins and pagination","three school configurations","teacher denied","educator class scope","cross-school denied","opaque stable QR batch 500/1000","no card-row writes during prepare/reprint","real private photo upload and signed download","public original denied","public scan valid/forged/revoked/class-changed/expired","real private composite signature preview/save/automatic application","anonymous table access denied"],postgresStatements:stats};
 await writeFile(`${output}/native-results.json`,JSON.stringify(report,null,2));console.log(JSON.stringify({...report,postgresStatements:stats.map(({query,calls,rows})=>({operation:query.includes("INSERT INTO")?"insert":query.includes("UPDATE")?"update":"read",calls,rows}))},null,2));

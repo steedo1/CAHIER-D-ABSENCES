@@ -79,7 +79,7 @@ jobs:
         run: |
           mkdir -p /tmp/card-supabase
           npx --yes supabase@2.122.0 --workdir /tmp/card-supabase init
-          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase start --exclude realtime,studio,postgres-meta,edge-runtime,logflare,vector,supavisor
+          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase start --exclude realtime,studio,postgres-meta,edge-runtime,logflare,vector,supavisor > /tmp/card-supabase-start.log 2>&1
           npx --yes supabase@2.122.0 --workdir /tmp/card-supabase status -o json > /tmp/card-supabase-status.json
       - name: Install test-only base schema and the exact proposed module migration
         run: |
