@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
       service.from("class_enrollments").select("id,start_date,end_date,students:student_id!inner(institution_id,lifecycle_status),classes:class_id!inner(institution_id,academic_year)")
         .eq("institution_id", payload.institutionId).eq("id", payload.enrollmentId).eq("student_id", payload.studentId).eq("class_id", payload.classId).maybeSingle(),
       service.from("academic_years").select("start_date,end_date,is_current").eq("institution_id", payload.institutionId).eq("code", payload.year).maybeSingle(),
-      service.from("institutions").select("name,subscription_expires_at").eq("id", payload.institutionId).maybeSingle(),
+      service.from("institutions").select("name").eq("id", payload.institutionId).maybeSingle(),
       service.from("school_card_settings").select("configuration").eq("institution_id", payload.institutionId).maybeSingle(),
       service.from("school_card_revocations").select("revoked").eq("institution_id", payload.institutionId).eq("enrollment_id", payload.enrollmentId).maybeSingle(),
     ]);
@@ -33,7 +33,6 @@ export async function POST(req: NextRequest) {
       row.students?.institution_id === payload.institutionId && (!row.students.lifecycle_status || row.students.lifecycle_status === "active") &&
       row.classes?.institution_id === payload.institutionId && row.classes.academic_year === payload.year &&
       isCardYearValid(year.data || undefined) && !!school.data &&
-      (!school.data.subscription_expires_at || Date.parse(school.data.subscription_expires_at + "T23:59:59Z") >= Date.now()) &&
       configuration.data?.configuration?.enabled !== false && revocation.data?.revoked !== true;
     return cardJson(valid ? { valid: true, school: school.data!.name, year: payload.year, reference: cardFingerprint(token) } : { valid: false });
   } catch { return cardJson({ error: "verification_temporairement_indisponible" }, 503); }

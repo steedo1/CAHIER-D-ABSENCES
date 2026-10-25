@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
+import sharp from "sharp";
 import { schoolCardFixture, request, year } from "./helpers/school-card-fixture.mjs";
 process.env.SCHOOL_CARDS_ENABLED="true";
 process.env.SCHOOL_CARD_QR_SECRET="isolated-test-secret-not-a-real-key-2026";
@@ -73,4 +74,22 @@ test("configuration CAS, independent document policies, bounded batches and stab
   const prepared=ctx.prepareSchoolCards(scoped,roster.items,"https://cards.example.invalid");
   assert.deepEqual(new Set(prepared.map(row=>row.signatoryName)),new Set(["Nimaga Adam Ousmane","Traoré Daouda"]));
   assert.equal((await db.admin(path).POST(request("/api/admin/school-cards",{year,enrollmentIds:Array(101).fill(randomUUID())}))).status,400);
+});
+test("private composite signature: preview before save, retained original, stale edit rejected and Service cannot download",async()=>{
+  const db=schoolCardFixture(1),api=db.admin("src/app/api/admin/school-cards/signature/route.ts");
+  const bytes=await sharp({create:{width:100,height:50,channels:4,background:{r:20,g:40,b:180,alpha:1}}}).png().toBuffer();
+  const req=(action,revision=0)=>{
+    const url=new URL("https://cards.example.invalid/api/admin/school-cards/signature"),form=new FormData();
+    form.set("file",new File([bytes],"test.png",{type:"image/png"}));form.set("slot","general");form.set("action",action);form.set("revision",String(revision));form.set("authorized","true");form.set("removeBackground","false");form.set("crop","false");
+    return Object.assign(new Request(url,{method:"POST",headers:{origin:url.origin},body:form}),{nextUrl:url});
+  };
+  assert.ok((await(await api.POST(req("preview"))).json()).preview.startsWith("data:image/png;base64,"));assert.equal(db.files.size,0);
+  assert.equal((await api.POST(req("save"))).status,200);assert.equal(db.files.size,2);
+  const config=db.tables.school_card_settings[0].configuration,asset=config.signatures.general;
+  assert.deepEqual(db.files.get(asset.original),bytes);assert.ok(asset.original.startsWith(`school-cards/${db.legacyId}/`));
+  const original=await api.GET(request("/api/admin/school-cards/signature?slot=general"));assert.equal(original.status,200);assert.deepEqual(Buffer.from(await original.arrayBuffer()),bytes);
+  assert.equal((await api.POST(req("save"))).status,409);assert.equal(db.files.size,2);
+  const educator=db.addActor("educator");assert.equal((await db.load(educator)("src/app/api/admin/school-cards/signature/route.ts").GET(request("/api/admin/school-cards/signature?slot=general"))).status,403);
+  const loaded=await(await db.admin(path).GET(request("/api/admin/school-cards"))).json();
+  assert.equal(loaded.configuration.signatures.general.original,"");assert.equal(JSON.stringify(loaded).includes(asset.original),false);
 });

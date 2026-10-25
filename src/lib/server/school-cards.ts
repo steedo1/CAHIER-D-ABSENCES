@@ -55,7 +55,8 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
   else query = query.range(options.offset || 0, (options.offset || 0) + 499);
   const { data, error } = await query;
   if (error) throw Error("roster_unavailable");
-  const rows = (data || []).filter((row: any) => !row.students.lifecycle_status || row.students.lifecycle_status === "active");
+  const rows = (data || []).filter((row: any) => (!row.students.lifecycle_status || row.students.lifecycle_status === "active") &&
+    row.start_date && Date.parse(row.start_date + "T00:00:00Z") <= Date.now());
   const revocations = new Set<string>();
   for (let start = 0; start < rows.length; start += 100) {
     const revoked = await ctx.service.from("school_card_revocations").select("enrollment_id,revoked")

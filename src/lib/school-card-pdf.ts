@@ -36,7 +36,7 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     imageFit(doc, assets.logo, 3, 2, 10, 10);
     text(doc, school.country_name || "République de Côte d’Ivoire", 15, 2, 66, 3, 5.9, "center");
     doc.fillColor("#3C4942"); text(doc, school.country_motto || "Union - Discipline - Travail", 15, 5.3, 66, 2.5, 4.7, "center");
-    text(doc, school.ministry_name || "", 15, 8, 66, 4, 4.2, "center");
+    if (school.ministry_name) text(doc, school.ministry_name, 15, 8, 66, 4, 4.2, "center");
     doc.roundedRect(mm(28), mm(12), mm(40), mm(4.7), mm(0.8)).fill(green);
     doc.fillColor("#FFFFFF"); text(doc, "CARTE SCOLAIRE", 28, 12.5, 40, 4, 8.2, "center");
     doc.fillColor("#273C30"); text(doc, `ANNÉE SCOLAIRE ${card.year}`, 27, 17.2, 51, 3, 5.5, "center");
