@@ -1,7 +1,7 @@
 name: School cards isolated verification
 on:
   push:
-    branches: [feature/cartes-scolaires-20261025]
+    branches: [feature/cartes-scolaires-20261025, feature/embleme-documents-20261025]
   pull_request:
     branches: [migration-render-test-20261021]
     paths:
@@ -13,6 +13,10 @@ on:
       - 'test/school-cards*'
       - 'scripts/*school-cards*'
       - '.github/workflows/school-cards.yml'
+      - 'src/lib/document-national-emblem.ts'
+      - 'src/app/admin/parents/page.tsx'
+      - 'test/document-national-emblem.test.mjs'
+      - 'test/attestation-print.test.mjs'
 permissions:
   contents: read
 concurrency:
@@ -38,11 +42,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:school-cards
+      - run: node --import tsx --test test/document-national-emblem.test.mjs
       - run: npm run test:multicycle
+      - run: npm run test:cloud-pwa
       - run: npm run build
       - run: node --import tsx scripts/verify-school-cards.mjs
       - name: Install test browser
         run: npx playwright install --with-deps chromium
+      - name: Certificate PDF, image reuse and no network requests
+        run: ATTESTATION_PRINT_OUTPUT=tmp/school-cards node --import tsx --test test/attestation-print.test.mjs
       - run: node scripts/build-school-cards-qa.mjs
       - name: Browser workflow and 500/1000 card benchmark
         run: |

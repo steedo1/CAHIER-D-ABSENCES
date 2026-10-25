@@ -14,6 +14,7 @@ import {
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import { resolveAttestationSignatories } from "@/lib/franco-arabic-document-signatories";
 import { attestationPhotoUrlForCurrentOrigin } from "@/lib/attestation-photo-url";
+import { documentNationalEmblem } from "@/lib/document-national-emblem";
 import {
   DEFAULT_EDUCATION_SCOPE,
   getClassLevelCode,
@@ -255,6 +256,7 @@ function buildAttestationHtml(args: {
 
   const countryName =
     (cfg.country_name || "").trim() || "REPUBLIQUE DE COTE D'IVOIRE";
+  const nationalEmblem = documentNationalEmblem(countryName);
 
   const countryMotto =
     (cfg.country_motto || "").trim() || "Union - Discipline - Travail";
@@ -348,7 +350,8 @@ function buildAttestationHtml(args: {
           <div class="sheet-border"></div>
 
           <header class="top">
-            <div class="republic">
+            <div class="republic${nationalEmblem ? " republic-with-emblem" : ""}">
+              ${nationalEmblem ? '<img class="national-emblem" alt="Armoiries de la République de Côte d’Ivoire" width="68" height="60" />' : ""}
               <div class="country">${escapeHtml(countryName)}</div>
               <div class="motto">${escapeHtml(countryMotto)}</div>
               <div class="ministry">${escapeHtml(ministryName)}</div>
@@ -559,6 +562,21 @@ function buildAttestationHtml(args: {
     .republic {
       text-align: center;
       margin-bottom: 7mm;
+    }
+
+    .republic-with-emblem {
+      position: relative;
+      min-height: 18mm;
+      padding: 0 21mm;
+    }
+
+    .national-emblem {
+      position: absolute;
+      right: 0;
+      top: 0;
+      width: 18mm;
+      height: 16mm;
+      object-fit: contain;
     }
 
     .country {
@@ -832,6 +850,11 @@ function buildAttestationHtml(args: {
   ${pages.join("\n")}
   <script>
     (function () {
+      // One inline source per print batch, shared by every certificate image.
+      // No Render image route, remote request or Supabase object is required.
+      var nationalEmblemSource = ${JSON.stringify(nationalEmblem || "")};
+      var emblems = Array.from(document.querySelectorAll(".national-emblem"));
+      emblems.forEach(function (img) { img.src = nationalEmblemSource; });
       // A blob: print document must wait for the protected photos to finish.
       // DOMContentLoaded does not guarantee that external images are decoded.
       function imageReady(img) {
@@ -861,6 +884,7 @@ function buildAttestationHtml(args: {
       }
       window.addEventListener("DOMContentLoaded", async function () {
         var photos = Array.from(document.querySelectorAll(".student-photo-img"));
+        await Promise.all(emblems.map(imageReady));
         await Promise.all(photos.map(imageReady));
         photos.forEach(function (img) {
           if (img.naturalWidth > 0) return;

@@ -1,0 +1,126 @@
+{
+  "ok": true,
+  "nativeServerPeakRssMiB": 367.7,
+  "environment": "ephemeral local Supabase, real HTTP services",
+  "metrics": [
+    {
+      "count": 500,
+      "loadMs": 45,
+      "preparedMs": 137,
+      "prepareAndReprintMs": 263,
+      "loadPostgrestSqlCalls": 12,
+      "preparePostgrestSqlCalls": 36,
+      "serverReprepare100PostgrestSqlCalls": 7,
+      "postgrestSqlMutations": 0,
+      "persistentCardRowsBefore": {
+        "settings": 0,
+        "audit": 0,
+        "revocations": 0
+      },
+      "persistentCardRowsAfter": {
+        "settings": 0,
+        "audit": 0,
+        "revocations": 0
+      },
+      "scope": "real ephemeral local Supabase Auth/PostgREST/Storage via native Next handlers; excludes PDF timing"
+    },
+    {
+      "count": 1000,
+      "loadMs": 91,
+      "preparedMs": 265,
+      "prepareAndReprintMs": 394,
+      "loadPostgrestSqlCalls": 23,
+      "preparePostgrestSqlCalls": 72,
+      "serverReprepare100PostgrestSqlCalls": 7,
+      "postgrestSqlMutations": 0,
+      "persistentCardRowsBefore": {
+        "settings": 0,
+        "audit": 0,
+        "revocations": 0
+      },
+      "persistentCardRowsAfter": {
+        "settings": 0,
+        "audit": 0,
+        "revocations": 0
+      },
+      "scope": "real ephemeral local Supabase Auth/PostgREST/Storage via native Next handlers; excludes PDF timing"
+    }
+  ],
+  "checks": [
+    "real verified Auth cookies",
+    "PostgREST nested joins and pagination",
+    "three school configurations",
+    "teacher denied",
+    "educator class scope",
+    "cross-school denied",
+    "opaque stable QR batch 500/1000",
+    "no card-row writes during prepare/reprint",
+    "real private photo upload and signed download",
+    "public original denied",
+    "public scan valid/forged/revoked/class-changed/expired",
+    "real private composite signature preview/save/automatic application",
+    "anonymous table access denied"
+  ],
+  "postgresStatements": [
+    {
+      "operation": "read",
+      "calls": 36,
+      "rows": 36
+    },
+    {
+      "operation": "read",
+      "calls": 27,
+      "rows": 27
+    },
+    {
+      "operation": "read",
+      "calls": 21,
+      "rows": 21
+    },
+    {
+      "operation": "read",
+      "calls": 4,
+      "rows": 4
+    },
+    {
+      "operation": "read",
+      "calls": 4,
+      "rows": 4
+    },
+    {
+      "operation": "read",
+      "calls": 4,
+      "rows": 4
+    },
+    {
+      "operation": "read",
+      "calls": 3,
+      "rows": 3
+    },
+    {
+      "operation": "update",
+      "calls": 2,
+      "rows": 2
+    },
+    {
+      "operation": "insert",
+      "calls": 2,
+      "rows": 2
+    },
+    {
+      "operation": "read",
+      "calls": 1,
+      "rows": 1
+    },
+    {
+      "operation": "insert",
+      "calls": 1,
+      "rows": 1
+    },
+    {
+      "operation": "update",
+      "calls": 1,
+      "rows": 1
+    }
+  ]
+}

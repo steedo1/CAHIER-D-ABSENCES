@@ -1,6 +1,15 @@
 import { renderCardPages } from "./school-card-pdf";
 import type { CardSchool, PreparedCard, CardSlot } from "./school-cards";
 
+let fontLoad: Promise<Uint8Array> | undefined;
+function cardFont() {
+  return fontLoad ??= (async () => {
+    const response = await fetch("/card-fonts/DejaVuSans.ttf");
+    if (!response.ok) throw Error("Police d’impression indisponible.");
+    return new Uint8Array(await response.arrayBuffer());
+  })().catch(error => { fontLoad = undefined; throw error; });
+}
+
 async function browserImage(url: string, maxWidth: number, maxHeight: number): Promise<string> {
   const image = new Image(); image.crossOrigin = "anonymous";
   image.src = url;
@@ -15,9 +24,8 @@ async function browserImage(url: string, maxWidth: number, maxHeight: number): P
 export async function exportSchoolCardPdf(cards: PreparedCard[], school: CardSchool, signatures: Partial<Record<CardSlot, string>>, options: { individual?: boolean; flip?: "long" | "short" } = {}) {
   if (!cards.length || cards.length > 100) throw Error("Le PDF accepte de 1 à 100 cartes par lot.");
   const PDFDocument = (await import("pdfkit/js/pdfkit.standalone.js")).default;
-  const fontResponse = await fetch("/card-fonts/DejaVuSans.ttf");
-  if (!fontResponse.ok) throw Error("Police d’impression indisponible.");
-  const font = new Uint8Array(await fontResponse.arrayBuffer()), photos = new Map<string,string>(), missing: string[] = [];
+  // All batches/reprints share the immutable font in this page session.
+  const font = await cardFont(), photos = new Map<string,string>(), missing: string[] = [];
   // At most four image decodes concurrently. No per-pupil auth/SQL requests:
   // these are direct private Storage downloads from the grouped signed URLs.
   for (let i = 0; i < cards.length; i += 4) await Promise.all(cards.slice(i, i + 4).map(async card => {

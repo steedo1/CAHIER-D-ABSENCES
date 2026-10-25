@@ -1,0 +1,30 @@
+[
+  {
+    "count": 500,
+    "rosterMs": 58.4,
+    "prepareMs": 103.8,
+    "pdfMs": 2124.3,
+    "loadSqlReads": 19,
+    "prepareSqlReads": 40,
+    "sqlWrites": 0,
+    "qrTableCalls": 0,
+    "reprintSqlReads": 0,
+    "pdfBytes": 3522197,
+    "peakRssMiB": 339.1,
+    "scope": "local synthetic transport; not live Supabase latency or browser RAM"
+  },
+  {
+    "count": 1000,
+    "rosterMs": 207.4,
+    "prepareMs": 318.7,
+    "pdfMs": 4322,
+    "loadSqlReads": 31,
+    "prepareSqlReads": 80,
+    "sqlWrites": 0,
+    "qrTableCalls": 0,
+    "reprintSqlReads": 0,
+    "pdfBytes": 7047121,
+    "peakRssMiB": 377.7,
+    "scope": "local synthetic transport; not live Supabase latency or browser RAM"
+  }
+]
