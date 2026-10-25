@@ -8,7 +8,7 @@ export const hasCardRtlText = (value: string) => /[\p{Script=Arabic}\p{Script=He
 export function schoolCardTextRuns(value: string): { text: string; rtl: boolean }[] {
   const embedding = bidi.getEmbeddingLevels(value);
   const logical: { text: string; rtl: boolean }[] = [], runByIndex: number[] = [];
-  const mirrored = bidi.getMirroredCharactersMap(value, embedding);
+  const mirrored = bidi.getMirroredCharactersMap(value, embedding.levels);
   let previousLevel = -1;
   for (let i = 0; i < value.length; i++) {
     const level = embedding.levels[i];
