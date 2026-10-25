@@ -3,6 +3,7 @@ export const FILE_CORRESPONDENT_HOME = "/admin/dashboard";
 // Navigation du profil uniquement : les contrôles serveur des API restent
 // indépendants. Le tableau de bord s'ajoute aux rubriques déjà autorisées.
 const EXACT_PATHS = new Set([
+  "/admin/cartes-scolaires",
   FILE_CORRESPONDENT_HOME,
   "/admin/export-moyennes",
   "/admin/notes/statistiques",

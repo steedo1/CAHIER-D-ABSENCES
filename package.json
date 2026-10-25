@@ -15,7 +15,8 @@
     "test:multicycle:e2e": "node scripts/verify-multicycle-e2e.mjs",
     "test:mon-cahier-ai": "node --test test/mon-cahier-ai-chat.test.mjs test/mon-cahier-ai-api.test.mjs test/mon-cahier-ai-server.test.mjs",
     "test:parent-connect": "node --test test/parent-connect-navigation.test.mjs && node --import tsx --test test/parent-connect-server.test.ts && node --test test/parent-connect-db.test.mjs && node --test test/parent-connect-super.test.mjs && node --test test/parent-connect-sms.test.mjs",
-    "test:primary-events:browser": "node --import tsx --test --test-concurrency=1 test/primary-events-browser.test.mjs test/primary-bulletin-print.test.mjs"
+    "test:primary-events:browser": "node --import tsx --test --test-concurrency=1 test/primary-events-browser.test.mjs test/primary-bulletin-print.test.mjs",
+    "test:school-cards": "node --import tsx --test test/school-cards.test.ts test/school-cards-api.test.mjs test/school-cards-db.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-separator": "^1.1.7",
@@ -23,6 +24,7 @@
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.75.0",
     "@types/pdfkit": "^0.17.3",
+    "bidi-js": "1.1.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "libphonenumber-js": "^1.12.24",
@@ -68,4 +70,3 @@
     }
   }
 }
-

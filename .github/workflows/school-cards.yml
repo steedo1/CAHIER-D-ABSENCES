@@ -1,0 +1,102 @@
+name: School cards isolated verification
+on:
+  push:
+    branches: [feature/cartes-scolaires-20261025]
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - 'src/**/school-card*'
+      - 'src/app/admin/cartes-scolaires/**'
+      - 'src/app/verifier-carte/**'
+      - 'src/app/api/admin/school-cards/**'
+      - 'src/app/api/public/school-cards/**'
+      - 'test/school-cards*'
+      - 'scripts/*school-cards*'
+      - '.github/workflows/school-cards.yml'
+permissions:
+  contents: read
+concurrency:
+  group: school-cards-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:9
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-build-placeholder
+      SUPABASE_SERVICE_ROLE_KEY: isolated-build-placeholder
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:school-cards
+      - run: npm run test:multicycle
+      - run: npm run build
+      - run: node --import tsx scripts/verify-school-cards.mjs
+      - name: Install test browser
+        run: npx playwright install --with-deps chromium
+      - run: node scripts/build-school-cards-qa.mjs
+      - name: Browser workflow and 500/1000 card benchmark
+        run: |
+          env -u NEXT_PUBLIC_SUPABASE_URL -u SUPABASE_SERVICE_ROLE_KEY node scripts/school-cards-qa-server.mjs > /tmp/card-qa.log 2>&1 &
+          QA_PID=$!
+          trap 'kill "$QA_PID"' EXIT
+          for attempt in $(seq 1 30); do curl -fs http://localhost:4397/healthz && break || sleep 1; done
+          node scripts/test-school-cards-browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: school-card-verification
+          path: tmp/school-cards/
+  native-supabase:
+    name: Real ephemeral Supabase and native Next APIs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-build-placeholder
+      SUPABASE_SERVICE_ROLE_KEY: isolated-build-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # Compile before Docker starts, leaving RAM for the native services.
+      - run: npm run build
+      - name: Start a fresh loopback-only Supabase stack
+        run: |
+          mkdir -p /tmp/card-supabase
+          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase init
+          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase start --exclude realtime,studio,postgres-meta,edge-runtime,logflare,vector,supavisor > /tmp/card-supabase-start.log 2>&1
+          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase status -o json > /tmp/card-supabase-status.json
+      - name: Install test-only base schema and the exact proposed module migration
+        run: node scripts/verify-school-cards-native.mjs initialize
+      - name: Seed fictitious schools and real local Auth/Storage
+        run: node scripts/verify-school-cards-native.mjs prepare
+      - name: Native Next → verified Auth → PostgREST → private Storage → QR
+        run: |
+          PORT=4398 node --max-old-space-size=288 node_modules/next/dist/bin/next start --hostname 0.0.0.0 > /tmp/card-native-next.log 2>&1 &
+          NATIVE_PID=$!
+          trap 'kill "$NATIVE_PID"' EXIT
+          for attempt in $(seq 1 30); do curl -fs http://localhost:4398/verifier-carte > /dev/null && break || sleep 1; done
+          CARD_NATIVE_PID="$NATIVE_PID" node scripts/verify-school-cards-native.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: school-card-native-verification
+          path: tmp/school-cards-native/
+      - name: Stop the disposable local stack
+        if: always()
+        run: npx --yes supabase@2.122.0 --workdir /tmp/card-supabase stop --no-backup

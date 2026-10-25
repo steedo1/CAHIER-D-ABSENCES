@@ -1,0 +1,126 @@
+{
+  "ok": true,
+  "nativeServerPeakRssMiB": 365.6,
+  "environment": "ephemeral local Supabase, real HTTP services",
+  "metrics": [
+    {
+      "count": 500,
+      "loadMs": 74,
+      "preparedMs": 218,
+      "prepareAndReprintMs": 412,
+      "loadPostgrestSqlCalls": 12,
+      "preparePostgrestSqlCalls": 37,
+      "serverReprepare100PostgrestSqlCalls": 7,
+      "postgrestSqlMutations": 0,
+      "persistentCardRowsBefore": {
+        "settings": 0,
+        "audit": 0,
+        "revocations": 0
+      },
+      "persistentCardRowsAfter": {
+        "settings": 0,
+        "audit": 0,
+        "revocations": 0
+      },
+      "scope": "real ephemeral local Supabase Auth/PostgREST/Storage via native Next handlers; excludes PDF timing"
+    },
+    {
+      "count": 1000,
+      "loadMs": 140,
+      "preparedMs": 406,
+      "prepareAndReprintMs": 586,
+      "loadPostgrestSqlCalls": 24,
+      "preparePostgrestSqlCalls": 71,
+      "serverReprepare100PostgrestSqlCalls": 7,
+      "postgrestSqlMutations": 0,
+      "persistentCardRowsBefore": {
+        "settings": 0,
+        "audit": 0,
+        "revocations": 0
+      },
+      "persistentCardRowsAfter": {
+        "settings": 0,
+        "audit": 0,
+        "revocations": 0
+      },
+      "scope": "real ephemeral local Supabase Auth/PostgREST/Storage via native Next handlers; excludes PDF timing"
+    }
+  ],
+  "checks": [
+    "real verified Auth cookies",
+    "PostgREST nested joins and pagination",
+    "three school configurations",
+    "teacher denied",
+    "educator class scope",
+    "cross-school denied",
+    "opaque stable QR batch 500/1000",
+    "no card-row writes during prepare/reprint",
+    "real private photo upload and signed download",
+    "public original denied",
+    "public scan valid/forged/revoked/class-changed/expired",
+    "real private composite signature preview/save/automatic application",
+    "anonymous table access denied"
+  ],
+  "postgresStatements": [
+    {
+      "query": "WITH pgrst_source AS ( SELECT \"public\".\"school_card_revocations\".\"enrollment_id\", \"public\".\"school_card_revocations\".\"revoked\" FROM \"public\".\"school_card_revocations\" WHERE  \"public\".\"school_card_revocations\".\"institution_id\" = $1 AND  \"public\".\"school_card_revocations\".\"enrollment_id\" = ANY ($2)    LIMIT $3 OFFSET $4 )  SELECT null::bigint AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, coalesce(json_agg(_postgrest_t), '[]') AS body, nullif(current_setting('response.headers', true), '') AS response_headers, nullif(current_setting('response.status', true), '') AS response_status, '' AS response_inserted FROM ( SELECT * FROM pgrst_source ) _postgrest_t",
+      "calls": 36,
+      "rows": 36
+    },
+    {
+      "query": "WITH pgrst_source AS ( SELECT \"public\".\"school_card_settings\".\"configuration\", \"public\".\"school_card_settings\".\"revision\" FROM \"public\".\"school_card_settings\" WHERE  \"public\".\"school_card_settings\".\"institution_id\" = $1   LIMIT $2 OFFSET $3 )  SELECT null::bigint AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, coalesce(json_agg(_postgrest_t), '[]') AS body, nullif(current_setting('response.headers', true), '') AS response_headers, nullif(current_setting('response.status', true), '') AS response_status, '' AS response_inserted FROM ( SELECT * FROM pgrst_source ) _postgrest_t",
+      "calls": 27,
+      "rows": 27
+    },
+    {
+      "query": "WITH pgrst_source AS ( SELECT \"public\".\"class_enrollments\".\"id\", \"public\".\"class_enrollments\".\"student_id\", \"public\".\"class_enrollments\".\"class_id\", \"public\".\"class_enrollments\".\"start_date\", \"public\".\"class_enrollments\".\"end_date\", row_to_json(\"class_enrollments_students_1\".*)::jsonb AS \"students\" FROM \"public\".\"class_enrollments\" INNER JOIN LATERAL ( SELECT \"students_1\".\"id\", \"students_1\".\"institution_id\", \"students_1\".\"full_name\", \"students_1\".\"first_name\", \"students_1\".\"last_name\", \"students_1\".\"matricule\", \"students_1\".\"birthdate\", \"students_1\".\"birth_place\", \"students_1\".\"gender\", \"students_1\".\"photo_path\", \"students_1\".\"lifecycle_status\" FROM \"public\".\"students\" AS \"students_1\" WHERE  \"students_1\".\"institution_id\" = $1 AND \"students_1\".\"id\" = \"public\".\"class_enrollments\".\"student_id\"   LIMIT $2 OFFSET $3 ) AS \"class_enrollments_students_1\" ON $9 WHERE  \"public\".\"class_enrollments\".\"institution_id\" = $4 AND  \"public\".\"class_enrollments\".\"end_date\" IS NULL AND  \"public\".\"class_enrollments\".\"class_id\" = ANY ($5)  AND  \"public\".\"class_enrollments\".\"id\" = ANY ($6)   ORDER BY \"public\".\"class_enrollments\".\"id\" ASC  LIMIT $7 OFFSET $8 )  SELECT $10::bigint AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, coalesce(json_agg(_postgrest_t), $11) AS body, nullif(current_setting($12, $13), $14) AS response_headers, nullif(current_setting($15, $16), $17) AS response_status, $18 AS response_inserted FROM ( SELECT * FROM pgrst_source ) _postgrest_t",
+      "calls": 21,
+      "rows": 21
+    },
+    {
+      "query": "WITH pgrst_source AS ( SELECT \"public\".\"school_card_settings\".\"configuration\" FROM \"public\".\"school_card_settings\" WHERE  \"public\".\"school_card_settings\".\"institution_id\" = $1   LIMIT $2 OFFSET $3 )  SELECT $4::bigint AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, coalesce(json_agg(_postgrest_t), $5) AS body, nullif(current_setting($6, $7), $8) AS response_headers, nullif(current_setting($9, $10), $11) AS response_status, $12 AS response_inserted FROM ( SELECT * FROM pgrst_source ) _postgrest_t",
+      "calls": 4,
+      "rows": 4
+    },
+    {
+      "query": "WITH pgrst_source AS ( SELECT \"public\".\"class_enrollments\".\"id\", \"public\".\"class_enrollments\".\"start_date\", \"public\".\"class_enrollments\".\"end_date\", row_to_json(\"class_enrollments_students_1\".*)::jsonb AS \"students\", row_to_json(\"class_enrollments_classes_1\".*)::jsonb AS \"classes\" FROM \"public\".\"class_enrollments\" INNER JOIN LATERAL ( SELECT \"students_1\".\"institution_id\", \"students_1\".\"lifecycle_status\" FROM \"public\".\"students\" AS \"students_1\" WHERE \"students_1\".\"id\" = \"public\".\"class_enrollments\".\"student_id\"   LIMIT $1 OFFSET $2 ) AS \"class_enrollments_students_1\" ON $11  INNER JOIN LATERAL ( SELECT \"classes_1\".\"institution_id\", \"classes_1\".\"academic_year\" FROM \"public\".\"classes\" AS \"classes_1\" WHERE \"classes_1\".\"id\" = \"public\".\"class_enrollments\".\"class_id\"   LIMIT $3 OFFSET $4 ) AS \"class_enrollments_classes_1\" ON $12 WHERE  \"public\".\"class_enrollments\".\"institution_id\" = $5 AND  \"public\".\"class_enrollments\".\"id\" = $6 AND  \"public\".\"class_enrollments\".\"student_id\" = $7 AND  \"public\".\"class_enrollments\".\"class_id\" = $8   LIMIT $9 OFFSET $10 )  SELECT $13::bigint AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, coalesce(json_agg(_postgrest_t), $14) AS body, nullif(current_setting($15, $16), $17) AS response_headers, nullif(current_setting($18, $19), $20) AS response_status, $21 AS response_inserted FROM ( SELECT * FROM pgrst_source ) _postgrest_t",
+      "calls": 4,
+      "rows": 4
+    },
+    {
+      "query": "WITH pgrst_source AS ( SELECT \"public\".\"school_card_revocations\".\"revoked\" FROM \"public\".\"school_card_revocations\" WHERE  \"public\".\"school_card_revocations\".\"institution_id\" = $1 AND  \"public\".\"school_card_revocations\".\"enrollment_id\" = $2   LIMIT $3 OFFSET $4 )  SELECT $5::bigint AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, coalesce(json_agg(_postgrest_t), $6) AS body, nullif(current_setting($7, $8), $9) AS response_headers, nullif(current_setting($10, $11), $12) AS response_status, $13 AS response_inserted FROM ( SELECT * FROM pgrst_source ) _postgrest_t",
+      "calls": 4,
+      "rows": 4
+    },
+    {
+      "query": "WITH pgrst_source AS ( SELECT \"public\".\"class_enrollments\".\"id\", \"public\".\"class_enrollments\".\"student_id\", \"public\".\"class_enrollments\".\"class_id\", \"public\".\"class_enrollments\".\"start_date\", \"public\".\"class_enrollments\".\"end_date\", row_to_json(\"class_enrollments_students_1\".*)::jsonb AS \"students\" FROM \"public\".\"class_enrollments\" INNER JOIN LATERAL ( SELECT \"students_1\".\"id\", \"students_1\".\"institution_id\", \"students_1\".\"full_name\", \"students_1\".\"first_name\", \"students_1\".\"last_name\", \"students_1\".\"matricule\", \"students_1\".\"birthdate\", \"students_1\".\"birth_place\", \"students_1\".\"gender\", \"students_1\".\"photo_path\", \"students_1\".\"lifecycle_status\" FROM \"public\".\"students\" AS \"students_1\" WHERE  \"students_1\".\"institution_id\" = $1 AND \"students_1\".\"id\" = \"public\".\"class_enrollments\".\"student_id\"   LIMIT $2 OFFSET $3 ) AS \"class_enrollments_students_1\" ON TRUE WHERE  \"public\".\"class_enrollments\".\"institution_id\" = $4 AND  \"public\".\"class_enrollments\".\"end_date\" IS NULL AND  \"public\".\"class_enrollments\".\"class_id\" = ANY ($5)   ORDER BY \"public\".\"class_enrollments\".\"id\" ASC  LIMIT $6 OFFSET $7 )  SELECT null::bigint AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, coalesce(json_agg(_postgrest_t), '[]') AS body, nullif(current_setting('response.headers', true), '') AS response_headers, nullif(current_setting('response.status', true), '') AS response_status, '' AS response_inserted FROM ( SELECT * FROM pgrst_source ) _postgrest_t",
+      "calls": 3,
+      "rows": 3
+    },
+    {
+      "query": "WITH pgrst_source AS (UPDATE \"public\".\"class_enrollments\" SET \"class_id\" = \"pgrst_body\".\"class_id\" FROM (SELECT $1 AS json_data) pgrst_payload, LATERAL (SELECT \"class_id\" FROM json_to_record(pgrst_payload.json_data) AS _(\"class_id\" uuid) ) pgrst_body  WHERE  \"public\".\"class_enrollments\".\"id\" = $2 RETURNING $3) SELECT $4 AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, array[]::text[] AS header, $5::text AS body, nullif(current_setting($6, $7), $8) AS response_headers, nullif(current_setting($9, $10), $11) AS response_status, $12 AS response_inserted FROM (SELECT * FROM pgrst_source) _postgrest_t",
+      "calls": 2,
+      "rows": 2
+    },
+    {
+      "query": "WITH pgrst_source AS (INSERT INTO \"public\".\"school_card_revocations\"(\"enrollment_id\", \"institution_id\", \"revoked\", \"updated_at\", \"updated_by\") SELECT \"pgrst_body\".\"enrollment_id\", \"pgrst_body\".\"institution_id\", \"pgrst_body\".\"revoked\", \"pgrst_body\".\"updated_at\", \"pgrst_body\".\"updated_by\" FROM (SELECT $1 AS json_data) pgrst_payload, LATERAL (SELECT \"enrollment_id\", \"institution_id\", \"revoked\", \"updated_at\", \"updated_by\" FROM json_to_recordset(pgrst_payload.json_data) AS _(\"enrollment_id\" uuid, \"institution_id\" uuid, \"revoked\" boolean, \"updated_at\" timestamp with time zone, \"updated_by\" uuid) ) pgrst_body WHERE set_config($2, (coalesce(nullif(current_setting($3, $4), $5)::int, $6) + $7)::text, $8) <> $9 ON CONFLICT(\"institution_id\", \"enrollment_id\") DO UPDATE SET \"enrollment_id\" = EXCLUDED.\"enrollment_id\", \"institution_id\" = EXCLUDED.\"institution_id\", \"revoked\" = EXCLUDED.\"revoked\", \"updated_at\" = EXCLUDED.\"updated_at\", \"updated_by\" = EXCLUDED.\"updated_by\"WHERE set_config($10, (coalesce(nullif(current_setting($11, $12), $13)::int, $14) - $15)::text, $16) <> $17 RETURNING $18) SELECT $19 AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, array[]::text[] AS header, $20::text AS body, nullif(current_setting($21, $22), $23) AS response_headers, nullif(current_setting($24, $25), $26) AS response_status, nullif(current_setting($27, $28),$29)::int AS response_inserted FROM (SELECT * FROM pgrst_source) _postgrest_t",
+      "calls": 2,
+      "rows": 2
+    },
+    {
+      "query": "WITH pgrst_source AS ( SELECT \"public\".\"school_card_settings\".\"configuration\", \"public\".\"school_card_settings\".\"revision\" FROM \"public\".\"school_card_settings\" WHERE  \"public\".\"school_card_settings\".\"institution_id\" = $1   LIMIT $2 OFFSET $3 )  SELECT $4::bigint AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, coalesce(json_agg(_postgrest_t)->$5, $6) AS body, nullif(current_setting($7, $8), $9) AS response_headers, nullif(current_setting($10, $11), $12) AS response_status, $13 AS response_inserted FROM ( SELECT * FROM pgrst_source ) _postgrest_t",
+      "calls": 1,
+      "rows": 1
+    },
+    {
+      "query": "WITH pgrst_source AS (INSERT INTO \"public\".\"school_card_settings\"(\"configuration\", \"institution_id\", \"revision\", \"updated_at\", \"updated_by\") SELECT \"pgrst_body\".\"configuration\", \"pgrst_body\".\"institution_id\", \"pgrst_body\".\"revision\", \"pgrst_body\".\"updated_at\", \"pgrst_body\".\"updated_by\" FROM (SELECT $1 AS json_data) pgrst_payload, LATERAL (SELECT \"configuration\", \"institution_id\", \"revision\", \"updated_at\", \"updated_by\" FROM json_to_record(pgrst_payload.json_data) AS _(\"configuration\" jsonb, \"institution_id\" uuid, \"revision\" integer, \"updated_at\" timestamp with time zone, \"updated_by\" uuid) ) pgrst_body  RETURNING \"public\".\"school_card_settings\".\"institution_id\", \"public\".\"school_card_settings\".\"revision\") SELECT $2 AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, array[]::text[] AS header, coalesce(json_agg(_postgrest_t)->$3, $4) AS body, nullif(current_setting($5, $6), $7) AS response_headers, nullif(current_setting($8, $9), $10) AS response_status, $11 AS response_inserted FROM (SELECT \"school_card_settings\".\"revision\" FROM \"pgrst_source\" AS \"school_card_settings\"   ) _postgrest_t",
+      "calls": 1,
+      "rows": 1
+    },
+    {
+      "query": "WITH pgrst_source AS (UPDATE \"public\".\"school_card_settings\" SET \"configuration\" = \"pgrst_body\".\"configuration\", \"institution_id\" = \"pgrst_body\".\"institution_id\", \"revision\" = \"pgrst_body\".\"revision\", \"updated_at\" = \"pgrst_body\".\"updated_at\", \"updated_by\" = \"pgrst_body\".\"updated_by\" FROM (SELECT $1 AS json_data) pgrst_payload, LATERAL (SELECT \"configuration\", \"institution_id\", \"revision\", \"updated_at\", \"updated_by\" FROM json_to_record(pgrst_payload.json_data) AS _(\"configuration\" jsonb, \"institution_id\" uuid, \"revision\" integer, \"updated_at\" timestamp with time zone, \"updated_by\" uuid) ) pgrst_body  WHERE  \"public\".\"school_card_settings\".\"institution_id\" = $2 AND  \"public\".\"school_card_settings\".\"revision\" = $3 RETURNING \"public\".\"school_card_settings\".\"institution_id\", \"public\".\"school_card_settings\".\"revision\") SELECT $4 AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, array[]::text[] AS header, coalesce(json_agg(_postgrest_t)->$5, $6) AS body, nullif(current_setting($7, $8), $9) AS response_headers, nullif(current_setting($10, $11), $12) AS response_status, $13 AS response_inserted FROM (SELECT \"school_card_settings\".\"revision\" FROM \"pgrst_source\" AS \"school_card_settings\"   ) _postgrest_t",
+      "calls": 1,
+      "rows": 1
+    }
+  ]
+}

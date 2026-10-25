@@ -50,3 +50,5 @@ Thumbs.db
 
 # Archives locales de patch
 *.zip
+/tmp/
+/supabase/.temp/
