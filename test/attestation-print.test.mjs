@@ -42,9 +42,12 @@ test("attestations A4 : deux directions franco-arabes, une direction classique o
         academicYear: "2026-2027", rows: students, classEducationTypes: new Map(), selectedEducationType: "general_secondary",
       });
       const page = await browser.newPage();
+      const networkRequests=[];page.on("request",request=>{if(/^https?:/.test(request.url()))networkRequests.push(request.url())});
       await page.evaluate(() => { window.print = () => {}; });
       await page.setContent(html);
       await page.waitForFunction(() => [...document.images].every(image => image.complete && image.naturalWidth > 0));
+      assert.equal(await page.locator(".national-emblem").count(),2);
+      assert.deepEqual(networkRequests,[],"the national emblem requires no Render, Supabase or external image request");
       await page.emulateMedia({ media: "print" });
       assert.equal(await page.locator(".signature-box").count(), scenario.dual ? 4 : 2);
       const clipped = await page.locator(".page").evaluateAll(pages => pages.flatMap(sheet => {
@@ -55,6 +58,7 @@ test("attestations A4 : deux directions franco-arabes, une direction classique o
       }));
       assert.deepEqual(clipped, [], "les noms et titres restent entièrement dans la feuille");
       const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
+      assert.equal((pdf.toString("latin1").match(/\/Width 280\b/g)||[]).length,1,"one national emblem image object shared across the two pages");
       const parser = new PDFParse({ data: pdf }); const result = await parser.getText(); await parser.destroy();
       assert.equal(result.pages.length, 2, "une attestation complète par élève, sans page supplémentaire");
       for (const sheet of result.pages) {

@@ -1,6 +1,7 @@
 import QRCode from "qrcode";
 import type PDFKit from "pdfkit";
 import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
+import { documentNationalEmblem } from "./document-national-emblem";
 import { CARD_WIDTH_MM, CARD_HEIGHT_MM, cardSheetPosition, schoolCardMinistry, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
 
 export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>> };
@@ -69,11 +70,14 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
   doc.save().roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).clip();
   doc.font("card").fillColor(green);
   if (side === "front") {
+    const nationalEmblem = documentNationalEmblem(school.country_name);
+    const headerWidth = nationalEmblem ? 55 : 66;
     imageFit(doc, assets.logo, 3, 2, 10, 10);
-    text(doc, school.country_name || "République de Côte d’Ivoire", 15, 2, 66, 3, 5.9, "center");
-    doc.fillColor("#3C4942"); text(doc, school.country_motto || "Union - Discipline - Travail", 15, 5.3, 66, 2.5, 4.7, "center");
+    imageFit(doc, nationalEmblem, 73, 2, 9.6, 9.6);
+    text(doc, school.country_name || "République de Côte d’Ivoire", 15, 2, headerWidth, 3, 5.9, "center");
+    doc.fillColor("#3C4942"); text(doc, school.country_motto || "Union - Discipline - Travail", 15, 5.3, headerWidth, 2.5, 4.7, "center");
     const ministry = schoolCardMinistry(school, card.year);
-    if (ministry) text(doc, ministry, 15, 8, 66, 4, 4.2, "center");
+    if (ministry) text(doc, ministry, 15, 8, headerWidth, 4, 4.2, "center");
     doc.roundedRect(mm(28), mm(12), mm(40), mm(4.7), mm(0.8)).fill(green);
     doc.fillColor("#FFFFFF"); text(doc, "CARTE SCOLAIRE", 28, 12.5, 40, 4, 8.2, "center");
     doc.fillColor("#273C30"); text(doc, `ANNÉE SCOLAIRE ${card.year}`, 27, 17.2, 51, 3, 5.5, "center");

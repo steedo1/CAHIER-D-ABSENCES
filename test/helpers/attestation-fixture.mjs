@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { resolveAttestationSignatories } from "../../src/lib/franco-arabic-document-signatories.ts";
 import { attestationPhotoUrlForCurrentOrigin } from "../../src/lib/attestation-photo-url.ts";
+import { documentNationalEmblem } from "../../src/lib/document-national-emblem.ts";
 
 export function generateActualAttestationHtml(args) {
   // Exercise the ACTUAL certificate template without mounting a browser or
@@ -20,7 +21,7 @@ export function generateActualAttestationHtml(args) {
   const factory = new Function(
     "resolveAttestationSignatories", "formatDateLongFr", "institutionDisplayName",
     "escapeHtml", "formatDateShortFr", "safeSlug", "studentOfficialName",
-    "attestationPhotoUrlForCurrentOrigin", "window",
+    "attestationPhotoUrlForCurrentOrigin", "documentNationalEmblem", "window",
     compiled + "\nreturn buildAttestationHtml;",
   );
   const escape = value => String(value ?? "").replace(/&/g, "&amp;")
@@ -35,6 +36,7 @@ export function generateActualAttestationHtml(args) {
     slug,
     row => [row.last_name, row.first_name].filter(Boolean).join(" "),
     attestationPhotoUrlForCurrentOrigin,
+    documentNationalEmblem,
     { location: { origin: "https://www.mon-cahier.com" } },
   );
   return html(args);
