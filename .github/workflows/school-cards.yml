@@ -56,3 +56,50 @@ jobs:
         with:
           name: school-card-verification
           path: tmp/school-cards/
+  native-supabase:
+    name: Real ephemeral Supabase and native Next APIs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-build-placeholder
+      SUPABASE_SERVICE_ROLE_KEY: isolated-build-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # Compile before Docker starts, leaving RAM for the native services.
+      - run: npm run build
+      - name: Start a fresh loopback-only Supabase stack
+        run: |
+          mkdir -p /tmp/card-supabase
+          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase init
+          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase start --exclude realtime,studio,postgres-meta,edge-runtime,logflare,vector,supavisor
+          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase status -o json > /tmp/card-supabase-status.json
+      - name: Install test-only base schema and the exact proposed module migration
+        run: |
+          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase db query --local --file "$GITHUB_WORKSPACE/test/fixtures/school-cards-native-base.sql"
+          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase db query --local --file "$GITHUB_WORKSPACE/supabase/migrations/20261025101927_school_cards_private_configuration.sql"
+          npx --yes supabase@2.122.0 --workdir /tmp/card-supabase db query --local "notify pgrst, 'reload schema'"
+      - name: Seed fictitious schools and real local Auth/Storage
+        run: node scripts/verify-school-cards-native.mjs prepare
+      - name: Native Next → verified Auth → PostgREST → private Storage → QR
+        run: |
+          PORT=4398 node --max-old-space-size=288 node_modules/next/dist/bin/next start --hostname 0.0.0.0 > /tmp/card-native-next.log 2>&1 &
+          NATIVE_PID=$!
+          trap 'kill "$NATIVE_PID"' EXIT
+          for attempt in $(seq 1 30); do curl -fs http://localhost:4398/verifier-carte > /dev/null && break || sleep 1; done
+          node scripts/verify-school-cards-native.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: school-card-native-verification
+          path: tmp/school-cards-native/
+      - name: Stop the disposable local stack
+        if: always()
+        run: npx --yes supabase@2.122.0 --workdir /tmp/card-supabase stop --no-backup
