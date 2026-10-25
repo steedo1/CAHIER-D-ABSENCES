@@ -1,12 +1,48 @@
 import QRCode from "qrcode";
 import type PDFKit from "pdfkit";
+import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
 import { CARD_WIDTH_MM, CARD_HEIGHT_MM, cardSheetPosition, schoolCardMinistry, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
 
 export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>> };
 const mm = (value: number) => value * 72 / 25.4;
 const green = "#13633E", orange = "#F08426";
+function rtlText(doc: PDFKit.PDFDocument, label: string, x: number, y: number, w: number, h: number, size: number, align: "left" | "center" | "right") {
+  const width = (value: string) => schoolCardTextRuns(value).reduce((sum, run) => sum + doc.widthOfString(run.text, { features: [] }), 0);
+  const wrap = () => {
+    const lines: string[] = []; let line = "";
+    for (const word of label.split(/\s+/)) {
+      const next = line ? `${line} ${word}` : word;
+      if (line && width(next) > mm(w)) { lines.push(line); line = word; } else line = next;
+    }
+    if (line) lines.push(line);
+    return lines;
+  };
+  let fontSize = size; doc.fontSize(fontSize); let lines = wrap();
+  while (fontSize > 4.2 && (lines.length * doc.currentLineHeight(true) > mm(h) || lines.some(line => width(line) > mm(w)))) {
+    fontSize = Math.max(4.2, fontSize - 0.2); doc.fontSize(fontSize); lines = wrap();
+  }
+  const lineHeight = doc.currentLineHeight(true), limit = Math.max(1, Math.floor(mm(h) / lineHeight));
+  lines = lines.slice(0, limit);
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    if (width(line) > mm(w) || (i === limit - 1 && wrap().length > limit)) {
+      while (line && width(`${line}…`) > mm(w)) line = Array.from(line).slice(0, -1).join("");
+      line += "…";
+    }
+    const runs = schoolCardTextRuns(line), lineWidth = width(line);
+    const effectiveAlign = align === "left" && /^[\s\p{P}\p{N}]*[\p{Script=Arabic}\p{Script=Hebrew}]/u.test(line) ? "right" : align;
+    let cursor = mm(x) + (effectiveAlign === "center" ? (mm(w) - lineWidth) / 2 : effectiveAlign === "right" ? mm(w) - lineWidth : 0);
+    for (const run of runs) {
+      // Explicit features bypass PDFKit's per-space layout cache, which otherwise
+      // shapes Arabic words separately and concatenates them in Latin order.
+      doc.text(run.text, cursor, mm(y) + i * lineHeight, { lineBreak: false, features: [] });
+      cursor += doc.widthOfString(run.text, { features: [] });
+    }
+  }
+}
 function text(doc: PDFKit.PDFDocument, value: unknown, x: number, y: number, w: number, h: number, size = 6, align: "left" | "center" | "right" = "left") {
   const label = String(value || "—");
+  if (hasCardRtlText(label)) { rtlText(doc, label, x, y, w, h, size, align); return; }
   let fontSize = size;
   doc.fontSize(fontSize);
   while (fontSize > 4.2 && doc.widthOfString(label) > mm(w) * (h > 4 ? 1.9 : 1)) { fontSize -= 0.2; doc.fontSize(fontSize); }

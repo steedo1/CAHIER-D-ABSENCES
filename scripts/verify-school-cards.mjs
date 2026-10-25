@@ -44,5 +44,10 @@ const doc=new PDFDocument({autoFirstPage:false});const chunks=[];
 const done=new Promise(resolve=>{doc.on("data",c=>chunks.push(c));doc.on("end",()=>resolve(Buffer.concat(chunks)))});
 renderCardPages(doc,[{...student,enrollmentId:row.id,studentId:student.id,classId:row.class_id,name:"TRAORÉ Ousmane",year,birthPlace:"Yamoussoukro",classLabel:"CP1 FR",token,verificationUrl:`https://www.mon-cahier.com/verifier-carte#${token}`,fingerprint:cardFingerprint(token),tracks:[],warnings:[],photoUrl:null,revoked:false,signatureSlot:null,signatoryName:""}],db.tables.institutions[0],{font,photos:new Map(),signatures:{}},{individual:true});doc.end();
 await writeFile(`${output}/sample-individual.pdf`,await done);
+// Persist the actual RTL/mixed-script layout in the CI artifacts for review.
+const arabicDoc=new PDFDocument({autoFirstPage:false}),arabicChunks=[];
+const arabicDone=new Promise(resolve=>{arabicDoc.on("data",c=>arabicChunks.push(c));arabicDoc.on("end",()=>resolve(Buffer.concat(arabicChunks)))});
+renderCardPages(arabicDoc,[{...student,studentId:student.id,name:"عبد الرحمن محمد أمين",matricule:"EPC260001",birthdate:"2016-05-12",birthPlace:"ياموسوكرو",gender:"M",classLabel:"القسم العربي ١",year,verificationUrl:`https://www.mon-cahier.com/verifier-carte#${token}`,fingerprint:"FICTIF RTL",signatureSlot:null}],{...db.tables.institutions[0],name:"EPC Dimbokro — مدرسة نموذجية"},{font,photos:new Map(),signatures:{}},{individual:true});arabicDoc.end();
+await writeFile(`${output}/sample-arabic.pdf`,await arabicDone);
 await writeFile(`${output}/expected-qr.txt`,`https://www.mon-cahier.com/verifier-carte#${token}`);
 await writeFile(`${output}/metrics.json`,JSON.stringify(metrics,null,2));console.log(JSON.stringify(metrics,null,2));

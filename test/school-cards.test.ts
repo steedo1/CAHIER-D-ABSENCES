@@ -5,6 +5,16 @@ import sharp from "sharp";
 import { issueCardToken, openCardToken, createCardScanLimiter } from "../src/lib/school-card-token";
 import { cardSheetPosition, signatureSlotForTracks, schoolCardMinistry } from "../src/lib/school-cards";
 import { processSchoolCardSignature } from "../src/lib/school-card-image";
+import { schoolCardTextRuns } from "../src/lib/school-card-bidi";
+
+test("Arabic PDF keeps logical connected letters inside reordered bilingual runs", () => {
+  assert.deepEqual(schoolCardTextRuns("عبد الرحمن محمد أمين"), [{text:"عبد الرحمن محمد أمين",rtl:true}]);
+  const mixed=schoolCardTextRuns("Classe : القسم العربي ١");
+  assert.equal(mixed[0].text,"Classe : ");
+  assert.ok(mixed.some(run=>run.rtl && run.text.includes("القسم العربي")));
+  assert.ok(mixed.findIndex(run=>run.text.includes("١")) < mixed.findIndex(run=>run.text.includes("القسم")));
+  assert.equal(mixed.map(run=>run.text).join(""),"Classe : ١القسم العربي ");
+});
 
 const key = "isolated-test-secret-not-a-real-key-2026";
 const identity = () => ({ institutionId:randomUUID(),studentId:randomUUID(),enrollmentId:randomUUID(),classId:randomUUID(),year:"2026-2027" });
