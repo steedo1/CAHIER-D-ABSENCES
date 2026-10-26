@@ -614,8 +614,8 @@ export default function ClassListPrintPage() {
             boardingValue === "" ? null : boardingValue === "true",
         }),
       });
-      const json = res ? await res.json().catch(() => ({})) : { ok: true, finance_sync: {} };
-      if (res && !res.ok)
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok)
         throw new Error(json?.error || "Impossible d’inscrire l’élève.");
 
       setNewStudentForm({
@@ -703,8 +703,8 @@ export default function ClassListPrintPage() {
           }),
         },
       );
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok)
+      const json = res ? await res.json().catch(() => ({})) : { ok: true, finance_sync: {} };
+      if (res && !res.ok)
         throw new Error(
           json?.error || "Impossible d’enregistrer les corrections.",
         );
