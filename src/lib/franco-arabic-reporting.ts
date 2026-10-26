@@ -50,6 +50,8 @@ export type FrancoArabicReportsSettings = {
   coefficients: SubjectReportCoefficient[];
   /** Optional for historical settings; never inferred from French CI barèmes. */
   primarySubjectScales?: PrimarySubjectScoringScale[];
+  /** Opt-in: unspecified Arabic primary subjects inherit the /10 level barème. */
+  primaryArabicDefaultScale?: boolean;
   /** Absent in previously saved templates: keep the historical engine. */
   engine?: "legacy" | "specialized";
   /** Exactly one authority for a specialized context; never merge weights. */
@@ -97,6 +99,7 @@ export function validateFrancoArabicReportsInput(
       data.scales.length > 120) return null;
   if (data.engine !== undefined && data.engine !== "legacy" && data.engine !== "specialized") return null;
   if (data.coefficientSource !== undefined && data.coefficientSource !== "institution" && data.coefficientSource !== "program") return null;
+  if (data.primaryArabicDefaultScale !== undefined && typeof data.primaryArabicDefaultScale !== "boolean") return null;
   if (!data.enabled) return defaultFrancoArabicReportsSettings();
   const formatted = data.formatsByCycle;
   const formatsByCycle: Partial<Record<SchoolCycle, ReportFormat>> = {};
@@ -184,6 +187,7 @@ export function validateFrancoArabicReportsInput(
     ...(data.coefficientSource !== undefined ? { coefficientSource: data.coefficientSource } : {}),
     ...(data.formatsByCycle !== undefined ? { formatsByCycle } : {}),
     ...(data.primarySubjectScales !== undefined ? { primarySubjectScales } : {}),
+    ...(data.primaryArabicDefaultScale === true ? { primaryArabicDefaultScale: true } : {}),
   };
 }
 
