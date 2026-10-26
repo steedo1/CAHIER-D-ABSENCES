@@ -147,6 +147,12 @@ export function buildSchoolReportClass(input: {
   const ordinary = new Map((bulletin.items || []).map(row => [row.student_id, row]));
   const specialized = new Map((bulletin.specialized?.documents || []).map(row => [row.studentId, row]));
   const specializedMode = bulletin.specialized?.engine === "specialized";
+  if (track === "arabic" && !specializedMode) {
+    throw new Error("Enseignement arabe indisponible dans cette classe.");
+  }
+  if (specializedMode && !bulletin.specialized?.programs?.includes(track)) {
+    throw new Error("Cet enseignement n’est pas configuré pour la classe " + input.label + ".");
+  }
   return {
     id: input.id,
     label: clean(roster.class?.label) || input.label,
