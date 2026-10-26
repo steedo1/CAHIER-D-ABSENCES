@@ -202,16 +202,6 @@ const PREDICTION_ITEMS: NavItem[] = [
 const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
   { href: "/admin/cartes-scolaires", label: "Cartes scolaires", Icon: ShieldCheck },
   {
-    href: "/admin/export-moyennes",
-    label: "Export DESPS",
-    Icon: FileSpreadsheet,
-  },
-  {
-    href: "/admin/finance/statistiques-generales",
-    label: "Statistiques générales",
-    Icon: BarChart3,
-  },
-  {
     href: "/admin/notes/conseil-classe",
     label: "Conseil de classe",
     Icon: FileText,
@@ -241,6 +231,15 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
     label: "Élèves non classés",
     Icon: UserRoundCheck,
   },
+];
+
+/* =========================
+   Groupe : Statistiques
+========================= */
+const STATISTICS_ITEMS: NavItem[] = [
+  { href: "/admin/finance/statistiques-generales", label: "Statistiques générales", Icon: BarChart3 },
+  { href: "/admin/export-moyennes", label: "Export DESPS", Icon: FileSpreadsheet },
+  { href: "/admin/notes/rapports-scolaires", label: "Rapports scolaires", Icon: FileText },
 ];
 
 /* =========================
@@ -1061,6 +1060,12 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
     isFinanceOnlyShell,
   ]);
 
+  const statisticsItems = React.useMemo(
+    () => (isInfirmier || isEducator || isFinanceManager || isFinanceOnlyShell
+      ? [] : STATISTICS_ITEMS),
+    [isInfirmier, isEducator, isFinanceManager, isFinanceOnlyShell],
+  );
+
   const conductManagementItems = React.useMemo(
     () =>
       isInfirmier || isFinanceManager || isFinanceOnlyShell
@@ -1170,6 +1175,8 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
     !isFinanceOnlyShell &&
     groupHasActiveItem(pathname, fileCorrespondenceItems, currentTab);
 
+  const statisticsActive = groupHasActiveItem(pathname, statisticsItems, currentTab);
+
   const conductManagementActive = groupHasActiveItem(
     pathname,
     conductManagementItems,
@@ -1223,6 +1230,9 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
   const [fileCorrespondenceOpen, setFileCorrespondenceOpen] =
     React.useState<boolean>(fileCorrespondenceActive);
 
+  const [statisticsOpen, setStatisticsOpen] =
+    React.useState<boolean>(statisticsActive);
+
   const [conductManagementOpen, setConductManagementOpen] =
     React.useState<boolean>(conductManagementActive);
 
@@ -1257,6 +1267,10 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
   React.useEffect(() => {
     if (fileCorrespondenceActive) setFileCorrespondenceOpen(true);
   }, [fileCorrespondenceActive]);
+
+  React.useEffect(() => {
+    if (statisticsActive) setStatisticsOpen(true);
+  }, [statisticsActive]);
 
   React.useEffect(() => {
     if (conductManagementActive) setConductManagementOpen(true);
@@ -1338,6 +1352,19 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
                 topLevel
               />
             ))}
+
+            {statisticsItems.length > 0 && (
+              <GroupSection
+                title="Statistiques"
+                Icon={BarChart3}
+                items={statisticsItems}
+                pathname={pathname}
+                currentTab={currentTab}
+                open={statisticsOpen}
+                onToggle={() => setStatisticsOpen((value) => !value)}
+                accent="sky"
+              />
+            )}
 
             {!isEducator &&
               !isInfirmier &&

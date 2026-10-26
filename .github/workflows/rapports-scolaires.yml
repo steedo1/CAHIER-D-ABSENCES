@@ -1,0 +1,60 @@
+name: Rapports scolaires PDF et CSV
+
+on:
+  push:
+    branches: [feat/rapports-scolaires-pdf-csv-20261026]
+    paths:
+      - 'src/app/admin/notes/rapports-scolaires/**'
+      - 'src/app/admin/classes/liste/**'
+      - 'src/app/admin/notes/conseil-classe/**'
+      - 'src/app/api/admin/notes/school-report-fields/**'
+      - 'src/components/admin/SchoolReportObservationsPanel.tsx'
+      - 'src/components/admin/SpecializedCorrespondentReports.tsx'
+      - 'src/lib/school-results-*'
+      - 'src/lib/auth/file-correspondent.ts'
+      - 'src/app/admin/ui/sidebar-nav.tsx'
+      - 'src/app/admin/ui/shell.tsx'
+      - 'test/school-results-reports.test.ts'
+      - '.github/workflows/rapports-scolaires.yml'
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - 'src/app/admin/notes/rapports-scolaires/**'
+      - 'src/app/admin/classes/liste/**'
+      - 'src/app/admin/notes/conseil-classe/**'
+      - 'src/app/api/admin/notes/school-report-fields/**'
+      - 'src/components/admin/SchoolReportObservationsPanel.tsx'
+      - 'src/components/admin/SpecializedCorrespondentReports.tsx'
+      - 'src/lib/school-results-*'
+      - 'src/lib/auth/file-correspondent.ts'
+      - 'src/app/admin/ui/sidebar-nav.tsx'
+      - 'src/app/admin/ui/shell.tsx'
+      - 'test/school-results-reports.test.ts'
+      - '.github/workflows/rapports-scolaires.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-build-anon
+      SUPABASE_SERVICE_ROLE_KEY: isolated-build-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Vérifier les types
+        run: npm run typecheck
+      - name: Vérifier les rapports scolaires
+        run: node --import tsx --test test/school-results-reports.test.ts
+      - name: Compilation Next
+        run: npm run build

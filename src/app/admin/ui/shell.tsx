@@ -328,6 +328,7 @@ export default function AdminShell({
       return [
         { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
         { href: "/admin/export-moyennes", label: "Correspondant", Icon: FileSpreadsheet },
+        { href: "/admin/notes/rapports-scolaires", label: "Rapports", Icon: FileSpreadsheet },
         { href: "/admin/parent-connect", label: "Parent Connect", Icon: UserRoundCheck },
         { href: "/admin/parents", label: "Listes", Icon: UserRoundCheck },
         { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
