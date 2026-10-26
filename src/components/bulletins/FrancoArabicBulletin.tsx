@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { ciPrimaryFrenchAppreciation } from "@/lib/primary-french-reference-ci";
 import styles from "./FrancoArabicBulletin.module.css";
+import { primaryArabicSubjectLabel } from "@/lib/primary-arabic-bulletin-labels";
 import { selectPrintablePrograms } from "@/lib/franco-arabic-print-layout";
 import { SCHOOL_TEACHING_DIRECTOR_TITLE } from "@/lib/school-teaching-signatories";
 
@@ -111,6 +112,10 @@ export type BulletinDocument = {
   draft?: boolean;
 };
 
+function ArabicFrench({ arabic, french }: { arabic: string; french: string }) {
+  return <><bdi lang="ar" dir="rtl" className={styles.arabicText}>{arabic}</bdi>{" "}({french})</>;
+}
+
 const trackLabels: Record<BulletinTrack, string> = {
   french: "Enseignement français",
   arabic: "Enseignement arabe",
@@ -133,13 +138,22 @@ function Head({ model, variant }: { model: BulletinDocument; variant: BulletinVa
   const kind = variant === "combined" ? "Bulletin des deux enseignements" : 
     variant === "ordinary" ? "Bulletin de notes" : variant === "french" ? "Bulletin de notes · Français" : "Bulletin de notes · Arabe";
   const first = variant === "arabic" ? model.arabic : (model.french || model.arabic);
+  const arabic = variant === "arabic";
   return <>
     <div className={styles.upperPattern} aria-hidden="true" />
     <header className={styles.header}>
-      <div className={styles.republic}>{model.school.countryName || "République de Côte d’Ivoire"}
-        <span>{model.school.countryMotto || "Union · Discipline · Travail"}</span>
-        <span>{model.school.ministryName || "MINISTÈRE DE L’ÉDUCATION NATIONALE ET DE L’ALPHABÉTISATION"}</span>
-        {model.school.regionalDirection && <span>{model.school.regionalDirection}</span>}
+      <div className={styles.republic}>
+        {arabic ? <ArabicFrench arabic="جمهورية كوت ديفوار" french={model.school.countryName || "République de Côte d’Ivoire"} />
+          : model.school.countryName || "République de Côte d’Ivoire"}
+        <span>{arabic
+          ? <ArabicFrench arabic="اتحاد · انضباط · عمل" french={model.school.countryMotto || "Union · Discipline · Travail"} />
+          : model.school.countryMotto || "Union · Discipline · Travail"}</span>
+        <span>{arabic
+          ? <ArabicFrench arabic="وزارة التربية الوطنية ومحو الأمية" french={model.school.ministryName || "MINISTÈRE DE L’ÉDUCATION NATIONALE ET DE L’ALPHABÉTISATION"} />
+          : model.school.ministryName || "MINISTÈRE DE L’ÉDUCATION NATIONALE ET DE L’ALPHABÉTISATION"}</span>
+        {model.school.regionalDirection && <span>{arabic
+          ? <ArabicFrench arabic="المديرية الجهوية" french={model.school.regionalDirection} />
+          : model.school.regionalDirection}</span>}
       </div>
       <div className={styles.brandLine}>
         {model.school.logoUrl
@@ -155,15 +169,19 @@ function Head({ model, variant }: { model: BulletinDocument; variant: BulletinVa
           </div>}
         </div>
         <div className={styles.schoolCode}>
-          <span>Établissement</span>
+          <span>{arabic ? <ArabicFrench arabic="المؤسسة" french="Établissement" /> : "Établissement"}</span>
           <strong>{model.school.code || "—"}</strong>
         </div>
       </div>
       <div className={styles.documentHeading}>
-        <div className={styles.documentTitle}>{kind}</div>
+        <div className={styles.documentTitle}>{arabic
+          ? <ArabicFrench arabic="كشف النقط المدرسي" french={kind} /> : kind}</div>
         {model.school.isFrancoArabic ? <>
-          <div className={styles.evaluationTitle}>{first?.period || "Évaluation non renseignée"}</div>
-          <div className={styles.documentYear}>Année scolaire {first?.year || "—"}</div>
+          <div className={styles.evaluationTitle}>{arabic
+            ? <ArabicFrench arabic="التقييم" french={first?.period || "Évaluation non renseignée"} />
+            : first?.period || "Évaluation non renseignée"}</div>
+          <div className={styles.documentYear}>{arabic
+            ? <ArabicFrench arabic="السنة الدراسية" french="Année scolaire" /> : "Année scolaire"}{" "}{first?.year || "—"}</div>
         </> : <div className={styles.documentPeriod}>Année scolaire {first?.year || "—"} · {first?.period || "—"}</div>}
       </div>
     </header>
