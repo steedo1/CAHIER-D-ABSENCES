@@ -55,6 +55,24 @@ test("school admin lists only subjects for the selected physical class teaching"
   assert.deepEqual(data.subjects.map(s => s.id), [subjectAr]);
   assert.deepEqual(data.selectedSubjectIds, []);
 });
+test("les matières du CP arabe sont préselectionnées depuis les affectations et le français est préservé", async () => {
+  const db = setup();
+  db.tables.class_teachers.push(
+    { id: "assign-fr", institution_id: db.legacyId, class_id: cFr, subject_id: "active-fr", teacher_id: "teacher-fr", end_date: null },
+    { id: "assign-ar", institution_id: db.legacyId, class_id: cAr, subject_id: "active-ar", teacher_id: "teacher-ar", end_date: null },
+  );
+  const api = createFixtureRouteLoader(db, db.legacyAdminId)(route);
+  const before = await (await api.GET(req(url + "?class_id=" + cAr))).json();
+  assert.deepEqual(before.selectedSubjectIds, [subjectAr]);
+  const response = await api.PUT(req(url, "PUT", {
+    revision: before.revision, classId: cAr, subjectIds: [subjectAr],
+  }));
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  const classes = db.tables.institutions[0].settings_json.school_class_subjects_v1.years["2026-2027"].classes;
+  assert.deepEqual(classes[cAr], [subjectAr]);
+  assert.deepEqual(classes[cFr], [subjectFr]);
+});
+
 test("saving Arabic class subjects preserves French class, unrelated settings, and history", async () => {
   const db = setup(), api = createFixtureRouteLoader(db, db.legacyAdminId)(route);
   const before = await (await api.GET(req(url + "?class_id=" + cAr))).json();
