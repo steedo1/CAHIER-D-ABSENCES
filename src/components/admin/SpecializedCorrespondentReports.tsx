@@ -1,6 +1,7 @@
 "use client";
 
 import DocumentDirectionSignatures from "@/components/DocumentDirectionSignatures";
+import SchoolReportObservationsPanel from "@/components/admin/SchoolReportObservationsPanel";
 import { useEffect, useMemo, useState } from "react";
 import type { TeachingTrack } from "@/lib/school-cycles";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
@@ -244,6 +245,26 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
         <button type="button" disabled={!printable} onClick={() => window.print()}
           className="rounded-lg border px-4 py-2 font-semibold disabled:opacity-40">Imprimer le rapport</button>
       </div>
+      {mode === "council" && classId && year && periodId ? (
+        <div className="print:hidden">
+          <SchoolReportObservationsPanel
+            classId={classId}
+            academicYear={year}
+            periodId={periodId}
+            students={current.map(row => {
+              const score = programFor(row, selectedTrack);
+              const avg = score && score.generalAverage !== null && score.denominator
+                ? (score.generalAverage * 20) / score.denominator : null;
+              return {
+                id: row.studentId, name: studentName(row),
+                suggestion: avg === null ? "" : avg >= 16 ? "Excellent travail."
+                  : avg >= 14 ? "Très bon travail."
+                  : avg >= 10 ? "Travail satisfaisant." : "Résultats à améliorer.",
+              };
+            })}
+          />
+        </div>
+      ) : null}
       <div id="specialized-correspondent-report" className="space-y-4 rounded-xl border bg-white p-4 sm:p-6">
         <div className="border-b pb-3 text-center">
           <p className="text-sm font-semibold">RÉPUBLIQUE DE CÔTE D’IVOIRE</p>
