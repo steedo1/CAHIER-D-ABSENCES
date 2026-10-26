@@ -1,6 +1,7 @@
 // src/app/admin/notes/conseil-classe/page.tsx
 "use client";
 import SpecializedCorrespondentReports from "@/components/admin/SpecializedCorrespondentReports";
+import SchoolReportObservationsPanel from "@/components/admin/SchoolReportObservationsPanel";
 import { useBilingualCorrespondentMode } from "@/hooks/useBilingualCorrespondentMode";
 
 
@@ -2677,6 +2678,19 @@ function LegacyConseilClassePage() {
             <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {errorMsg}
             </div>
+          ) : null}
+
+          {bulletinRaw && selectedClassId && selectedPeriodId && selectedAcademicYear ? (
+            <SchoolReportObservationsPanel
+              classId={selectedClassId}
+              academicYear={selectedAcademicYear}
+              periodId={selectedPeriodId}
+              students={councilRows.map(row => ({
+                id: row.student_id,
+                name: row.full_name,
+                suggestion: row.appreciation || "",
+              }))}
+            />
           ) : null}
 
           {isLastSelectedPeriod && annualDecisionRows.length > 0 ? (
