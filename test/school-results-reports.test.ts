@@ -140,6 +140,6 @@ test("RAPPORT 2 does not print unknown-status section when it is empty", () => {
     academicYear: "2026-2027", periodLabel: "2e trimestre", track: "french",
   });
   assert.ok(html.includes("MOY T2"));
-  assert.ok(html.includes("Liste des élèves non affectés"));
-  assert.ok(!html.includes("Liste des élèves à affectation non renseignée"));
+  assert.ok(html.includes('des élèves non affectés</span> par classe'));
+  assert.ok(!html.includes("à affectation non renseignée"));
 });
