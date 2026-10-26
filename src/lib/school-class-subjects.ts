@@ -45,14 +45,15 @@ export function readClassSubjects(value: unknown): SchoolClassSubjectsSettings |
 }
 
 /** Null = this school has no class-curriculum feature yet (legacy behavior).
- * [] = feature enabled but this class/year is unconfigured (never guess).
+ * null = no saved curriculum for this class/year; retain existing teacher assignments.\n * [] = class explicitly configured with no disciplines.
  */
 export function classSubjectIds(
   settings: unknown, academicYear: string, classId: string,
 ): string[] | null {
   const stored = readClassSubjects(settings);
-  if (!stored) return null;
-  return stored.years[academicYear]?.classes[classId] || [];
+  const classes = stored?.years[academicYear]?.classes;
+  return classes && Object.prototype.hasOwnProperty.call(classes, classId)
+    ? classes[classId] : null;
 }
 
 export function subjectAllowedInClass(
