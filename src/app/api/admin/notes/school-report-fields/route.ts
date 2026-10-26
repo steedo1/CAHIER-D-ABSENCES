@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
@@ -13,6 +14,7 @@ export const dynamic = "force-dynamic";
  * modifié entre la lecture et l'enregistrement.
  */
 const KEY = "school_report_fields_v1";
+const REVISION = "school_report_fields_revision_v1";
 const READ_ROLES = ["admin", "super_admin", "founder", "file_correspondent", "finance_manager", "finance"];
 // Même périmètre de correction du profil élève que la liste de classe existante.
 const WRITE_ROLES = ["admin", "super_admin", "founder", "file_correspondent", "finance_manager", "finance"];
@@ -117,6 +119,7 @@ export async function PATCH(req: NextRequest) {
   if (readError || !inst) return fail("Impossible de charger les paramètres.", 503);
   const original = inst.settings_json;
   const settings = { ...object(original) };
+  const existingRevision = typeof settings[REVISION] === "string" ? settings[REVISION] : null;
   const store: Store = { ...object(settings[KEY]) };
   const slice = yearSlice(store, year);
   for (const d of decisions) {
@@ -137,10 +140,14 @@ export async function PATCH(req: NextRequest) {
   }
   store[year] = slice;
   settings[KEY] = store;
+  // CAS court : pas de comparaison de tout le JSON dans l'URL PostgREST.
+  // La revision change à chaque écriture de ces champs ; les paramètres
+  // institutionnels ordinaires restent préservés lors de notre mise à jour.
+  settings[REVISION] = randomUUID();
   let update = srv.from("institutions").update({ settings_json: settings }).eq("id", guard.instId);
-  // Protection contre les modifications concurrentes de settings_json.
-  update = original === null ? update.is("settings_json", null)
-    : update.eq("settings_json", JSON.stringify(original));
+  update = existingRevision
+    ? update.eq("settings_json->>" + REVISION, existingRevision)
+    : update.is("settings_json->>" + REVISION, null);
   const { data: saved, error: saveError } = await update.select("id");
   if (saveError) return fail("Sauvegarde impossible : " + saveError.message, 503);
   if (!saved?.length) return fail("Les paramètres ont changé entre-temps. Rechargez les données avant de réessayer.", 409);
