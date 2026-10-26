@@ -87,3 +87,26 @@ test("PDF HTML escapes school and student names and has repeating table headings
   assert.ok(html.includes("thead{display:table-header-group}"));
   assert.ok(html.includes("N° déc. aff."));
 });
+
+
+test("historical period uses bulletin enrolments, not only the current roster", () => {
+  const cls = buildSchoolReportClass({
+    id: "c2", label: "5ème 1", level: "5ème", track: "french",
+    roster: { students: [{ id: "new", full_name: "Nouvel élève", is_affecte: true }] },
+    bulletin: { ok: true, items: [{
+      student_id: "retired", full_name: "Ancien élève", matricule: "HIS1",
+      gender: "F", birth_date: "2011-01-01", nationality: "Ivoirienne",
+      is_affecte: false, general_avg: 10.5, rank: 2,
+    }] },
+  });
+  assert.deepEqual(cls.students.map(s => s.name), ["Ancien élève"]);
+  assert.equal(cls.students[0].isAffected, false);
+  assert.equal(cls.students[0].rank, 2);
+});
+test("reject Arabic report for an ordinary French class", () => {
+  assert.throws(() => buildSchoolReportClass({
+    id: "c1", label: "6ème", level: "6ème", track: "arabic",
+    roster: { students: [] },
+    bulletin: { ok: true, items: [] },
+  }), /arabe indisponible/i);
+});
