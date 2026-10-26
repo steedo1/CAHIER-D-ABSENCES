@@ -70,45 +70,82 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
   doc.save().roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).clip();
   doc.font("card").fillColor(green);
   if (side === "front") {
+    // Reference-inspired identity layout. All assets are reused from the current
+    // client-side PDF export; this section makes no additional HTTP/SQL calls.
     const nationalEmblem = documentNationalEmblem(school.country_name);
-    const headerWidth = nationalEmblem ? 55 : 66;
-    imageFit(doc, assets.logo, 3, 2, 10, 10);
-    imageFit(doc, nationalEmblem, 73, 2, 9.6, 9.6);
-    text(doc, school.country_name || "République de Côte d’Ivoire", 15, 2, headerWidth, 3, 5.9, "center");
-    doc.fillColor("#3C4942"); text(doc, school.country_motto || "Union - Discipline - Travail", 15, 5.3, headerWidth, 2.5, 4.7, "center");
+    imageFit(doc, assets.logo, 2.7, 1.6, 11, 11.5);
+    imageFit(doc, nationalEmblem, 73.5, 1.6, 9, 10);
+    doc.fillColor(orange);
+    text(doc, school.country_name || "République de Côte d’Ivoire", 15, 2.1, 55.5, 3, 6.2, "center");
+    doc.fillColor("#404A44");
+    text(doc, school.country_motto || "Union - Discipline - Travail", 15, 5.3, 55.5, 2.5, 4.8, "center");
     const ministry = schoolCardMinistry(school, card.year);
-    if (ministry) text(doc, ministry, 15, 8, headerWidth, 4, 4.2, "center");
-    doc.roundedRect(mm(28), mm(12), mm(40), mm(4.7), mm(0.8)).fill(green);
-    doc.fillColor("#FFFFFF"); text(doc, "CARTE SCOLAIRE", 28, 12.5, 40, 4, 8.2, "center");
-    doc.fillColor("#273C30"); text(doc, `ANNÉE SCOLAIRE ${card.year}`, 27, 17.2, 51, 3, 5.5, "center");
-    doc.roundedRect(mm(3.6), mm(19.5), mm(20), mm(26), mm(1)).fillAndStroke("#F1F5F2", "#CCD7CE");
-    imageFit(doc, assets.photos.get(card.studentId), 3.9, 19.8, 19.4, 25.4);
-    if (!assets.photos.has(card.studentId)) { doc.fillColor("#65776B"); text(doc, "Photo absente", 5, 29, 17, 8, 5.2, "center"); }
+    if (ministry) text(doc, ministry, 15, 7.8, 55.5, 4.2, 4.1, "center");
+
+    doc.roundedRect(mm(29), mm(12.2), mm(32), mm(4.7), mm(0.8)).fill("#0B7A22");
+    doc.fillColor("#FFFFFF");
+    text(doc, "CARTE SCOLAIRE", 29, 12.6, 32, 4.1, 8.1, "center");
+    doc.fillColor("#343E37");
+    text(doc, `ANNÉE SCOLAIRE : ${card.year}`, 24.5, 17.4, 41, 2.7, 5.2, "center");
+
+    doc.roundedRect(mm(4.5), mm(21.2), mm(21.7), mm(24.5), mm(0.6))
+      .fillAndStroke("#F4F7F5", "#CBD8D0");
+    imageFit(doc, assets.photos.get(card.studentId), 4.8, 21.5, 21.1, 23.9);
+    if (!assets.photos.has(card.studentId)) {
+      doc.fillColor("#7C8B81");
+      text(doc, "Photo absente", 6.2, 30, 18.1, 6, 5.4, "center");
+    }
+
     doc.fillColor("#151C17");
-    text(doc, `Matricule : ${card.matricule || "Non renseigné"}`, 26, 21.5, 56, 3.8, 6.4);
-    text(doc, card.name, 26, 26, 56, 6, 7.2);
-    const date = /^\d{4}-\d{2}-\d{2}$/.test(card.birthdate) ? card.birthdate.split("-").reverse().join("/") : "Non renseignée";
-    text(doc, `Né(e) le : ${date}   Sexe : ${card.gender || "—"}`, 26, 33, 56, 3.5, 5.5);
-    text(doc, `Lieu : ${card.birthPlace || "Non renseigné"}`, 26, 37, 56, 3.6, 5.7);
-    text(doc, `Classe : ${card.classLabel}`, 26, 41.1, 29, 5, 6.3);
-    if (card.signatureSlot) imageFit(doc, assets.signatures[card.signatureSlot], 59, 39.7, 23, 7.6);
-    doc.fillColor("#56675C");
-    if (card.signatureSlot) text(doc, card.signatoryName, 56, 46, 27, 2, 3.8, "center");
-    doc.rect(mm(3), mm(48.4), mm(79.6), mm(0.6)).fill(orange);
-    doc.fillColor(green); text(doc, school.name, 4, 49.6, 77.6, 3.3, 6.8, "center");
+    text(doc, "Matricule :", 28, 21.6, 16, 3.3, 6.1);
+    text(doc, card.matricule || "Non renseigné", 43, 21.3, 39, 4, 7.4);
+    text(doc, "Nom et Prénoms :", 28, 26.1, 50, 2.8, 6.0);
+    text(doc, card.name, 28, 29.1, 54, 4.5, 7.7);
+
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(card.birthdate)
+      ? card.birthdate.split("-").reverse().join("/") : "Non renseignée";
+    text(doc, "Date de naissance :", 28, 34.4, 21.5, 3, 5.3);
+    text(doc, date, 49.6, 34.2, 19, 3.5, 6.0);
+    text(doc, "Sexe :", 69, 34.4, 8, 3, 5.3);
+    text(doc, card.gender || "—", 77.5, 34.2, 5, 3.5, 6.0);
+    text(doc, "Lieu de naissance :", 28, 38.6, 21, 3.1, 5.3);
+    text(doc, card.birthPlace || "Non renseigné", 49, 38.4, 33, 3.8, 5.9);
+    text(doc, "Classe :", 28, 42.7, 11.5, 3.2, 6.0);
+    text(doc, card.classLabel, 39.5, 42.5, card.signatureSlot ? 20 : 42.5, 4, 6.5);
+
+    // Signature/cachet remains optional, per institution and document policy.
+    if (card.signatureSlot) {
+      imageFit(doc, assets.signatures[card.signatureSlot], 61, 41.3, 21, 5.7);
+      doc.fillColor("#526058");
+      text(doc, card.signatoryName, 58.5, 46.4, 24, 1.9, 3.7, "center");
+    }
+    doc.rect(mm(3.5), mm(48.5), mm(78.6), mm(0.7)).fill(orange);
+    doc.fillColor("#181F1A");
+    text(doc, school.name, 4.0, 49.8, 77.6, 3.1, 7.1, "center");
   } else {
-    doc.rect(0, 0, mm(CARD_WIDTH_MM), mm(1.6)).fill(green);
-    imageFit(doc, assets.logo, 5, 4, 15, 12);
-    doc.fillColor(green); text(doc, school.name, 23, 5, 57, 9, 7.3, "center");
-    doc.fillColor("#2C3D32");
-    text(doc, "Cette carte est strictement personnelle. Elle accompagne les démarches scolaires et administratives de son titulaire.", 5, 19, 51, 10.5, 6.1);
-    text(doc, "Toute reproduction, altération ou utilisation frauduleuse est interdite.", 5, 31, 51, 8, 5.7);
-    text(doc, `En cas de perte, contacter l’établissement : ${school.phone || "coordonnées à renseigner"}`, 5, 40, 51, 7, 5.6);
-    drawQr(doc, card.verificationUrl, 60.2, 20, 22.5);
-    doc.fillColor(green); text(doc, "VÉRIFIER LA CARTE", 59, 17, 25, 3, 4.6, "center");
-    doc.fillColor("#526659"); text(doc, card.fingerprint, 60, 43, 23, 3, 4.3, "center");
-    doc.rect(mm(4), mm(48.3), mm(77.6), mm(0.4)).fill(orange);
-    doc.fillColor(green); text(doc, "Générée par Mon Cahier — www.mon-cahier.com", 4, 50, 77.6, 2.7, 5.6, "center");
+    // Large, centred institution logo as on the reference card.
+    imageFit(doc, assets.logo, 29, 2.5, 27.6, 18);
+    doc.fillColor("#17211B");
+    text(doc, school.name, 4.5, 21, 76.6, 4, 7.1, "center");
+
+    doc.fillColor("#27342B");
+    text(doc, "Cette carte est strictement personnelle et obligatoire pour les démarches scolaires et administratives.",
+      5, 27, 51, 7.7, 5.5, "center");
+    text(doc, "Toute reproduction, altération ou utilisation frauduleuse est formellement interdite.",
+      5, 35, 51, 6.2, 5.3, "center");
+    text(doc, `En cas de perte, contacter l’établissement : ${school.phone || "coordonnées à renseigner"}`,
+      5, 42, 51, 7, 5.6);
+
+    // Vector QR encodes the unchanged, stable verification URL. No persistence,
+    // new network request or extra Supabase lookup is required at print time.
+    doc.fillColor("#155F40");
+    text(doc, "VÉRIFIER LA CARTE", 59, 23.3, 25, 3, 4.5, "center");
+    drawQr(doc, card.verificationUrl, 60.2, 26.2, 22.5);
+    doc.fillColor("#556459");
+    text(doc, card.fingerprint, 60, 49.0, 23, 1.7, 3.5, "center");
+    doc.rect(mm(3.5), mm(51.0), mm(78.6), mm(0.5)).fill(orange);
+    doc.fillColor("#536157");
+    text(doc, "Mon Cahier — www.mon-cahier.com", 4, 51.8, 77.6, 1.8, 4.7, "center");
   }
   doc.restore().restore();
 }
