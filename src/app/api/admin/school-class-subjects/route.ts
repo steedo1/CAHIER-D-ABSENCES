@@ -92,10 +92,36 @@ export async function GET(request: NextRequest) {
     if ("error" in catalog) return json({ error: catalog.error }, 503);
     subjects = catalog.subjects;
   }
+  // The EPC already has real teacher assignments. Before the administrator
+  // explicitly edits a class curriculum, show those assignments as selected.
+  // Once a list has been saved, including [], its selection takes precedence.
+  let selectedSubjectIds: string[] = [];
+  if (selected) {
+    const saved = stored?.years[context.year]?.classes;
+    if (saved && Object.prototype.hasOwnProperty.call(saved, selected.id)) {
+      selectedSubjectIds = saved[selected.id] || [];
+    } else if (selected.cycle && selected.track && subjects.length) {
+      const assigned = await context.service.from("class_teachers")
+        .select("subject_id").eq("institution_id", context.institutionId)
+        .eq("class_id", selected.id).is("end_date", null).limit(151);
+      if (assigned.error) return json({ error: "class_assignments_load_failed" }, 503);
+      const institutionIds = [...new Set((assigned.data || [])
+        .map(row => String(row.subject_id || "")).filter(Boolean))];
+      if (institutionIds.length) {
+        const rows = await context.service.from("institution_subjects")
+          .select("id,subject_id").eq("institution_id", context.institutionId)
+          .in("id", institutionIds).eq("is_active", true).limit(151);
+        if (rows.error) return json({ error: "class_subjects_load_failed" }, 503);
+        const assignedCanonicalIds = new Set((rows.data || []).map(row => row.subject_id));
+        selectedSubjectIds = subjects.filter(subject => assignedCanonicalIds.has(subject.id))
+          .map(subject => subject.id);
+      }
+    }
+  }
   return json({ ok: true, academicYear: context.year,
     revision: schoolSettingsRevision(context.rawSettings),
     classes: loaded.classes, selectedClassId: selected?.id || null, subjects,
-    selectedSubjectIds: selected ? stored?.years[context.year]?.classes[selected.id] || [] : [],
+    selectedSubjectIds,
     ciPrimaryFrenchApplied: selected
       ? stored?.years[context.year]?.ciPrimaryFrenchClasses?.includes(selected.id) === true : false,
   });
