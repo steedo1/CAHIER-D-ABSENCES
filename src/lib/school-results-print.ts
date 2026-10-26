@@ -62,7 +62,7 @@ function statisticsBody(classes: SchoolReportClass[], filter: AffectationFilter)
       section.label === "Élèves non affectés" ? "unaffected" : "all";
     const detail = type === "all" ? "" :
       '<h2 class="document-title">' + affectedSectionTitle(type) + '</h2>' +
-      '<p class="all-levels">(POUR TOUS LES NIVEAUX)</p>' +
+      '<p class="all-levels">(POUR TOUT LES NIVEAUX)</p>' +
       levels.map(level => {
         const classRows = section.classRows.filter(row => row.level === level);
         const total = section.levelRows.filter(row => row.level === level && row.gender === "T")
@@ -121,11 +121,9 @@ function nominalBody(classes: SchoolReportClass[], filter: AffectationFilter, pe
       { label: "Liste des élèves à affectation non renseignée par classe", value: null, letter: "c)" }]
     : [{ label: filter === "affected" ? "Liste des élèves affectés par classe" : "Liste des élèves non affectés par classe",
         value: filter === "affected", letter: filter === "affected" ? "a)" : "b)" }];
-  const trimester = /\btrimestre\b|\bt[123]\b/i.test(periodLabel);
   return '<h2 class="nominal-main">1- &nbsp; Liste nominative des élèves</h2>' +
-    groups.map((group, index) => {
-      const activeClasses = classes.filter(c => c.students.some(s => s.isAffected === group.value));
-      const printable = activeClasses.length ? activeClasses : classes;
+    groups.filter(group => group.value !== null || classes.some(c => c.students.some(s => s.isAffected === null))).map((group, index) => {
+      const printable = classes;
       return '<section class="report-section' + (index === 0 ? ' first-section' : '') + '">' +
         '<h3 class="nominal-group">' + e(group.letter) +
         ' &nbsp; Liste <span class="accent">' + e(group.label.slice("Liste ".length).replace(" par classe", "")) +
