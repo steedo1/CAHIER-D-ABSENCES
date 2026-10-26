@@ -15,6 +15,7 @@ import { readStudentProgramSettings } from "@/lib/school-student-programs";
 import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/lib/franco-arabic-reporting";
 import { resolvePrimaryTeachingTrack } from "@/lib/grades/primary-evaluation-kind";
 import { primarySubjectScale, primarySubjectTeachingTrack, primarySubjectTeachingTracks } from "@/lib/grades/primary-subject-scale";
+import { readClassSubjects } from "@/lib/school-class-subjects";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -177,6 +178,7 @@ export async function GET(_req: NextRequest) {
     const school = parseSchoolCyclesSettings(institutionContext.settings);
     const programs = readStudentProgramSettings(institutionContext.settings);
     const reports = parseFrancoArabicReportsSettings(institutionContext.settings);
+    const classCurriculum = readClassSubjects(institutionContext.settings);
 
     const items: TeachClass[] = [];
     const seen = new Set<string>();
@@ -231,6 +233,11 @@ export async function GET(_req: NextRequest) {
       return list.flatMap((it) => {
         const subjectName = it.subject_id ? nameById.get(it.subject_id) ?? it.subject_name : it.subject_name;
         const subjectId = it.subject_id ? canonicalById.get(it.subject_id) : null;
+        // Saved class selections are the official scope, even when empty.
+        // Unconfigured classes continue using their existing teacher assignments.
+        const selectedByClass = classCurriculum?.years[it.academic_year]?.classes;
+        if (subjectId && selectedByClass && Object.prototype.hasOwnProperty.call(selectedByClass, it.class_id) &&
+            !selectedByClass[it.class_id].includes(subjectId)) return [];
         const primary = it.school_cycle === "primary";
         const tracks = primary && subjectId
           ? primarySubjectTeachingTracks(institutionContext.settings, it.academic_year, it.class_id, subjectId) : [];
