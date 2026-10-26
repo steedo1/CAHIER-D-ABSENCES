@@ -138,7 +138,7 @@ test("bulletins : un directeur par enseignement séparé, un seul administrateur
   assert.match(frenchOnly, /Directeur français/);
   assert.doesNotMatch(frenchOnly, /Directeur arabe|Administrateur authentique|Titre général configuré/);
   const arabicOnly = renderToStaticMarkup(React.createElement(component, { model: document, variant: "arabic" }));
-  assert.match(arabicOnly, />Directeur des études<\/span>/);
+  assert.match(arabicOnly, /مدير الدراسات \(Directeur des études\)<\/span>/);
   assert.match(arabicOnly, /Directeur arabe/);
   assert.doesNotMatch(arabicOnly, /Directeur français|Administrateur authentique|Titre général configuré/);
   const ordinary = renderToStaticMarkup(React.createElement(component, {
@@ -230,7 +230,9 @@ test("API bulletin authentifiée → document rendu : le combiné prend uniqueme
   assert.doesNotMatch(combined, /Responsable de l&#x27;enseignement|FAUX/);
   for (const track of ["french", "arabic"]) {
     const html = renderToStaticMarkup(React.createElement(Component, { model: document, variant: track }));
-    assert.match(html, />Directeur des études<\/span>/);
+    assert.match(html, track === "arabic"
+      ? /مدير الدراسات \(Directeur des études\)<\/span>/
+      : />Directeur des études<\/span>/);
     assert.ok(html.includes(track === "french" ? "Responsable de l&#x27;enseignement français" : "Responsable de l&#x27;enseignement arabe"));
     assert.doesNotMatch(html, /Vrai responsable général|Administrateur général/);
   }
