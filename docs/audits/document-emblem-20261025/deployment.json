@@ -1,0 +1,55 @@
+{
+  "pr": 228,
+  "approved": true,
+  "production": true,
+  "mergeCommit": "34e72bc45e0a603fcdfb710795acd69587f107cd",
+  "serviceId": "srv-dbc291on74is73f4692g",
+  "deployId": "dep-dbf857t9fdbs73963o50",
+  "status": "live",
+  "liveAt": "2026-10-25T22:33:10.51338Z",
+  "checkedAt": "2026-10-25T22:38:03Z",
+  "checks": {
+    "emblemVisible": true,
+    "emblemDecodedWidth": 280,
+    "publicQrValid": true,
+    "qrUnchangedAcrossDeployment": true,
+    "individualPdfGenerated": true,
+    "reprintSucceeded": true,
+    "attestationWindowOpened": true,
+    "attestationBlobContentInspected": false,
+    "sqlMigrationApplied": false,
+    "studentDataChanged": false,
+    "postDeployErrorLogs": 0
+  },
+  "memory": {
+    "instance": "srv-dbc291on74is73f4692g-c7bhn",
+    "sampledPeakMiB": 306.75392150878906,
+    "limitMiB": 512,
+    "observations": [
+      {
+        "timestamp": "2026-10-25T22:33:10Z",
+        "value": 86605820
+      },
+      {
+        "timestamp": "2026-10-25T22:34:10Z",
+        "value": 321654800
+      },
+      {
+        "timestamp": "2026-10-25T22:35:10Z",
+        "value": 315961340
+      },
+      {
+        "timestamp": "2026-10-25T22:36:10Z",
+        "value": 316899330
+      },
+      {
+        "timestamp": "2026-10-25T22:37:10Z",
+        "value": 319082500
+      }
+    ]
+  },
+  "rollback": {
+    "commit": "910cf81422d7f349faa0cc2becea2aa3cb90fcdc",
+    "deployId": "dep-dbf243om7kps73fg8170"
+  }
+}
