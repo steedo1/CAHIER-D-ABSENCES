@@ -6,6 +6,7 @@ const EXACT_PATHS = new Set([
   "/admin/cartes-scolaires",
   FILE_CORRESPONDENT_HOME,
   "/admin/export-moyennes",
+  "/admin/notes/rapports-scolaires",
   "/admin/notes/statistiques",
   "/admin/conduite",
   "/admin/notes/conseil-classe",
