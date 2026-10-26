@@ -396,8 +396,8 @@ function Footer({ model, programs, ordinary }: {
       /> : programs.map(p => <Signature
         key={p.track}
         name={p.directorName}
-        title={p.track === "arabic"
-           ? "مدير التعليم العربي (Directeur de l’enseignement arabe)"
+        title={p.track === "arabic" && model.school.isFrancoArabic
+           ? `مدير الدراسات (${SCHOOL_TEACHING_DIRECTOR_TITLE})`
            : model.school.isFrancoArabic ? SCHOOL_TEACHING_DIRECTOR_TITLE
            : ordinary ? "Direction de l’établissement" : "Directeur de l’enseignement français"}
       />)}
