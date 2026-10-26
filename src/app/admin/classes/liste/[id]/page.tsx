@@ -366,6 +366,8 @@ export default function ClassListPrintPage() {
   const [educatorName, setEducatorName] = useState("");
   const [customEducatorName, setCustomEducatorName] = useState("");
   const [editable, setEditable] = useState<Record<string, EditableStudent>>({});
+  const [decisionNumbers, setDecisionNumbers] = useState<Record<string, string>>({});
+  const [originalDecisionNumbers, setOriginalDecisionNumbers] = useState<Record<string, string>>({});
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [showCorrections, setShowCorrections] = useState(false);
@@ -410,6 +412,26 @@ export default function ClassListPrintPage() {
           json?.error || "Impossible de charger la liste de classe.",
         );
 
+      // Les décisions d'affectation sont conservées par année scolaire,
+      // sans être confondues avec le statut Affecté / Non affecté.
+      const yearForDecisions = String(json?.class?.academic_year || academicYear || "");
+      if (yearForDecisions) {
+        try {
+          const fieldsRes = await fetch("/api/admin/notes/school-report-fields?academic_year=" +
+            encodeURIComponent(yearForDecisions), { cache: "no-store", signal: controller.signal });
+          const fields = await fieldsRes.json().catch(() => ({}));
+          if (!fieldsRes.ok || !fields.ok) throw new Error(fields.error || "Décisions indisponibles.");
+          if (loadController.current !== controller || controller.signal.aborted) return;
+          const decisions = (fields.decision_numbers || {}) as Record<string, string>;
+          setDecisionNumbers(decisions);
+          setOriginalDecisionNumbers(decisions);
+        } catch (e) {
+          if (controller.signal.aborted) return;
+          setSaveMsg("Les numéros de décision n'ont pas pu être chargés. Réessayez avant de les modifier.");
+          setDecisionNumbers({});
+          setOriginalDecisionNumbers({});
+        }
+      }
       setData(json as ClassListPayload);
       setEditable(
         cloneEditable(Array.isArray(json?.students) ? json.students : []),
@@ -592,8 +614,8 @@ export default function ClassListPrintPage() {
             boardingValue === "" ? null : boardingValue === "true",
         }),
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok)
+      const json = res ? await res.json().catch(() => ({})) : { ok: true, finance_sync: {} };
+      if (res && !res.ok)
         throw new Error(json?.error || "Impossible d’inscrire l’élève.");
 
       setNewStudentForm({
@@ -661,8 +683,13 @@ export default function ClassListPrintPage() {
           official_track_code: row.official_track_code || null,
         }));
 
-      const forceFinanceSync = updates.length === 0;
-      const res = await fetch(
+      const decisionUpdates = students
+        .filter(student => (decisionNumbers[student.id] || "").trim() !==
+          (originalDecisionNumbers[student.id] || "").trim())
+        .map(student => ({ student_id: student.id, value: (decisionNumbers[student.id] || "").trim() }));
+      const decisionsOnly = updates.length === 0 && decisionUpdates.length > 0;
+      const forceFinanceSync = updates.length === 0 && !decisionsOnly;
+      const res = decisionsOnly ? null : await fetch(
         `/api/admin/classes/${encodeURIComponent(classId)}/roster`,
         {
           method: "PATCH",
@@ -682,6 +709,24 @@ export default function ClassListPrintPage() {
           json?.error || "Impossible d’enregistrer les corrections.",
         );
 
+      if (decisionUpdates.length > 0) {
+        const academicYear = String(data.class.academic_year || data.academic_year.code || "");
+        const response = await fetch("/api/admin/notes/school-report-fields", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            class_id: classId, academic_year: academicYear,
+            decisions: decisionUpdates,
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok) {
+          throw new Error("Numéros de décision non enregistrés : " +
+            (payload.error || "Erreur du serveur.") +
+            " Les corrections d'identité précédentes ont pu être enregistrées.");
+        }
+      }
+
       const financeSync = json?.finance_sync || {};
       const classMoves = Number(json?.class_moves || 0);
       const financeChanges =
@@ -700,7 +745,9 @@ export default function ClassListPrintPage() {
         [
           updates.length > 0
             ? `Corrections enregistrées (${updates.length} élève(s)). La liste PDF est à jour.`
-            : "Aucune modification d’identité détectée. La finance de la classe a été resynchronisée.",
+            : decisionsOnly
+              ? "Numéros de décision d'affectation enregistrés (" + decisionUpdates.length + " élève(s))."
+              : "Aucune modification d’identité détectée. La finance de la classe a été resynchronisée.",
           classMoves > 0
             ? `${classMoves} élève(s) transféré(s) vers la classe correspondant à la nouvelle série ; les encaissements et reçus existants ont été conservés.`
             : null,
@@ -1177,6 +1224,7 @@ export default function ClassListPrintPage() {
                   <th className="px-3 py-2 text-left">Matricule</th>
                   <th className="px-3 py-2 text-left">Série</th>
                   <th className="px-3 py-2 text-left">Affecté</th>
+                  <th className="px-3 py-2 text-left">N° décision d'affectation</th>
                   <th className="px-3 py-2 text-left">Internat</th>
                   <th className="px-3 py-2 text-left">Né(e) le</th>
                   <th className="px-3 py-2 text-left">Nom(s) parent(s) / tuteur(s)</th>
@@ -1273,6 +1321,18 @@ export default function ClassListPrintPage() {
                           <option value="true">Affecté</option>
                           <option value="false">Non affecté</option>
                         </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          value={decisionNumbers[student.id] || ""}
+                          onChange={e => setDecisionNumbers(prev => ({
+                            ...prev, [student.id]: e.target.value,
+                          }))}
+                          maxLength={120}
+                          placeholder="Facultatif"
+                          aria-label={"Numéro de décision d'affectation de " + student.full_name}
+                          className="w-[190px] rounded-lg border px-2 py-1"
+                        />
                       </td>
                       <td className="px-3 py-2">
                         <select
