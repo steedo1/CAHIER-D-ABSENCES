@@ -225,6 +225,7 @@ export default function SchoolBulletinSettings({
       .map(row => row.level!);
     setSettings(old => ({
       ...old,
+      primaryArabicDefaultScale: true,
       scales: [...old.scales, ...levels.filter((level, i) =>
         !levels.slice(0, i).some(other => sameSchoolLevel(other, level, "primary")) &&
         !old.scales.some(row => row.cycle === "primary" && row.track === "arabic" &&
