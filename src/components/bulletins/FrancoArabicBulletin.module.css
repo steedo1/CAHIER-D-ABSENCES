@@ -1,3 +1,12 @@
+/* Arabic runs stay RTL without reversing numbers, matricules, or French names. */
+.arabicText {
+  direction: rtl;
+  unicode-bidi: isolate;
+  font-family: "Noto Naskh Arabic", "Noto Sans Arabic", Tahoma, "Arial Unicode MS", sans-serif;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 /* Premium, real A4 layout: identical typography and proportions in print. */
 .page {
   --emerald: #06564c;
