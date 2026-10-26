@@ -27,9 +27,10 @@ export function primarySubjectScale(settings: unknown, context: {
   const reports = parseFrancoArabicReportsSettings(settings);
   const levelScale = getConfiguredScoringScale(reports, "primary", context.level, context.track);
   if (levelScale === null) return null;
-  if (context.track === "arabic") {
+  if (context.track === "arabic" && reports.primarySubjectScales !== undefined) {
     const subjectScale = getConfiguredPrimarySubjectScale(reports, context.level, context.subjectId);
     if (subjectScale !== null) return subjectScale;
+    if (!reports.primaryArabicDefaultScale) return null;
   }
   if (context.track === "french" && hasCiPrimaryFrenchReference(settings, context.year, context.classId)) {
     const entry = ciPrimaryFrenchEntryForName(context.subjectName);
