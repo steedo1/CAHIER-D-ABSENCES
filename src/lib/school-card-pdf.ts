@@ -1,4 +1,3 @@
-import QRCode from "qrcode";
 import type PDFKit from "pdfkit";
 import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
 import { documentNationalEmblem } from "./document-national-emblem";
@@ -52,18 +51,8 @@ function text(doc: PDFKit.PDFDocument, value: unknown, x: number, y: number, w: 
 function imageFit(doc: PDFKit.PDFDocument, source: string | undefined, x: number, y: number, w: number, h: number) {
   if (source) doc.image(source, mm(x), mm(y), { fit: [mm(w), mm(h)], align: "center", valign: "center" });
 }
-function drawQr(doc: PDFKit.PDFDocument, url: string, x: number, y: number, size: number) {
-  const qr = QRCode.create(url, { errorCorrectionLevel: "M" });
-  const n = qr.modules.size, unit = size / (n + 8);
-  doc.fillColor("#FFFFFF").rect(mm(x), mm(y), mm(size), mm(size)).fill();
-  doc.fillColor("#000000");
-  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
-    if (qr.modules.get(r, c)) doc.rect(mm(x + (c + 4) * unit), mm(y + (r + 4) * unit), mm(unit + 0.008), mm(unit + 0.008));
-  }
-  doc.fill();
-}
 /** Shared by the browser exporter and the Node layout/performance tests.
- * Vector text/QR and physical units: no screenshot scaling or server PDF work. */
+ * Vector text and physical units: no screenshot scaling or server PDF work. */
 export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: CardSchool, assets: CardPrintAssets, side: "front" | "back", x = 0, y = 0) {
   doc.save().translate(mm(x), mm(y));
   doc.roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).fillAndStroke("#FFFFFF", "#D7E1DB");
@@ -123,29 +112,23 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     doc.fillColor("#181F1A");
     text(doc, school.name, 4.0, 49.8, 77.6, 3.1, 7.1, "center");
   } else {
-    // Large, centred institution logo as on the reference card.
-    imageFit(doc, assets.logo, 29, 2.5, 27.6, 18);
+    // QR-free reverse: institutional identity and legal notices from the visual reference.
+    // No scanning, QR drawing, or per-card PDF work on the server.
+    imageFit(doc, assets.logo, 29, 3.1, 27.6, 17.5);
     doc.fillColor("#17211B");
-    text(doc, school.name, 4.5, 21, 76.6, 4, 7.1, "center");
+    text(doc, school.name, 4.5, 22, 76.6, 4.6, 7.1, "center");
 
     doc.fillColor("#27342B");
-    text(doc, "Cette carte est strictement personnelle et obligatoire pour les démarches scolaires et administratives.",
-      5, 27, 51, 7.7, 5.5, "center");
+    text(doc, "Cette carte est strictement personnelle et obligatoire pour toutes les démarches scolaires et administratives.",
+      8, 29, 69.6, 6.5, 5.8, "center");
     text(doc, "Toute reproduction, altération ou utilisation frauduleuse est formellement interdite.",
-      5, 35, 51, 6.2, 5.3, "center");
-    text(doc, `En cas de perte, contacter l’établissement : ${school.phone || "coordonnées à renseigner"}`,
-      5, 42, 51, 7, 5.6);
+      8, 36.5, 69.6, 5.6, 5.7, "center");
+    text(doc, `En cas de perte, prière de contacter l’établissement au : ${school.phone || "coordonnées à renseigner"}`,
+      8, 43.4, 69.6, 5.2, 5.5, "center");
 
-    // Vector QR encodes the unchanged, stable verification URL. No persistence,
-    // new network request or extra Supabase lookup is required at print time.
-    doc.fillColor("#155F40");
-    text(doc, "VÉRIFIER LA CARTE", 59, 23.3, 25, 3, 4.5, "center");
-    drawQr(doc, card.verificationUrl, 60.2, 26.2, 22.5);
-    doc.fillColor("#556459");
-    text(doc, card.fingerprint, 60, 49.0, 23, 1.7, 3.5, "center");
-    doc.rect(mm(3.5), mm(51.0), mm(78.6), mm(0.5)).fill(orange);
+    doc.rect(mm(3.5), mm(50.3), mm(78.6), mm(0.5)).fill(orange);
     doc.fillColor("#536157");
-    text(doc, "Mon Cahier — www.mon-cahier.com", 4, 51.8, 77.6, 1.8, 4.7, "center");
+    text(doc, "Mon Cahier — www.mon-cahier.com", 4, 51.3, 77.6, 2.0, 4.7, "center");
   }
   doc.restore().restore();
 }
