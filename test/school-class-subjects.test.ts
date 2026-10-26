@@ -20,8 +20,8 @@ const settings = {
 test("old schools have no class-subject feature and no implicit subjects", () => {
   assert.equal(classSubjectIds({}, "2026-2027", classA), null);
   assert.deepEqual(classSubjectIds(policy, "2026-2027", classA), [quran]);
-  assert.deepEqual(classSubjectIds(policy, "2027-2028", classA), []);
-  assert.deepEqual(classSubjectIds(policy, "2026-2027", "44444444-4444-4444-8444-444444444444"), []);
+  assert.equal(classSubjectIds(policy, "2027-2028", classA), null);
+  assert.equal(classSubjectIds(policy, "2026-2027", "44444444-4444-4444-8444-444444444444"), null);
   assert.equal(readClassSubjects({ school_class_subjects_v1: { version: 2 } })?.version, 1);
 });
 test("class-specific curriculum rejects malformed ids and duplicates", () => {
