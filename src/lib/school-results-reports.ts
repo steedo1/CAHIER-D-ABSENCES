@@ -74,6 +74,13 @@ type PlainStudent = {
 
 type PlainBulletinStudent = {
   student_id: string;
+  full_name?: string | null;
+  matricule?: string | null;
+  gender?: string | null;
+  birth_date?: string | null;
+  nationality?: string | null;
+  is_repeater?: boolean | null;
+  is_affecte?: boolean | null;
   general_avg?: number | null;
   rank?: number | null;
   admin_forced_nc?: boolean | null;
@@ -82,7 +89,7 @@ type PlainBulletinStudent = {
 type SpecializedDocument = {
   studentId: string;
   programReadiness?: Partial<Record<ReportTrack, boolean>>;
-  document?: Partial<Record<ReportTrack, {
+  document?: { student?: { id?: string; firstName?: string; lastName?: string; matricule?: string | null; gender?: string | null; birthDate?: string | null } } & Partial<Record<ReportTrack, {
     generalAverage: number | null;
     denominator: number;
     rank?: number | null;
@@ -161,9 +168,30 @@ export function buildSchoolReportClass(input: {
     regionalDirection: clean(roster.institution?.regional_direction),
     headTeacher: clean(roster.staff?.head_teacher?.display_name),
     educator: (roster.staff?.educators || []).map(row => clean(row.display_name)).filter(Boolean).join(", "),
-    students: roster.students.filter(row => !!row.id).map(row => {
-      const basic = ordinary.get(row.id || "");
-      const specific = specialized.get(row.id || "");
+    students: (specializedMode ? [...specialized.keys()] : [...ordinary.keys()]).map(studentId => {
+      // Le bulletin est la source de l'effectif pour la période, y compris
+      // les élèves retirés depuis. Le roster enrichit seulement l'identité.
+      const basic = ordinary.get(studentId);
+      const specific = specialized.get(studentId);
+      const docStudent = specific?.document?.student;
+      const rosterStudent = roster.students?.find(row => row.id === studentId);
+      const row: PlainStudent = rosterStudent || (specializedMode ? {
+        id: studentId,
+        matricule: docStudent?.matricule,
+        first_name: docStudent?.firstName,
+        last_name: docStudent?.lastName,
+        gender: docStudent?.gender,
+        birthdate: docStudent?.birthDate,
+      } : {
+        id: studentId,
+        matricule: basic?.matricule,
+        full_name: basic?.full_name,
+        gender: basic?.gender,
+        birthdate: basic?.birth_date,
+        nationality: basic?.nationality,
+        is_repeater: basic?.is_repeater,
+        is_affecte: basic?.is_affecte,
+      });
       const program = specific?.document?.[track];
       const validProgram = specific?.programReadiness?.[track] === true;
       const nativeDenominator = specializedMode ? score(program?.denominator) : 20;
@@ -175,7 +203,7 @@ export function buildSchoolReportClass(input: {
         : (basic?.admin_forced_nc === true ? null : score(basic?.rank));
       const name = clean(row.full_name) || [clean(row.last_name), clean(row.first_name)].filter(Boolean).join(" ");
       return {
-        id: row.id || "",
+        id: studentId,
         matricule: clean(row.matricule),
         name: name || "Élève sans nom",
         gender: sex(row.gender),
@@ -186,8 +214,6 @@ export function buildSchoolReportClass(input: {
         average: avg,
         denominator,
         rank,
-        // Ces champs ne sont pas exposes par les sources identifiees.
-        // Ne jamais les inventer a partir d'une remarque pedagogique.
         observation: "",
         decisionNumber: "",
       } satisfies SchoolReportStudent;
