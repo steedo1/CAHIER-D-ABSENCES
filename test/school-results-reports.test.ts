@@ -85,7 +85,12 @@ test("PDF HTML escapes school and student names and has repeating table headings
   assert.ok(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"));
   assert.ok(html.includes("ÉCOLE &amp; FILS"));
   assert.ok(html.includes("thead{display:table-header-group}"));
-  assert.ok(html.includes("N° déc. aff."));
+  assert.ok(html.includes("N° DEC AFF"));
+  assert.ok(html.includes("Document édité avec <strong>Mon Cahier</strong> &bull; www.mon-cahier.com"));
+  assert.ok(html.includes("@page{size:A4 portrait"));
+  assert.ok(html.includes("bottom:-15mm"));
+  assert.ok(html.includes("NOM ET PRENOMS"));
+  assert.ok(html.includes("RAPPORT 2 (PAR TRIMESTRE)"));
 });
 
 
@@ -109,4 +114,32 @@ test("reject Arabic report for an ordinary French class", () => {
     roster: { students: [] },
     bulletin: { ok: true, items: [] },
   }), /arabe indisponible/i);
+});
+
+test("RAPPORT 1 print retains 12-column multirow headings and recap wording", () => {
+  const cls = schoolFixture();
+  const html = buildSchoolReportHtml({
+    classes: [cls], kind: "statistics", filter: "all",
+    academicYear: "2026-2027", periodLabel: "1er trimestre", track: "french",
+  });
+  assert.ok(html.includes("Tableau des résultats <span class=\"accent\">des élèves affectés</span> par classe et par niveau"));
+  assert.ok(html.includes("Récapitulatif des résultats <span class=\"accent\">des élèves affectés et non affectés</span> par niveau"));
+  assert.ok(html.includes("Moy. entre 8,5 et 9,99"));
+  assert.ok(html.includes("Moy. inf. à 08,50"));
+  assert.ok(html.includes('rowspan="2"'));
+  assert.ok(html.includes('colspan="2"'));
+  assert.ok(html.includes("Document édité avec"));
+  assert.ok(html.includes("total-row"));
+});
+
+test("RAPPORT 2 does not print unknown-status section when it is empty", () => {
+  const cls = schoolFixture();
+  cls.students = cls.students.filter(s => s.isAffected !== null);
+  const html = buildSchoolReportHtml({
+    classes: [cls], kind: "nominal", filter: "all",
+    academicYear: "2026-2027", periodLabel: "2e trimestre", track: "french",
+  });
+  assert.ok(html.includes("MOY T2"));
+  assert.ok(html.includes("Liste des élèves non affectés"));
+  assert.ok(!html.includes("Liste des élèves à affectation non renseignée"));
 });
