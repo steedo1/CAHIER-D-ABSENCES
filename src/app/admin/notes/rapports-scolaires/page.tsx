@@ -167,6 +167,10 @@ export default function RapportsScolairesPage() {
     try {
       const targets = classId ? availableClasses.filter(cls => cls.id === classId) : availableClasses;
       if (!targets.length) throw new Error("Aucune classe pour cette année scolaire.");
+      const fields = await getJson<{
+        decision_numbers?: Record<string, string>;
+        observations?: Record<string, Record<string, { text: string; validated: true }>>;
+      }>("/api/admin/notes/school-report-fields?academic_year=" + encodeURIComponent(academicYear));
       const resultRows: SchoolReportClass[] = [];
       for (let offset = 0; offset < targets.length; offset += 2) {
         const batch = targets.slice(offset, offset + 2);
@@ -189,10 +193,21 @@ export default function RapportsScolairesPage() {
               "/roster?academic_year=" + encodeURIComponent(academicYear)),
             getJson<ReportBulletinResponse>("/api/admin/grades/bulletin?" + params.toString()),
           ]);
-          return buildSchoolReportClass({
+          const base = buildSchoolReportClass({
             id: cls.id, label: cls.label, level: cls.level || "",
             roster, bulletin, track,
           });
+          const observations = fields.observations?.[p.id] || {};
+          return {
+            ...base,
+            students: base.students.map(student => ({
+              ...student,
+              decisionNumber: fields.decision_numbers?.[student.id] || "",
+              // Seules les observations officiellement validées remontent aux exports.
+              observation: observations[student.id]?.validated
+                ? observations[student.id].text : "",
+            })),
+          };
         }));
         resultRows.push(...snapshots);
       }
