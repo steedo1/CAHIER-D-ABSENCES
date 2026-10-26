@@ -55,7 +55,7 @@ test("specialized /10 scores retain their native value and use normalized thresh
   const cls = buildSchoolReportClass({
     id: "epc", label: "CP1 arabe", level: "CP1", track: "arabic",
     roster: { students: [{ id: "s1", full_name: "Élève", gender: "F", is_affecte: false }] },
-    bulletin: { ok: true, specialized: { engine: "specialized", documents: [
+    bulletin: { ok: true, specialized: { engine: "specialized", programs: ["arabic"], documents: [
       { studentId: "s1", programReadiness: { arabic: true },
         document: { arabic: { generalAverage: 6, denominator: 10, rank: 1 } } },
     ] } },
