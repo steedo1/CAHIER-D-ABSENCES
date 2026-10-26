@@ -1,0 +1,89 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  buildSchoolReportClass, buildStatisticsSections, buildSchoolCsv, selectAffectation, pct,
+} from "../src/lib/school-results-reports";
+import { buildSchoolReportHtml } from "../src/lib/school-results-print";
+
+function schoolFixture() {
+  return buildSchoolReportClass({
+    id: "c1", label: "6ème 1", level: "6ème", track: "french",
+    roster: {
+      class: { label: "6ème 1", level: "6ème" },
+      institution: { name: "ÉCOLE & FILS", regional_direction: "DRENA TEST" },
+      staff: { head_teacher: { display_name: "M. Principal" }, educators: [{ display_name: "Mme Éducatrice" }] },
+      students: [
+        { id: "a", matricule: "001", full_name: "Aline", gender: "F", is_affecte: true, birthdate: "2014-01-01", nationality: "Ivoirienne" },
+        { id: "b", matricule: "002", full_name: "Binta", gender: "F", is_affecte: false },
+        { id: "c", matricule: "=3+3", full_name: "=HYPERLINK()", gender: "M", is_affecte: false },
+        { id: "d", matricule: "004", full_name: "Diane", gender: "F", is_affecte: null },
+        { id: "e", matricule: "005", full_name: "Elsa", gender: "F", is_affecte: true },
+      ],
+    },
+    bulletin: { ok: true, items: [
+      { student_id: "a", general_avg: 12, rank: 2 },
+      { student_id: "b", general_avg: 9, rank: 3 },
+      { student_id: "c", general_avg: 6, rank: 4 },
+      { student_id: "d", general_avg: 15, rank: 1 },
+      { student_id: "e", general_avg: 17, rank: 5, admin_forced_nc: true },
+    ] },
+  });
+}
+
+test("affectation is independent of NC and unknown does not become non-affecte", () => {
+  const cls = schoolFixture();
+  assert.equal(selectAffectation(cls.students, "affected").length, 2);
+  assert.equal(selectAffectation(cls.students, "unaffected").length, 2);
+  assert.equal(cls.students.find(s => s.id === "e")?.average, null);
+  assert.equal(cls.students.find(s => s.id === "e")?.rank, null);
+  assert.equal(cls.students.find(s => s.id === "d")?.isAffected, null);
+  assert.equal(cls.students.find(s => s.id === "a")?.rank, 2);
+});
+
+test("statistical thresholds, gender and classed denominators are consistent", () => {
+  const section = buildStatisticsSections([schoolFixture()], "all").at(-1)!;
+  const total = section.schoolRows.find(r => r.gender === "T")!.total;
+  assert.deepEqual([total.effectif, total.classed, total.unclassed], [5, 4, 1]);
+  assert.deepEqual([total.above10, total.between850, total.below850], [2, 1, 1]);
+  assert.equal(pct(total.above10, total.classed), "50 %");
+  assert.equal(section.schoolRows.find(r => r.gender === "F")!.total.effectif, 4);
+  assert.equal(section.schoolRows.find(r => r.gender === "G")!.total.effectif, 1);
+  assert.equal(buildStatisticsSections([schoolFixture()], "affected")[0].schoolRows[2].total.effectif, 2);
+});
+
+test("specialized /10 scores retain their native value and use normalized threshold", () => {
+  const cls = buildSchoolReportClass({
+    id: "epc", label: "CP1 arabe", level: "CP1", track: "arabic",
+    roster: { students: [{ id: "s1", full_name: "Élève", gender: "F", is_affecte: false }] },
+    bulletin: { ok: true, specialized: { engine: "specialized", documents: [
+      { studentId: "s1", programReadiness: { arabic: true },
+        document: { arabic: { generalAverage: 6, denominator: 10, rank: 1 } } },
+    ] } },
+  });
+  assert.equal(cls.students[0].average, 6);
+  assert.equal(cls.students[0].denominator, 10);
+  assert.equal(cls.students[0].rank, 1);
+  assert.equal(buildStatisticsSections([cls], "all").at(-1)!.schoolRows[2].total.above10, 1);
+});
+
+test("CSV remains UTF-8, escaped, without spreadsheet formula execution", () => {
+  const csv = buildSchoolCsv([schoolFixture()], "nominal", "all");
+  assert.ok(csv.startsWith("\uFEFF"));
+  assert.match(csv, /"'=HYPERLINK\(\)"/);
+  assert.match(csv, /"'=3\+3"/);
+  assert.match(csv, /;"/);
+  assert.doesNotMatch(csv, /undefined/);
+});
+
+test("PDF HTML escapes school and student names and has repeating table headings", () => {
+  const cls = schoolFixture();
+  cls.students[0].name = "<script>alert(1)</script>";
+  const html = buildSchoolReportHtml({
+    classes: [cls], kind: "nominal", filter: "all", academicYear: "2026-2027",
+    periodLabel: "1er trimestre", track: "french",
+  });
+  assert.ok(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"));
+  assert.ok(html.includes("ÉCOLE &amp; FILS"));
+  assert.ok(html.includes("thead{display:table-header-group}"));
+  assert.ok(html.includes("N° déc. aff."));
+});
