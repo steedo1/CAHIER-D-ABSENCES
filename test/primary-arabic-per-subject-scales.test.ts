@@ -88,7 +88,7 @@ test("refuser les doublons, mauvaises matières et barèmes hors bornes", () => 
 });
 
 test("une matière arabe sans exception conserve /10 au lieu de devenir indisponible", () => {
-  const settings = { [FRANCO_ARABIC_REPORTS_SETTINGS_KEY]: report() };
+  const settings = { [FRANCO_ARABIC_REPORTS_SETTINGS_KEY]: { ...report(), primaryArabicDefaultScale: true } };
   const common = { year: "2026-2027", classId: "44444444-4444-4444-8444-444444444444",
     level: "CP1", track: "arabic" as const, subjectName: "Matière arabe" };
   assert.equal(primarySubjectScale(settings, { ...common, subjectId: quran }), 20);
