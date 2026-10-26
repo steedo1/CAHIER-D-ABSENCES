@@ -14,7 +14,7 @@ try {
   await page.getByRole("button",{name:/Sélectionner les résultats \(12\)/}).waitFor();
   await page.getByRole("button",{name:/Sélectionner les résultats/}).click();
   await page.getByRole("button",{name:"Aperçu recto verso",exact:true}).click();
-  await page.getByAltText("QR obligatoire   const reverse = page.getByLabel("Aperçu verso");
+  const reverse = page.locator('[aria-label="Aperçu verso"]');
   await reverse.waitFor();
   assert.match(await reverse.textContent() || "", /En cas de perte/);
   assert.equal(await reverse.locator('img[alt="QR obligatoire de vérification"]').count(),0,"new cards must not display a QR");
@@ -25,7 +25,7 @@ try {
   await reverse.waitFor();
   assert.equal(await reverse.locator('img[alt="QR obligatoire de vérification"]').count(),0);
   await selection.first().check();
-cards/workspace-desktop.png",fullPage:true});
+  await page.screenshot({path:"tmp/school-cards/workspace-desktop.png",fullPage:true});
   await page.getByRole("checkbox",{name:/J’accepte d’imprimer/}).check();
   await page.getByRole("button",{name:"Générer les PDF A4 / Imprimer",exact:true}).click();
   await page.getByRole("link",{name:/Cartes-2026-2027-1-12.pdf/}).waitFor({timeout:60000});
