@@ -2688,7 +2688,12 @@ function LegacyConseilClassePage() {
               students={councilRows.map(row => ({
                 id: row.student_id,
                 name: row.full_name,
-                suggestion: row.appreciation || "",
+                // Une distinction est proposée automatiquement, jamais une sanction.
+                // Les sanctions (AVT/BT) doivent être décidées par un responsable.
+                suggestion: row.mentions.distinction === "excellence" ? "TH + Excellence"
+                  : row.mentions.distinction === "honour" ? "THF"
+                  : row.mentions.distinction === "encouragement" ? "THE"
+                  : "",
               }))}
             />
           ) : null}
