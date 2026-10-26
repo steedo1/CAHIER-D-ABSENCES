@@ -1329,9 +1329,10 @@ export default function ClassListPrintPage() {
                             ...prev, [student.id]: e.target.value,
                           }))}
                           maxLength={120}
-                          placeholder="Facultatif"
+                          disabled={row.is_affecte !== true}
+                          placeholder={row.is_affecte === true ? "Facultatif" : "NÉANT"}
                           aria-label={"Numéro de décision d'affectation de " + student.full_name}
-                          className="w-[190px] rounded-lg border px-2 py-1"
+                          className="w-[190px] rounded-lg border px-2 py-1 disabled:bg-slate-100 disabled:text-slate-400"
                         />
                       </td>
                       <td className="px-3 py-2">
