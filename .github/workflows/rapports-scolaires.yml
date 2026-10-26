@@ -5,6 +5,11 @@ on:
     branches: [feat/rapports-scolaires-pdf-csv-20261026]
     paths:
       - 'src/app/admin/notes/rapports-scolaires/**'
+      - 'src/app/admin/classes/liste/**'
+      - 'src/app/admin/notes/conseil-classe/**'
+      - 'src/app/api/admin/notes/school-report-fields/**'
+      - 'src/components/admin/SchoolReportObservationsPanel.tsx'
+      - 'src/components/admin/SpecializedCorrespondentReports.tsx'
       - 'src/lib/school-results-*'
       - 'src/lib/auth/file-correspondent.ts'
       - 'src/app/admin/ui/sidebar-nav.tsx'
@@ -15,6 +20,11 @@ on:
     branches: [migration-render-test-20261021]
     paths:
       - 'src/app/admin/notes/rapports-scolaires/**'
+      - 'src/app/admin/classes/liste/**'
+      - 'src/app/admin/notes/conseil-classe/**'
+      - 'src/app/api/admin/notes/school-report-fields/**'
+      - 'src/components/admin/SchoolReportObservationsPanel.tsx'
+      - 'src/components/admin/SpecializedCorrespondentReports.tsx'
       - 'src/lib/school-results-*'
       - 'src/lib/auth/file-correspondent.ts'
       - 'src/app/admin/ui/sidebar-nav.tsx'
