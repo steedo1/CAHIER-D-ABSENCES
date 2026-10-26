@@ -13,8 +13,9 @@ export const dynamic = "force-dynamic";
  * modifié entre la lecture et l'enregistrement.
  */
 const KEY = "school_report_fields_v1";
-const READ_ROLES = ["admin", "super_admin", "founder", "file_correspondent"];
-const WRITE_ROLES = ["admin", "super_admin", "file_correspondent"];
+const READ_ROLES = ["admin", "super_admin", "founder", "file_correspondent", "finance_manager", "finance"];
+// Même périmètre de correction du profil élève que la liste de classe existante.
+const WRITE_ROLES = ["admin", "super_admin", "founder", "file_correspondent", "finance_manager", "finance"];
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const yearRe = /^20\d{2}-20\d{2}$/;
 
