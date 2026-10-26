@@ -202,7 +202,7 @@ export default function RapportsScolairesPage() {
             ...base,
             students: base.students.map(student => ({
               ...student,
-              decisionNumber: fields.decision_numbers?.[student.id] || "",
+              decisionNumber: student.isAffected === true ? (fields.decision_numbers?.[student.id] || "") : "",
               // Seules les observations officiellement validées remontent aux exports.
               observation: observations[student.id]?.validated
                 ? observations[student.id].text : "",
