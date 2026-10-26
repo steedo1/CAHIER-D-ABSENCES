@@ -182,7 +182,7 @@ export default function RapportsScolairesPage() {
           }
           const params = new URLSearchParams({
             class_id: cls.id, academic_year: academicYear,
-            period_id: p.id, from: p.start_date, to: p.end_date, export_light: "1",
+            period_id: p.id, from: p.start_date, to: p.end_date, export_light: "1", active_only: "false",
           });
           const [roster, bulletin] = await Promise.all([
             getJson<ReportRosterResponse>("/api/admin/classes/" + encodeURIComponent(cls.id) +
