@@ -292,19 +292,26 @@ function Summary({ program, compact, ordinary }: { program: BulletinProgram; com
     ? `${program.rank} / ${program.classSize}` : "—";
   return <div className={`${styles.summary} ${compact ? styles.compactSummary : ""}`}>
     {(program.primarySubjectScores || program.ciPrimaryFrench) && <div className={styles.summaryMetric}>
-      <span>Total des compositions</span>
+      <span>{program.track === "arabic"
+        ? <ArabicFrench arabic="مجموع نقط الامتحانات" french="Total des compositions" />
+        : "Total des compositions"}</span>
       <strong>{totalBarèmes > 0 ? `${number(totalPoints)}/${totalBarèmes}` : "—"}</strong>
     </div>}
     <div className={styles.summaryMetric}>
-      <span>{ordinary ? "Moyenne générale" : `Moyenne ${program.track === "arabic" ? "arabe" : "française"}`}</span>
+      <span>{program.track === "arabic"
+        ? <ArabicFrench arabic="المعدل العام" french="Moyenne arabe" />
+        : ordinary ? "Moyenne générale" : "Moyenne française"}</span>
       <strong>{program.allowHistoricalNc && program.generalAverage === null ? "NC" : score}<small> / {program.denominator > 0 ? program.denominator : "—"}</small></strong>
     </div>
-    <div className={styles.summaryMetric}><span>Rang</span><strong>{rank}</strong></div>
+    <div className={styles.summaryMetric}><span>{program.track === "arabic"
+      ? <ArabicFrench arabic="الرتبة" french="Rang" /> : "Rang"}</span><strong>{rank}</strong></div>
     {program.historicalSecondary && <div className={styles.summaryMetric}>
       <span>Moyenne de conduite</span><strong>{number(program.historicalSecondary.conductAverage)}</strong>
     </div>}
     {!compact && <div className={styles.summaryMetric}>
-      <span>Absences / Retards</span><strong className={styles.miniMetric}>
+      <span>{program.track === "arabic"
+          ? <ArabicFrench arabic="الغياب / التأخر" french="Absences / Retards" />
+          : "Absences / Retards"}</span><strong className={styles.miniMetric}>
         {program.absences || "—"} / {program.lates || "—"}
       </strong>
     </div>}
@@ -318,24 +325,26 @@ function Signature({ name, title }: { name?: string | null; title: string }) {
 }
 
 function Panel({ program, compact, ordinary }: { program: BulletinProgram; compact: boolean; ordinary: boolean }) {
+  const arabic = program.track === "arabic";
+  const label = (ar: string, fr: string) => arabic ? <ArabicFrench arabic={ar} french={fr} /> : fr;
   const teachers = [...new Set(program.subjects.map(row => row.teacherName).filter(Boolean))];
   const teacher = teachers.length === 1 ? teachers[0] : program.teacherName;
   return <section className={`${styles.program} ${program.track === "arabic" ? styles.arabicProgram : ""}`}>
     <Heading track={program.track} compact={compact} ordinary={ordinary}/>
-    {teacher && (compact || teacher !== program.teacherName) && <div className={styles.programTeacher}>Enseignant : {teacher}</div>}
+    {teacher && (compact || teacher !== program.teacherName) && <div className={styles.programTeacher}>{label("المعلم", "Enseignant")} : {teacher}</div>}
     <CourseTable program={program} compact={compact}/>
     <Summary program={program} compact={compact} ordinary={ordinary}/>
     {program.primaryAnnual && <div className={styles.primaryAnnual}>
       <table aria-label="Récapitulatif annuel des compositions">
         <tbody>
-          <tr><th colSpan={2}>Récapitulatif des compositions officielles</th></tr>
+          <tr><th colSpan={2}>{label("ملخص الامتحانات الرسمية", "Récapitulatif des compositions officielles")}</th></tr>
           {program.primaryAnnual.ordinary.map((item, index) => <tr key={index}>
             <th>{item.label}</th><td>{number(item.average)} /{program.denominator}</td>
           </tr>)}
-          <tr><th>Moyenne des compositions</th><td>{number(program.primaryAnnual.ordinaryAverage)} /{program.denominator}</td></tr>
-          <tr><th>Composition de passage (×2)</th><td>{number(program.primaryAnnual.passageAverage)} /{program.denominator}</td></tr>
-          <tr><th>Moyenne générale annuelle</th><td><strong>{number(program.primaryAnnual.annualAverage)} /{program.denominator}</strong></td></tr>
-          {program.primaryAnnual.decision && <tr><th>Décision de passage</th><td>{program.primaryAnnual.decision}</td></tr>}
+          <tr><th>{label("معدل الامتحانات", "Moyenne des compositions")}</th><td>{number(program.primaryAnnual.ordinaryAverage)} /{program.denominator}</td></tr>
+          <tr><th>{label("امتحان الانتقال", "Composition de passage")} (×2)</th><td>{number(program.primaryAnnual.passageAverage)} /{program.denominator}</td></tr>
+          <tr><th>{label("المعدل السنوي العام", "Moyenne générale annuelle")}</th><td><strong>{number(program.primaryAnnual.annualAverage)} /{program.denominator}</strong></td></tr>
+          {program.primaryAnnual.decision && <tr><th>{label("قرار الانتقال", "Décision de passage")}</th><td>{program.primaryAnnual.decision}</td></tr>}
         </tbody>
       </table>
     </div>}
@@ -369,7 +378,7 @@ function Panel({ program, compact, ordinary }: { program: BulletinProgram; compa
       </div>}
     </div>}
     <div className={styles.appreciation}>
-      <span>Appréciation générale</span>
+      <span>{label("التقدير العام", "Appréciation générale")}</span>
       <p>{program.appreciation || (program.ciPrimaryFrench ? ciPrimaryFrenchAppreciation(program.generalAverage, program.denominator) : null) || "—"}</p>
     </div>
   </section>;
@@ -378,6 +387,7 @@ function Panel({ program, compact, ordinary }: { program: BulletinProgram; compa
 function Footer({ model, programs, ordinary }: {
   model: BulletinDocument; programs: BulletinProgram[]; ordinary: boolean;
 }) {
+  const arabic = programs.length === 1 && programs[0].track === "arabic";
   return <footer className={styles.footer}>
     <div className={styles.signatures}>
       {model.school.isFrancoArabic && programs.length > 1 ? <Signature
@@ -386,18 +396,26 @@ function Footer({ model, programs, ordinary }: {
       /> : programs.map(p => <Signature
         key={p.track}
         name={p.directorName}
-        title={model.school.isFrancoArabic ? SCHOOL_TEACHING_DIRECTOR_TITLE : ordinary ? "Direction de l’établissement" : (p.track === "french" ? "Directeur de l’enseignement français" : "Directeur de l’enseignement arabe")}
+        title={p.track === "arabic"
+           ? "مدير التعليم العربي (Directeur de l’enseignement arabe)"
+           : model.school.isFrancoArabic ? SCHOOL_TEACHING_DIRECTOR_TITLE
+           : ordinary ? "Direction de l’établissement" : "Directeur de l’enseignement français"}
       />)}
       <div className={styles.stampBox}>
-        <span>Cachet de l’établissement</span><div className={styles.stampSpace}/>
-        <strong>{model.school.city || "Lieu"} · Signature / cachet</strong>
+        <span>{arabic ? <ArabicFrench arabic="ختم المؤسسة" french="Cachet de l’établissement" />
+          : "Cachet de l’établissement"}</span><div className={styles.stampSpace}/>
+        <strong>{model.school.city || "Lieu"} · {arabic
+          ? <ArabicFrench arabic="التوقيع / الختم" french="Signature / cachet" />
+          : "Signature / cachet"}</strong>
       </div>
     </div>
     <div className={styles.footerLine}>
-      <span>Mon Cahier · Document scolaire</span>
+      <span>{arabic
+          ? <ArabicFrench arabic="دفتر المدرسة" french="Mon Cahier · Document scolaire" />
+          : "Mon Cahier · Document scolaire"}</span>
       {model.sample && <strong>MAQUETTE · DONNÉES FICTIVES</strong>}
       {model.draft && <strong>BROUILLON · NON VALIDÉ</strong>}
-      <span>Édition A4</span>
+      <span>{arabic ? <ArabicFrench arabic="ورقة A4" french="Édition A4" /> : "Édition A4"}</span>
     </div>
   </footer>;
 }
