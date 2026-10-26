@@ -207,6 +207,11 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
     Icon: FileSpreadsheet,
   },
   {
+    href: "/admin/notes/rapports-scolaires",
+    label: "Rapports scolaires",
+    Icon: FileText,
+  },
+  {
     href: "/admin/finance/statistiques-generales",
     label: "Statistiques générales",
     Icon: BarChart3,
