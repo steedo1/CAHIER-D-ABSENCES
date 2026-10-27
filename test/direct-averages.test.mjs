@@ -198,3 +198,55 @@ test('Moyennes directes : vraies routes, droits, trimestres, bulletins, conduite
   });
  }finally{e.close();}
 });
+
+
+test('Français premier cycle : sous-matières pondérées, trimestres isolés', async () => {
+  const s=state(), e=await engine(s), {routes,request}=e;
+  try {
+    s.tables.subjects=[{id:subject,name:'Français',code:'FR'}];
+    const parts=[
+      {id:'70000000-0000-0000-0000-000000000001',label:'Composition française',coeff:2},
+      {id:'70000000-0000-0000-0000-000000000002',label:'Expression orale',coeff:1},
+      {id:'70000000-0000-0000-0000-000000000003',label:'Orthographe-Grammaire',coeff:1},
+    ];
+    s.tables.grade_subject_components=parts.map((part,index)=>({
+      id:part.id,institution_id:school,subject_id:subject,level:'3eme',
+      label:part.label,short_label:part.label,code:'fr_'+index,coeff_in_subject:part.coeff,
+      order_index:index+1,is_active:true,
+    }));
+    s.tables.classes[0].level='3e';
+    const data=await routes.direct.GET(request('/direct'+query(1)));
+    assert.equal(data.status,200,await data.clone().text());
+    const details=await data.json();
+    assert.deepEqual(details.components.map(x=>x.label),parts.map(x=>x.label));
+    const comp={ [parts[0].id]:14, [parts[1].id]:10, [parts[2].id]:6 };
+    const post=await routes.direct.POST(request('/direct',{
+      ...body(),items:[{student_id:student,component_averages:comp}],
+    }));
+    assert.equal(post.status,200,await post.clone().text());
+    assert.equal(s.tables.grade_evaluations,undefined);
+    const saved=await (await routes.direct.GET(request('/direct'+query(1)))).json();
+    assert.deepEqual(saved.items.find(row=>row.student_id===student).component_averages,comp);
+    const avg=await routes.averages.GET(request('/averages'+query(1)));
+    assert.equal(avg.status,200,await avg.clone().text());
+    assert.equal((await avg.json()).items.find(row=>row.student_id===student)?.average,11);
+    const bulletin=await routes.bulletin.GET(request('/bulletin?class_id='+classroom+'&from=2026-09-14&to=2026-12-04&export_light=1'));
+    assert.equal(bulletin.status,200,await bulletin.clone().text());
+    const b=(await bulletin.json()).items.find(row=>row.student_id===student);
+    assert.equal(b.per_subject.find(row=>row.subject_id===subject).avg20,11,JSON.stringify(b));
+    assert.deepEqual(b.per_subject_components.filter(row=>row.subject_id===subject).map(row=>row.avg20),[14,10,6]);
+    assert.equal((await (await routes.direct.GET(request('/direct'+query(2)))).json()).items.find(row=>row.student_id===student).component_averages[parts[0].id],undefined);
+    assert.equal((await routes.direct.POST(request('/direct',{
+      ...body(),items:[{student_id:student,component_averages:{[parts[2].id]:null}}],
+    }))).status,200);
+    const after=(await (await routes.direct.GET(request('/direct'+query(1)))).json()).items.find(row=>row.student_id===student);
+    assert.equal(after.component_averages[parts[0].id],14);
+    assert.equal(after.component_averages[parts[2].id],undefined);
+    assert.equal((await routes.direct.POST(request('/direct',{
+      ...body(),items:[{student_id:student,component_averages:{[randomUUID()]:13}}],
+    }))).status,400);
+    assert.equal((await routes.direct.POST(request('/direct',{
+      ...body(),items:[{student_id:student,component_averages:{[parts[0].id]:23}}],
+    }))).status,400);
+  }finally{e.close();}
+});
