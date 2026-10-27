@@ -37,3 +37,57 @@ test('Écran de saisie directe : chargement, décimales, sauvegarde, erreur et a
   await window.happyDOM.close();
  }
 });
+
+
+test('Français premier cycle : la grille affiche les trois sous-matières, conserve les vides et enregistre sans moyenne fictive',async()=>{
+ const window=new Window({url:'https://fixture.test/admin/notes/register'});
+ const keys=['window','document','navigator','HTMLElement','HTMLInputElement','Event','IS_REACT_ACT_ENVIRONMENT'];
+ const previous=Object.fromEntries(keys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+ for(const key of keys)Object.defineProperty(globalThis,key,{configurable:true,writable:true,value:key==='IS_REACT_ACT_ENVIRONMENT'?true:key==='window'?window:window[key]});
+ const React=await import('react');const {createRoot}=await import('react-dom/client');
+ const compiled=await require('esbuild').build({entryPoints:['src/components/admin/DirectSubjectAverages.tsx'],bundle:true,write:false,jsx:'automatic',platform:'node',format:'cjs',external:['react','react/jsx-runtime']});
+ const mod={exports:{}};new Function('require','module','exports',compiled.outputFiles[0].text)(require,mod,mod.exports);
+ const parts=[
+  {id:'component1',label:'Composition française',coeff:2},
+  {id:'component2',label:'Expression orale',coeff:1},
+  {id:'component3',label:'Orthographe-Grammaire',coeff:1},
+ ];
+ const posts=[], originalFetch=globalThis.fetch;
+ globalThis.fetch=async(_url,opts={})=>{
+  if(opts.method==='POST'){const body=JSON.parse(opts.body);posts.push(body);return Response.json({ok:true,saved:body.items.map(it=>it.student_id)});}
+  return Response.json({ok:true,components:parts,items:[
+   {student_id:'one',full_name:'KOFFI Marie',matricule:'A01',average:null,component_averages:{}},
+   {student_id:'two',full_name:'YAO Jean',matricule:'A02',average:null,component_averages:{component1:0}},
+  ]});
+ };
+ const host=window.document.createElement('div');window.document.body.append(host);
+ const root=createRoot(host);let dirty=false;
+ const fill=async(input,value)=>{await React.act(async()=>{
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(input,value);
+  input.dispatchEvent(new window.Event('input',{bubbles:true}));
+ });};
+ try{
+  await React.act(async()=>root.render(React.createElement(mod.exports.default,{classId:'class',subjectId:'french',periodId:'T1',onDirtyChange:value=>{dirty=value;},onSavingChange:()=>{}})));
+  assert.equal(host.querySelectorAll('tbody tr').length,2);
+  for(const p of parts)assert.match(host.textContent,new RegExp(p.label));
+  const input=host.querySelector('[aria-label="Composition française de KOFFI Marie"]');
+  assert.ok(input);assert.equal(input.value,'');
+  const zero=host.querySelector('[aria-label="Composition française de YAO Jean"]');
+  assert.equal(zero.value,'0');
+  await fill(input,'14,50');assert.equal(dirty,true);
+  const button=[...host.querySelectorAll('button')].find(n=>n.textContent==='Enregistrer les moyennes');
+  await React.act(async()=>button.click());
+  assert.equal(posts.length,1);
+  assert.deepEqual(posts[0].items,[{student_id:'one',component_averages:{component1:14.5}}]);
+  assert.equal(dirty,false);
+  assert.match(host.textContent,/Moyennes enregistrées/);
+  await fill(input,'');
+  await React.act(async()=>button.click());
+  assert.deepEqual(posts[1].items,[{student_id:'one',component_averages:{component1:null}}]);
+  assert.equal(dirty,false);
+ }finally{
+  await React.act(async()=>root.unmount());globalThis.fetch=originalFetch;
+  for(const key of keys){if(previous[key])Object.defineProperty(globalThis,key,previous[key]);else delete globalThis[key];}
+  await window.happyDOM.close();
+ }
+});
