@@ -201,7 +201,7 @@ test("NC students never receive a fictitious rank from bulletin defaults", () =>
   assert.match(html, /<td>NC<\/td><td>NEANT<\/td>/);
   const csv = buildSchoolCsv([cls], "nominal", "all");
   const dataRow = csv.replace(/^\uFEFF/, "").split("\r\n")[1].split(";");
-  assert.equal(dataRow[14], ""); // La colonne Rang reste vide pour NC.
+  assert.equal(dataRow[14], '""'); // CSV : colonne Rang vide (champ entre guillemets).
 });
 
 test("RAPPORT 2 prints unknown assignment only for the class containing an unknown pupil", () => {
