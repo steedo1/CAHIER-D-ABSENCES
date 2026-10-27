@@ -286,8 +286,9 @@ test("RAPPORT 1 prints 0 % only if pupils are classed", () => {
   });
   // Binta a 9/20 : 0 élèves >=10 sur un élève classé, donc 0 %.
   assert.match(html, /<td>6ème 1<\/td><td>F<\/td><td>1<\/td><td>1<\/td><td>0<\/td><td>0<\/td><td>0 %<\/td>/);
-  // La moyenne non classée n'est jamais confondue avec une vraie moyenne 0.
-  assert.match(html, /<td>0<\/td><td>0<\/td><td>0<\/td><td>0<\/td><td>—<\/td>/);
+  // La catégorie F a réellement une élève classée : 0 % est donc calculable.
+  assert.ok(html.includes("<td>0 %</td>"));
+  assert.ok(!html.includes("NEANT"));
 });
 
 test("RAPPORT 2 uses dashes for missing data but retains NC and blank observation", () => {
