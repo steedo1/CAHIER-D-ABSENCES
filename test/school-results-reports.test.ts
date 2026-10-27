@@ -198,7 +198,7 @@ test("NC students never receive a fictitious rank from bulletin defaults", () =>
     classes: [cls], kind: "nominal", filter: "all",
     academicYear: "2026-2027", periodLabel: "1er trimestre", track: "french",
   });
-  assert.match(html, /<td>NC<\/td><td>NEANT<\/td>/);
+  assert.match(html, /<td>NC<\/td><td>—<\/td>/);
   const csv = buildSchoolCsv([cls], "nominal", "all");
   const dataRow = csv.replace(/^\uFEFF/, "").split("\r\n")[1].split(";");
   assert.equal(dataRow[14], '""'); // CSV : colonne Rang vide (champ entre guillemets).
@@ -257,4 +257,55 @@ test("unknown repeater status is shown as NR, never as wrapped NEANT", () => {
   assert.match(html, /<td>NR<\/td><td>AFF<\/td>/);
   assert.ok(!html.includes("<td>NEANT</td><td>AFF</td>"));
   assert.match(html, /<td>R<\/td><td>NAF<\/td>|<td>R<\/td><td>AFF<\/td>|<td>NR<\/td><td>NAF<\/td>/);
+});
+
+
+test("RAPPORT 1 prints actual zeros without inventing percentage or average", () => {
+  const cls = schoolFixture();
+  for (const student of cls.students) {
+    student.average = null;
+    student.rank = null;
+  }
+  const html = buildSchoolReportHtml({
+    classes: [cls], kind: "statistics", filter: "all",
+    academicYear: "2026-2027", periodLabel: "1er trimestre", track: "french",
+  });
+  // Section affectés : aucun garçon, aucun résultat classé, aucun taux calculable.
+  assert.match(html, /<td>6ème 1<\/td><td>G<\/td><td>0<\/td><td>0<\/td><td>0<\/td>/);
+  assert.match(html, /<td>6ème 1<\/td><td>F<\/td><td>2<\/td><td>0<\/td><td>2<\/td><td>0<\/td><td>—<\/td>/);
+  assert.match(html, /<td>TOTAL ÉTABLISSEMENT<\/td><td>T<\/td><td>5<\/td><td>0<\/td><td>5<\/td>/);
+  assert.ok(!html.includes("NEANT"));
+  assert.ok(!html.includes("<td>0,00</td>")); // pas de fausse moyenne 0/20
+});
+
+test("RAPPORT 1 prints 0 % only if pupils are classed", () => {
+  const cls = schoolFixture();
+  const html = buildSchoolReportHtml({
+    classes: [cls], kind: "statistics", filter: "unaffected",
+    academicYear: "2026-2027", periodLabel: "1er trimestre", track: "french",
+  });
+  // Binta a 9/20 : 0 élèves >=10 sur un élève classé, donc 0 %.
+  assert.match(html, /<td>6ème 1<\/td><td>F<\/td><td>1<\/td><td>1<\/td><td>0<\/td><td>0<\/td><td>0 %<\/td>/);
+  // La catégorie F a réellement une élève classée : 0 % est donc calculable.
+  assert.ok(html.includes("<td>0 %</td>"));
+  assert.ok(!html.includes("NEANT"));
+});
+
+test("RAPPORT 2 uses dashes for missing data but retains NC and blank observation", () => {
+  const cls = schoolFixture();
+  const student = cls.students.find(row => row.id === "a")!;
+  student.matricule = "";
+  student.birthdate = "";
+  student.nationality = "";
+  student.decisionNumber = "";
+  student.average = null;
+  student.rank = null;
+  student.observation = "";
+  const html = buildSchoolReportHtml({
+    classes: [cls], kind: "nominal", filter: "all",
+    academicYear: "2026-2027", periodLabel: "1er trimestre", track: "french",
+  });
+  assert.match(html, /<td>1<\/td><td>—<\/td><td>Aline<\/td><td>F<\/td><td>—<\/td><td>—<\/td>/);
+  assert.match(html, /<td>AFF<\/td><td>—<\/td><td>NC<\/td><td>—<\/td><td><\/td>/);
+  assert.ok(!html.includes("NEANT"));
 });
