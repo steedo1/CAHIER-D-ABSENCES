@@ -119,13 +119,12 @@ export default function RapportsScolairesPage() {
       getJson<{ items?: SchoolClass[] }>("/api/admin/classes?academic_year=all&education_type=all&limit=5000"),
       getJson<{ settings_json?: unknown }>("/api/admin/institution/settings"),
     ]).then(([json, institution]) => {
-        if (cancelled) return;
-        setSchoolSettings(institution.settings_json ?? null);
-        if (cancelled) return;
-        const data = (json.items || []).filter(c => c.id && c.academic_year);
-        setClasses(data);
-        setAcademicYear(Array.from(new Set(data.map(c => c.academic_year))).sort().reverse()[0] || "");
-      }).catch(e => { if (!cancelled) setError(e.message); })
+      if (cancelled) return;
+      setSchoolSettings(institution.settings_json ?? null);
+      const data = (json.items || []).filter(c => c.id && c.academic_year);
+      setClasses(data);
+      setAcademicYear(Array.from(new Set(data.map(c => c.academic_year))).sort().reverse()[0] || "");
+    }).catch(e => { if (!cancelled) setError(e.message); })
       .finally(() => { if (!cancelled) setLoadingClasses(false); });
     return () => { cancelled = true; };
   }, []);
