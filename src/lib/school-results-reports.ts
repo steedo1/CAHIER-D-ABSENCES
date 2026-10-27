@@ -199,8 +199,11 @@ export function buildSchoolReportClass(input: {
       const avg = specializedMode
         ? (validProgram ? score(program?.generalAverage) : null)
         : (basic?.admin_forced_nc === true ? null : score(basic?.general_avg));
-      const rank = specializedMode ? (validProgram ? score(program?.rank) : null)
-        : (basic?.admin_forced_nc === true ? null : score(basic?.rank));
+      // Sans moyenne validée, le statut est NC : un rang provenant d'une
+      // valeur par défaut du bulletin ne doit jamais devenir un classement.
+      const rank = avg === null ? null : (specializedMode
+        ? (validProgram ? score(program?.rank) : null)
+        : (basic?.admin_forced_nc === true ? null : score(basic?.rank)));
       const name = clean(row.full_name) || [clean(row.last_name), clean(row.first_name)].filter(Boolean).join(" ");
       return {
         id: studentId,
