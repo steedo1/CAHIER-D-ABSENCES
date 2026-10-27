@@ -51,7 +51,8 @@ async function context(input: Record<string, unknown>) {
   // Composantes officielles de Français uniquement au premier cycle : même
   // référentiel que le bulletin, jamais de nouveaux sujets ni coefficients inventés.
   let components: Array<{ id: string; label: string; coeff: number }> = [];
-  if (/^[6543](?:e|eme|ème|ième)?$/i.test(String(cls.data.level || "").trim())) {
+  const classLevel = String(cls.data.level || "");
+  if (/^[6543](?:e|eme|ème|ième)?$/i.test(classLevel.trim())) {
     const subject = await srv.from("subjects").select("name").eq("id", subjectId).maybeSingle();
     if (subject.error) throw subject.error;
     if (String(subject.data?.name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes("francais")) {
@@ -60,7 +61,7 @@ async function context(input: Record<string, unknown>) {
         .eq("institution_id", institutionId).eq("subject_id", subjectId).eq("is_active", true);
       if (found.error) throw found.error;
       const ordinary = (found.data || []).filter(c => !isProgramComponentLevel(c.level));
-      const exact = ordinary.filter(c => c.level && sameSchoolLevel(c.level, cls.data.level, "secondary"));
+      const exact = ordinary.filter(c => c.level && sameSchoolLevel(c.level, classLevel, "secondary"));
       const chosen = exact.length ? exact : ordinary.filter(c => !c.level);
       components = chosen.sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
         .map(c => ({ id: String(c.id), label: String(c.short_label || c.label), coeff: Number(c.coeff_in_subject || 1) }));
