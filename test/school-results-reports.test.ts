@@ -4,6 +4,7 @@ import {
   buildSchoolReportClass, buildStatisticsSections, buildSchoolCsv, selectAffectation, pct,
 } from "../src/lib/school-results-reports";
 import { buildSchoolReportHtml } from "../src/lib/school-results-print";
+import { reportTracksForSelection } from "../src/lib/school-report-tracks";
 
 function schoolFixture() {
   return buildSchoolReportClass({
@@ -142,4 +143,39 @@ test("RAPPORT 2 does not print unknown-status section when it is empty", () => {
   assert.ok(html.includes("MOY T2"));
   assert.ok(html.includes('des élèves non affectés</span> par classe'));
   assert.ok(!html.includes("à affectation non renseignée"));
+});
+
+
+test("ordinary secondary school never shows foreign teaching tracks", () => {
+  const classes = [{ id: "6eA", level: "6ème" }];
+  assert.deepEqual(reportTracksForSelection(null, classes, ""), ["french"]);
+  assert.deepEqual(reportTracksForSelection({}, classes, "6eA"), ["french"]);
+  assert.deepEqual(reportTracksForSelection({ school_cycles_v1: { version: 1, enabled: false } }, classes, ""), ["french"]);
+});
+
+test("franco-arabic school exposes only the tracks configured for the selected class scope", () => {
+  const config = {
+    school_cycles_v1: {
+      version: 1, enabled: true,
+      enabledCycles: ["primary", "secondary"],
+      classCycleById: {},
+      teachingTracksByCycle: { primary: ["french", "arabic"], secondary: ["french"] },
+    },
+  };
+  const classes = [{ id: "cp1", level: "CP1" }, { id: "6eA", level: "6ème" }];
+  assert.deepEqual(reportTracksForSelection(config, classes, "cp1"), ["french", "arabic"]);
+  assert.deepEqual(reportTracksForSelection(config, classes, "6eA"), ["french"]);
+  // Ne pas proposer un rapport arabe pour une sélection globale incluant le secondaire général.
+  assert.deepEqual(reportTracksForSelection(config, classes, ""), ["french"]);
+});
+
+test("Arabic-only school uses Arabic without a French dropdown", () => {
+  const config = {
+    school_cycles_v1: {
+      version: 1, enabled: true, enabledCycles: ["primary"],
+      teachingTracksByCycle: { primary: ["arabic"] },
+    },
+  };
+  assert.deepEqual(reportTracksForSelection(config, [{ id: "cp1", level: "CP1" }], "cp1"), ["arabic"]);
+  assert.deepEqual(reportTracksForSelection(config, [{ id: "cp1", level: "CP1" }], ""), ["arabic"]);
 });
