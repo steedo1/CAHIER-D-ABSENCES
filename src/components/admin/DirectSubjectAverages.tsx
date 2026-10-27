@@ -93,7 +93,7 @@ export default function DirectSubjectAverages({ classId, subjectId, periodId, on
             else updated[id] = value;
           return { ...row, component_averages: updated };
         }
-        return { ...row, average: item.average };
+        return { ...row, average: item.average ?? null };
       }));
       if (!res.ok || !data.ok) throw new Error(`${data.error || "Enregistrement impossible."}${saved.size ? ` ${saved.size} ligne(s) enregistrée(s) ; les autres restent à saisir.` : ""}`);
       setNotice("Moyennes enregistrées. Les bulletins et les classements utilisent ces valeurs.");
