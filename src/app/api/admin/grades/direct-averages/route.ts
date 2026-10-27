@@ -2,7 +2,10 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/sch
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 import { getApplicableGradePeriodById } from "@/lib/education-grading-periods";
-import { directAverage, readDirectAverages, parseAverage20, setDirectAverage } from "@/lib/grades/direct-subject-averages";
+import { directAverage, directComponentAverages, readDirectAverages, parseAverage20, setDirectAverage,
+  setDirectComponentAverages, weightedDirectComponentAverage, type ComponentAverageInput } from "@/lib/grades/direct-subject-averages";
+import { classComponentContext, isProgramComponentLevel, selectProgramComponents } from "@/lib/school-subject-components";
+import { sameSchoolLevel } from "@/lib/school-levels";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,11 +52,34 @@ async function context(input: Record<string, unknown>) {
   const roster = await srv.from("class_enrollments").select("student_id,students:student_id(first_name,last_name,full_name,matricule)")
     .eq("institution_id", institutionId).eq("class_id", classId).is("end_date", null);
   if (roster.error) throw roster.error;
+  // On charge les composantes réellement configurées pour la matière ET le niveau
+  // sélectionnés. La même correspondance d'ID et de niveau est utilisée par les bulletins.
+  const componentContext = classComponentContext(school.data?.settings_json, cls.data, subjectId);
+  let components: { id: string; label: string; coeff: number }[] = [];
+  if (componentContext !== "invalid" && /^(3|4|5|6)(?:e|eme|ème)/i.test(String(cls.data.level || "").trim())) {
+    const configured = await srv.from("grade_subject_components")
+      .select("id,level,label,short_label,coeff_in_subject,is_active,order_index")
+      .eq("institution_id", institutionId).eq("subject_id", institutionSubjectId)
+      .eq("is_active", true).order("order_index", { ascending: true });
+    if (configured.error) return { error: reply({ ok: false, error: "Sous-matières indisponibles." }, 503) };
+    const all = configured.data || [];
+    const selected = componentContext === "legacy"
+      ? (() => {
+          const legacy = all.filter(row => !isProgramComponentLevel(row.level));
+          const exact = legacy.filter(row => sameSchoolLevel(row.level, cls.data.level, "secondary"));
+          return exact.length ? exact : legacy.filter(row => !row.level);
+        })()
+      : selectProgramComponents(all, componentContext);
+    components = selected.map(row => ({
+      id: String(row.id), label: String(row.short_label || row.label),
+      coeff: Number(row.coeff_in_subject),
+    })).filter(row => row.coeff > 0);
+  }
   const students = Array.from(new Map((roster.data || []).map((row: any) => [String(row.student_id), {
     student_id: String(row.student_id), full_name: [row.students?.last_name, row.students?.first_name].filter(Boolean).join(" ") || row.students?.full_name || "Élève",
     matricule: row.students?.matricule || null,
   }])).values()).sort((a,b) => a.full_name.localeCompare(b.full_name, "fr"));
-  return { ...access, classId, subjectId, periodId, year, students };
+  return { ...access, classId, subjectId, periodId, year, students, components };
 }
 
 export async function GET(req: NextRequest) {
@@ -64,7 +90,15 @@ export async function GET(req: NextRequest) {
       .eq("class_id", ctx.classId).eq("subject_id", ctx.subjectId).eq("academic_year", ctx.year);
     if (saved.error) throw saved.error;
     const values = new Map((saved.data || []).map(row => [String(row.student_id), directAverage(row.reason, ctx.periodId)]));
-    return reply({ ok: true, items: ctx.students.map(row => ({ ...row, average: values.get(row.student_id) ?? null })) });
+    const components = new Map((saved.data || []).map(row => [
+      String(row.student_id), directComponentAverages(row.reason, ctx.periodId),
+    ]));
+    return reply({ ok: true, components: ctx.components,
+      items: ctx.students.map(row => ({
+        ...row, average: values.get(row.student_id) ?? null,
+        component_averages: components.get(row.student_id) || {},
+      })),
+    });
   } catch (error: any) { return reply({ ok: false, error: error.message || "Chargement impossible." }, 500); }
 }
 
@@ -79,13 +113,30 @@ export async function POST(req: NextRequest) {
     if (!Array.isArray(body.items) || !body.items.length || body.items.length > 500)
       return reply({ ok: false, error: "Liste de moyennes invalide." }, 400);
     const seen = new Set<string>();
-    const items: { student_id: string; average: number | null }[] = [];
+    const items: { student_id: string; average: number | null; components?: ComponentAverageInput[] }[] = [];
     for (const row of body.items) {
       if (!row || typeof row !== "object") return reply({ ok: false, error: "Moyenne invalide." }, 400);
-      const average = row.average === null ? null : parseAverage20(row.average);
-      if (!allowed.has(row.student_id) || seen.has(row.student_id) || (average === null && row.average !== null))
-        return reply({ ok: false, error: "Élève invalide, doublon ou moyenne hors de 0 à 20." }, 400);
-      seen.add(row.student_id); items.push({ student_id: row.student_id, average });
+      let average: number | null;
+      let components: ComponentAverageInput[] | undefined;
+      if (row.components !== undefined) {
+        if (ctx.components.length === 0 || !row.components || typeof row.components !== "object" ||
+            Array.isArray(row.components) || Object.keys(row.components).length !== ctx.components.length ||
+            ctx.components.some(comp => !Object.prototype.hasOwnProperty.call(row.components, comp.id)))
+          return reply({ ok: false, error: "La liste des sous-matières a changé. Rechargez la page." }, 409);
+        components = ctx.components.map(comp => ({
+          ...comp, average: row.components[comp.id] === null ? null : parseAverage20(row.components[comp.id]),
+        }));
+        if (components.some(comp => comp.average === null && row.components[comp.id] !== null))
+          return reply({ ok: false, error: "Moyenne de sous-matière invalide (0 à 20)." }, 400);
+        average = weightedDirectComponentAverage(components);
+      } else {
+        average = row.average === null ? null : parseAverage20(row.average);
+        if (average === null && row.average !== null)
+          return reply({ ok: false, error: "Moyenne hors de 0 à 20." }, 400);
+      }
+      if (!allowed.has(row.student_id) || seen.has(row.student_id))
+        return reply({ ok: false, error: "Élève invalide ou doublon." }, 400);
+      seen.add(row.student_id); items.push({ student_id: row.student_id, average, components });
     }
     const initial = await ctx.srv.from("grade_adjustments").select("id,student_id,reason,bonus,grading_period_id")
       .eq("class_id", ctx.classId).eq("subject_id", ctx.subjectId).eq("academic_year", ctx.year)
@@ -93,7 +144,11 @@ export async function POST(req: NextRequest) {
     if (initial.error) throw initial.error;
     const existingByStudent = new Map((initial.data || []).map(row => [String(row.student_id), row]));
     // Validate every stored source before the first write.
-    for (const item of items) setDirectAverage(existingByStudent.get(item.student_id)?.reason, ctx.periodId, item.average, ctx.user.id, new Date().toISOString());
+    for (const item of items) {
+      const before = existingByStudent.get(item.student_id)?.reason;
+      if (item.components) setDirectComponentAverages(before, ctx.periodId, item.components, ctx.user.id, new Date().toISOString());
+      else setDirectAverage(before, ctx.periodId, item.average, ctx.user.id, new Date().toISOString());
+    }
 
     // Compare-and-set the reason only. Concurrent bonus edits are preserved;
     // a concurrent period edit is re-read before retrying, never overwritten.
@@ -104,7 +159,9 @@ export async function POST(req: NextRequest) {
           : await ctx.srv.from("grade_adjustments").select("id,student_id,reason,bonus,grading_period_id")
           .eq("class_id", ctx.classId).eq("subject_id", ctx.subjectId).eq("student_id", item.student_id).eq("academic_year", ctx.year).maybeSingle();
         if (lookup.error) throw lookup.error;
-        const reason = setDirectAverage(lookup.data?.reason, ctx.periodId, item.average, ctx.user.id, new Date().toISOString(), !lookup.data);
+        const reason = item.components
+          ? setDirectComponentAverages(lookup.data?.reason, ctx.periodId, item.components, ctx.user.id, new Date().toISOString(), !lookup.data)
+          : setDirectAverage(lookup.data?.reason, ctx.periodId, item.average, ctx.user.id, new Date().toISOString(), !lookup.data);
         if (lookup.data) {
           const removeEmptySource = reason === null && Number(lookup.data.bonus) === 0 && !lookup.data.grading_period_id && readDirectAverages(lookup.data.reason).createdForDirect;
           let query = (removeEmptySource ? ctx.srv.from("grade_adjustments").delete() : ctx.srv.from("grade_adjustments").update({ reason })).eq("id", lookup.data.id);
@@ -124,6 +181,10 @@ export async function POST(req: NextRequest) {
       if (!done) throw new Error("Une autre saisie est en cours. Réessayez les lignes restantes.");
       saved.push(item.student_id);
     }
-    return reply({ ok: true, saved });
+    return reply({ ok: true, saved, values: items.map(item => ({
+      student_id: item.student_id, average: item.average,
+      component_averages: Object.fromEntries((item.components || []).filter(c => c.average !== null)
+        .map(c => [c.id, c.average])),
+    })) });
   } catch (error: any) { return reply({ ok: false, error: error.message || "Enregistrement impossible.", saved }, 500); }
 }
