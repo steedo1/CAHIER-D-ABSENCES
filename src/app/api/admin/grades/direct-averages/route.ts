@@ -54,8 +54,9 @@ async function context(input: Record<string, unknown>) {
   let components: Array<{ id: string; label: string; coeff_in_subject: number }> = [];
   const normalizedLevel = normalizeSchoolLevel(cls.data.level, "secondary");
   if (["6eme", "5eme", "4eme", "3eme"].includes(normalizedLevel)) {
+    const classLevel = cls.data.level;
     const scope = await loadClassComponentContext(srv, institutionId, {
-      id: classId, level: cls.data.level, academic_year: year,
+      id: classId, level: classLevel, academic_year: year,
     }, subjectId);
     if (scope === "invalid") return { error: reply({ ok: false, error: "Programme de sous-matières invalide pour cette classe." }, 409) };
     if (scope === "legacy" || (scope.cycle === "secondary" && scope.track === "french")) {
@@ -66,7 +67,7 @@ async function context(input: Record<string, unknown>) {
       if (configured.error) throw configured.error;
       const all = configured.data || [];
       const found = scope === "legacy"
-        ? (() => { const exact = all.filter(c => sameSchoolLevel(c.level, cls.data.level, "secondary"));
+        ? (() => { const exact = all.filter(c => sameSchoolLevel(c.level, classLevel, "secondary"));
           return exact.length ? exact : all.filter(c => !c.level); })()
         : selectProgramComponents(all, scope);
       components = found.map(c => ({
