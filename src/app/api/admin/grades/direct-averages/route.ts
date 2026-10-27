@@ -54,6 +54,7 @@ async function context(input: Record<string, unknown>) {
   if (roster.error) throw roster.error;
   // On charge les composantes réellement configurées pour la matière ET le niveau
   // sélectionnés. La même correspondance d'ID et de niveau est utilisée par les bulletins.
+  const classLevel = cls.data.level;
   const componentContext = classComponentContext(school.data?.settings_json, cls.data, subjectId);
   let components: { id: string; label: string; coeff: number }[] = [];
   if (componentContext !== "invalid" && /^(3|4|5|6)(?:e|eme|ème)/i.test(String(cls.data.level || "").trim())) {
@@ -66,7 +67,7 @@ async function context(input: Record<string, unknown>) {
     const selected = componentContext === "legacy"
       ? (() => {
           const legacy = all.filter(row => !isProgramComponentLevel(row.level));
-          const exact = legacy.filter(row => sameSchoolLevel(row.level, cls.data.level, "secondary"));
+          const exact = legacy.filter(row => sameSchoolLevel(row.level, classLevel, "secondary"));
           return exact.length ? exact : legacy.filter(row => !row.level);
         })()
       : selectProgramComponents(all, componentContext);
