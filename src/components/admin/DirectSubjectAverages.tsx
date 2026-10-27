@@ -99,7 +99,7 @@ export default function DirectSubjectAverages({ classId, subjectId, periodId, on
   };
 
   async function save() {
-    if (!valid) { setError("Saisissez uniquement des moyennes de 0 à 20, avec au plus deux décimales."); return; }
+    if (!valid) { setError("Saisissez des moyennes comprises entre 0 et 20, avec deux décimales au maximum."); return; }
     setError(null);
     setNotice(null);
     const items = changed.map(row => hasComponents ? {
