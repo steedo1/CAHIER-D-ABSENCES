@@ -19,7 +19,7 @@ export function primarySubjectTeachingTrack(settings: unknown, year: string, cla
 
 /** One barème authority for the teacher selector, server writes and reports.
  * Older schools with only an explicit level scale keep that saved scale.
- * Once per-subject Arabic barèmes exist, an absent barème never falls back. */
+ * An Arabic subject override applies only to that subject; other subjects keep the level scale. */
 export function primarySubjectScale(settings: unknown, context: {
   year: string; classId: string; level: string; track: TeachingTrack;
   subjectId: string; subjectName: string;
@@ -27,8 +27,11 @@ export function primarySubjectScale(settings: unknown, context: {
   const reports = parseFrancoArabicReportsSettings(settings);
   const levelScale = getConfiguredScoringScale(reports, "primary", context.level, context.track);
   if (levelScale === null) return null;
-  if (context.track === "arabic" && reports.primarySubjectScales !== undefined)
-    return getConfiguredPrimarySubjectScale(reports, context.level, context.subjectId);
+  if (context.track === "arabic" && reports.primarySubjectScales !== undefined) {
+    const subjectScale = getConfiguredPrimarySubjectScale(reports, context.level, context.subjectId);
+    if (subjectScale !== null) return subjectScale;
+    if (!reports.primaryArabicDefaultScale) return null;
+  }
   if (context.track === "french" && hasCiPrimaryFrenchReference(settings, context.year, context.classId)) {
     const entry = ciPrimaryFrenchEntryForName(context.subjectName);
     if (entry) return ciPrimaryFrenchDenominator(context.level, entry.code);

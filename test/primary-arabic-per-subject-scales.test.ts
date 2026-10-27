@@ -1,3 +1,5 @@
+import { primarySubjectScale } from "../src/lib/grades/primary-subject-scale";
+import { EPC_PRIMARY_ARABIC_SUBJECT_COUNT, primaryArabicSubjectLabel } from "../src/lib/primary-arabic-bulletin-labels";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -83,4 +85,34 @@ test("refuser les doublons, mauvaises matières et barèmes hors bornes", () => 
   assert.equal(validateFrancoArabicReportsInput({
     ...config, primarySubjectScales: [{ ...first, subjectId: "invalid" }],
   }), null);
+});
+
+test("une matière arabe sans exception conserve /10 au lieu de devenir indisponible", () => {
+  const settings = { [FRANCO_ARABIC_REPORTS_SETTINGS_KEY]: { ...report(), primaryArabicDefaultScale: true } };
+  const common = { year: "2026-2027", classId: "44444444-4444-4444-8444-444444444444",
+    level: "CP1", track: "arabic" as const, subjectName: "Matière arabe" };
+  assert.equal(primarySubjectScale(settings, { ...common, subjectId: quran }), 20);
+  assert.equal(primarySubjectScale(settings, { ...common, subjectId: hadith }), 10);
+  assert.equal(primarySubjectScale(settings, { ...common, subjectId: french }), 10);
+  assert.equal(primarySubjectScale(settings, { ...common, level: "CM1", subjectId: french }), 10);
+  assert.equal(primarySubjectScale(settings, { ...common, level: "CE1", subjectId: french }), null);
+});
+
+test("22 matières EPC ont un intitulé arabe sans modifier les noms enregistrés", () => {
+  const names = [
+    "Apprentissage des lettres", "Lecture", "Écriture et dictée", "Expression orale",
+    "Grammaire arabe", "Conjugaison arabe", "Poème", "Coran (poème) et écriture",
+    "Coran (règles de jurisprudence) et écriture",
+    "Coran (révision des poèmes mémorisés) et écriture", "Coran", "Psalmodie du Coran",
+    "Traduction du Coran", "Hadith (tradition prophétique)",
+    "Jurisprudence et croyance (Al-Muslim As-Saghîr)", "Leçons élémentaires",
+    "Biographie du Prophète (SAW)", "Jurisprudence islamique (Fiqh)",
+    "Unicité divine (Tawhîd)", "Mathématiques", "Chants et dessin", "Dessin et chants",
+  ];
+  assert.equal(EPC_PRIMARY_ARABIC_SUBJECT_COUNT, 22);
+  for (const name of names) {
+    assert.ok(primaryArabicSubjectLabel(name), name);
+    assert.equal(name, name.normalize("NFKC"));
+  }
+  assert.equal(primaryArabicSubjectLabel("Matière inconnue"), null);
 });
