@@ -438,7 +438,7 @@ export default function FrancoArabicBulletin({
   const primary = programs.every(program => /^(primaire|primary)$/i.test(program.cycle.trim()));
   const compact = variant === "combined";
   const context = programs[0];
-  return <article className={`${styles.page} ${primary ? styles.primaryPage : ""} ${primary && programs.some(program => program.primaryAnnual) ? styles.passagePage : ""} ${printRoot ? "fa-report-print-root" : ""} ${compact ? styles.combinedPage : ""} ${variant === "ordinary" ? styles.ordinaryPage : ""}`}
+  return <article className={`${styles.page} ${primary ? styles.primaryPage : ""} ${primary && programs.some(program => program.primaryAnnual) ? styles.passagePage : ""} ${printRoot ? "fa-report-print-root" : ""} ${compact ? styles.combinedPage : ""} ${variant === "arabic" ? styles.arabicOnlyPage : ""} ${variant === "ordinary" ? styles.ordinaryPage : ""}`}
     aria-label={`Bulletin ${variant}`}>
     <Head model={model} variant={variant}/>
     <div className={styles.body}>
