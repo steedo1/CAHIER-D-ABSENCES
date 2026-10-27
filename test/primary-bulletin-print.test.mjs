@@ -46,6 +46,19 @@ test("primary bulletins print the school logo and real metadata on one A4 per pu
       await page.emulateMedia({ media: "print" });
       const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
       const parser = new PDFParse({ data: pdf }); const result = await parser.getText(); await parser.destroy();
+      if (process.env.PRIMARY_PRINT_OUTPUT) {
+        mkdirSync(process.env.PRIMARY_PRINT_OUTPUT, { recursive: true });
+        writeFileSync(`${process.env.PRIMARY_PRINT_OUTPUT}/bulletin-${variant}${annual ? "-passage" : ""}.pdf`, pdf);
+      }
+      if (result.pages.length !== 2) {
+        const dimensions = await page.evaluate(() => [...document.querySelectorAll('article.page')].map(article => ({
+          articleHeight: Math.round(article.getBoundingClientRect().height),
+          elements: [".header", ".identity", ".panels", ".marks", ".primaryAnnual", ".footer"].map(selector => ({
+            selector, heights: [...article.querySelectorAll(selector)].map(el => Math.round(el.getBoundingClientRect().height)),
+          })),
+        })));
+        console.warn("A4 overrun measurements", variant, annual, JSON.stringify(dimensions));
+      }
       assert.equal(result.pages.length, 2, `${variant}: exactly one A4 per pupil`);
       assert.match(result.text.replace(/\s/g, ""), /DRENADEDIMBOKRO/); assert.match(result.text, /ecole@example.invalid/);
       assert.match(result.text, /Instituteur/); assert.match(result.text, /8,00/);
@@ -60,10 +73,6 @@ test("primary bulletins print the school logo and real metadata on one A4 per pu
       const overflow = await page.evaluate(() => { const pages = [...document.querySelectorAll('article.page')]; return pages.length !== 2 || pages.some(node => node.getBoundingClientRect().height > 1124); });
       assert.equal(overflow, false, "content stays inside the A4 page");
       assert.equal(result.text.includes("Directeur général"), variant === "combined");
-      if (process.env.PRIMARY_PRINT_OUTPUT) {
-        mkdirSync(process.env.PRIMARY_PRINT_OUTPUT, { recursive: true });
-        writeFileSync(`${process.env.PRIMARY_PRINT_OUTPUT}/bulletin-${variant}${annual ? "-passage" : ""}.pdf`, pdf);
-      }
       await page.close();
     });
   } finally { await browser.close(); }

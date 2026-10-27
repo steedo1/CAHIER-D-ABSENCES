@@ -213,6 +213,42 @@ export default function SchoolBulletinSettings({
   const hasSecondary = scopedPrograms.some(program => program.cycle === "secondary");
   const blocked = loading || saving || !loaded || !multicycleReady;
   const hasArabic = programs.some((program) => program.track === "arabic");
+  const primaryArabicClass = activeProgram?.cycle === "primary" && activeProgram.track === "arabic"
+    ? activeTeachingClass : undefined;
+  const primaryArabicScale = primaryArabicClass?.level
+    ? settings.scales.find(row => row.cycle === "primary" && row.track === "arabic" &&
+        sameSchoolLevel(row.level, primaryArabicClass.level!, "primary"))
+    : undefined;
+
+  function activatePrimaryArabicScales() {
+    const levels = teachingClasses.filter(row => row.cycle === "primary" && row.track === "arabic" && row.level)
+      .map(row => row.level!);
+    setSettings(old => ({
+      ...old,
+      primaryArabicDefaultScale: true,
+      scales: [...old.scales, ...levels.filter((level, i) =>
+        !levels.slice(0, i).some(other => sameSchoolLevel(other, level, "primary")) &&
+        !old.scales.some(row => row.cycle === "primary" && row.track === "arabic" &&
+          sameSchoolLevel(row.level, level, "primary")))
+        .map(level => ({ cycle: "primary" as const, track: "arabic" as const, level, maxScore: 10 }))],
+    }));
+    setNotice("");
+  }
+
+  function updatePrimaryArabicSubjectScale(subjectId: string, maxScore: number) {
+    if (!primaryArabicClass?.level || !primaryArabicScale) return;
+    const level = primaryArabicClass.level;
+    setNotice("");
+    setSettings(old => {
+      const existing = (old.primarySubjectScales || []).filter(row =>
+        !(row.subjectId === subjectId && sameSchoolLevel(row.level, level, "primary")));
+      return { ...old, primarySubjectScales: Number.isInteger(maxScore) && maxScore >= 1 && maxScore <= 100 &&
+        maxScore !== primaryArabicScale.maxScore
+          ? [...existing, { cycle: "primary" as const, track: "arabic" as const,
+            level, subjectId, maxScore }]
+          : existing };
+    });
+  }
 
   function updateScale(index: number, update: Partial<LevelScoringScale>) {
     setNotice("");
@@ -435,17 +471,32 @@ export default function SchoolBulletinSettings({
                 </button>
               )}
             </div>
+            {primaryArabicClass && !primaryArabicScale && (
+              <button type="button" onClick={activatePrimaryArabicScales}
+                disabled={blocked} className="mt-2 rounded-lg border px-3 py-2 text-sm font-semibold">
+                Activer /10 pour le primaire arabe
+              </button>
+            )}
             <ul className="mt-2 grid gap-1 sm:grid-cols-2">
               {displayedSubjects.map(subject => (
-                <li key={subject.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                  {subject.name}
+                <li key={subject.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                  <span>{subject.name}</span>
+                  {primaryArabicClass && <label className="flex shrink-0 items-center gap-1 text-xs">
+                    <span>Sur</span>
+                    <input type="number" min={1} max={100} step={1}
+                      aria-label={`Barème ${subject.name} ${primaryArabicClass.level}`}
+                      value={settings.primarySubjectScales?.find(row => row.subjectId === subject.id &&
+                        sameSchoolLevel(row.level, primaryArabicClass.level!, "primary"))?.maxScore ??
+                        primaryArabicScale?.maxScore ?? 10}
+                      disabled={blocked || !primaryArabicScale}
+                      onChange={event => updatePrimaryArabicSubjectScale(subject.id, Number(event.target.value))}
+                      className="w-16 rounded border bg-white px-2 py-1 text-sm" />
+                  </label>}
                 </li>
               ))}
             </ul>
-            {displayedSubjects.length === 0 && (
-              <p className="mt-2 text-sm text-amber-900">
-                Les matières doivent d'abord être attribuées au cycle et à l'enseignement dans la répartition ci-dessous.
-              </p>
+            {displayedSubjects.length === 0 && !loadingClassSubjects && (
+              <p className="mt-2 text-sm text-amber-900">Aucune matière dans cette classe.</p>
             )}
           </div>
           {activeProgram?.cycle === "primary" && activeProgram.track === "french" && activeTeachingClass && (

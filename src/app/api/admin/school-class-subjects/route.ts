@@ -92,10 +92,36 @@ export async function GET(request: NextRequest) {
     if ("error" in catalog) return json({ error: catalog.error }, 503);
     subjects = catalog.subjects;
   }
+  // The EPC already has real teacher assignments. Before the administrator
+  // explicitly edits a class curriculum, show those assignments as selected.
+  // Once a list has been saved, including [], its selection takes precedence.
+  let selectedSubjectIds: string[] = [];
+  if (selected) {
+    const saved = stored?.years[context.year]?.classes;
+    if (saved && Object.prototype.hasOwnProperty.call(saved, selected.id)) {
+      selectedSubjectIds = saved[selected.id] || [];
+    } else if (selected.cycle && selected.track && subjects.length) {
+      const assigned = await context.service.from("class_teachers")
+        .select("subject_id").eq("institution_id", context.institutionId)
+        .eq("class_id", selected.id).is("end_date", null).limit(151);
+      if (assigned.error) return json({ error: "class_assignments_load_failed" }, 503);
+      const institutionIds = [...new Set((assigned.data || [])
+        .map(row => String(row.subject_id || "")).filter(Boolean))];
+      if (institutionIds.length) {
+        const rows = await context.service.from("institution_subjects")
+          .select("id,subject_id").eq("institution_id", context.institutionId)
+          .in("id", institutionIds).eq("is_active", true).limit(151);
+        if (rows.error) return json({ error: "class_subjects_load_failed" }, 503);
+        const assignedCanonicalIds = new Set((rows.data || []).map(row => row.subject_id));
+        selectedSubjectIds = subjects.filter(subject => assignedCanonicalIds.has(subject.id))
+          .map(subject => subject.id);
+      }
+    }
+  }
   return json({ ok: true, academicYear: context.year,
     revision: schoolSettingsRevision(context.rawSettings),
     classes: loaded.classes, selectedClassId: selected?.id || null, subjects,
-    selectedSubjectIds: selected ? stored?.years[context.year]?.classes[selected.id] || [] : [],
+    selectedSubjectIds,
     ciPrimaryFrenchApplied: selected
       ? stored?.years[context.year]?.ciPrimaryFrenchClasses?.includes(selected.id) === true : false,
   });
@@ -142,6 +168,41 @@ export async function PUT(request: NextRequest) {
     return json({ error: "too_many_classes" }, 409);
   }
   yearClasses[classId] = subjectIds;
+  // Bootstrap all other classes from their real teacher assignments when the
+  // school first saves a curriculum. An edit to CP1 must not disable CP2–CM2
+  // or the French track, and no subject is invented from a cycle-wide catalog.
+  const otherClasses = loaded.classes.filter(row => row.id !== classId &&
+    row.cycle && row.track && !Object.prototype.hasOwnProperty.call(yearClasses, row.id));
+  if (otherClasses.length) {
+    const otherIds = otherClasses.map(row => row.id);
+    const assignments = await context.service.from("class_teachers")
+      .select("class_id,subject_id").eq("institution_id", context.institutionId)
+      .in("class_id", otherIds).is("end_date", null).limit(5001);
+    if (assignments.error || !assignments.data || assignments.data.length >= 5001)
+      return json({ error: "class_assignments_load_failed" }, 503);
+    const relationIds = [...new Set(assignments.data.map(row => row.subject_id).filter(Boolean))];
+    const relations = relationIds.length
+      ? await context.service.from("institution_subjects")
+          .select("id,subject_id").eq("institution_id", context.institutionId)
+          .eq("is_active", true).in("id", relationIds).limit(501)
+      : { data: [] as Array<{ id: string; subject_id: string }>, error: null };
+    if (relations.error || !relations.data || relations.data.length >= 501)
+      return json({ error: "class_subjects_load_failed" }, 503);
+    const canonicalById = new Map(relations.data.map(row => [row.id, row.subject_id]));
+    const byClass = new Map<string, Set<string>>();
+    for (const row of assignments.data) {
+      const canonical = canonicalById.get(row.subject_id);
+      if (!canonical) continue;
+      if (!byClass.has(row.class_id)) byClass.set(row.class_id, new Set());
+      byClass.get(row.class_id)!.add(canonical);
+    }
+    for (const entry of otherClasses) {
+      yearClasses[entry.id] = [...(byClass.get(entry.id) || [])].filter(subjectId =>
+        context.settings.subjectTracksByCycle[entry.cycle!]?.[subjectId]?.includes(entry.track!));
+    }
+  }
+  if (Object.keys(yearClasses).length > 500)
+    return json({ error: "too_many_classes" }, 409);
   if (Object.keys(stored.years).length >= 8 && !stored.years[context.year]) {
     return json({ error: "too_many_academic_years" }, 409);
   }

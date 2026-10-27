@@ -1,3 +1,12 @@
+/* Arabic runs stay RTL without reversing numbers, matricules, or French names. */
+.arabicText {
+  direction: rtl;
+  unicode-bidi: isolate;
+  font-family: "Noto Naskh Arabic", "Noto Sans Arabic", Tahoma, "Arial Unicode MS", sans-serif;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 /* Premium, real A4 layout: identical typography and proportions in print. */
 .page {
   --emerald: #06564c;
@@ -300,3 +309,47 @@
 .passagePage .studentName { font-size: 10.5pt; }
 .passagePage .meta { font-size: 7.4pt; }
 @media print { .primaryAnnual { break-inside: avoid; } }
+
+/* The Arabic-first primary bulletin has longer subject names in two scripts.
+   Keep the two languages readable while avoiding a second printed sheet.
+   Deliberately scoped: no changes to the French bulletin or secondary engine. */
+.primaryPage.arabicOnlyPage .brandLine { min-height: 23mm; }
+.primaryPage.arabicOnlyPage .header { padding-top: 2.5mm; }
+.primaryPage.arabicOnlyPage .republic { line-height: 1.1; }
+.primaryPage.arabicOnlyPage .republic span { line-height: 1.13; letter-spacing: 0; }
+.primaryPage.arabicOnlyPage .documentTitle { font-size: 11pt; letter-spacing: 0; }
+.primaryPage.arabicOnlyPage .identity { min-height: 24mm; padding: 1.6mm 2.5mm; }
+.primaryPage.arabicOnlyPage .body { padding-top: 1.5mm; padding-bottom: 3mm; }
+.primaryPage.arabicOnlyPage .panels { margin-top: 1.5mm; }
+.primaryPage.arabicOnlyPage .panelHeading { padding: 1.4mm 2.5mm; }
+.primaryPage.arabicOnlyPage .panelHeading h2 { font-size: 10.5pt; margin-top: .4mm; }
+.primaryPage.arabicOnlyPage .marks th.subjectColumn { width: 58%; padding-left: 1.5mm; }
+.primaryPage.arabicOnlyPage .marks th:nth-child(2) { width: 14%; }
+.primaryPage.arabicOnlyPage .marks th:nth-child(3) { width: 12%; }
+.primaryPage.arabicOnlyPage .marks th:nth-child(4) { width: 16%; }
+.primaryPage.arabicOnlyPage .marks th,
+.primaryPage.arabicOnlyPage .marks td { padding: .75mm .8mm; font-size: 7pt; line-height: 1.15; }
+.primaryPage.arabicOnlyPage .marks td.subjectCell { padding-left: 1.5mm; font: 600 7.1pt/1.18 Arial, sans-serif; }
+.primaryPage.arabicOnlyPage .marks td.subjectCell .arabicText { font-size: 7.4pt; line-height: 1.18; }
+.primaryPage.arabicOnlyPage .appreciation { min-height: 8mm; margin: 1mm 2mm; padding: 1.2mm 2mm; }
+.primaryPage.arabicOnlyPage .footer { margin-top: 1.5mm; }
+.primaryPage.arabicOnlyPage .signatures { min-height: 17mm; }
+
+/* Only the long combined annual bulletin needs this last A4 optimization. */
+.primaryPage.combinedPage.passagePage .brandLine { min-height: 20mm; }
+.primaryPage.combinedPage.passagePage .identity { min-height: 22mm; padding: 1.3mm 2mm; }
+.primaryPage.combinedPage.passagePage .body { padding-top: 1.3mm; }
+.primaryPage.combinedPage.passagePage .panels { margin-top: 1mm; }
+.primaryPage.combinedPage.passagePage .panelHeading { min-height: 11mm; padding: 1mm 1.5mm; }
+.primaryPage.combinedPage.passagePage .panelHeading h2 { font-size: 9.5pt; margin-top: .3mm; }
+.primaryPage.combinedPage.passagePage .marks th,
+.primaryPage.combinedPage.passagePage .marks td { padding: .45mm .55mm; line-height: 1.1; }
+.primaryPage.combinedPage.passagePage .marks td.subjectCell { font-size: 6.8pt; line-height: 1.12; padding-left: .8mm; }
+.primaryPage.combinedPage.passagePage .marks td.subjectCell .arabicText { font-size: 7pt; line-height: 1.15; }
+.primaryPage.combinedPage.passagePage .primaryAnnual { margin: .7mm 1mm; }
+.primaryPage.combinedPage.passagePage .primaryAnnual table { font-size: 6.8pt; line-height: 1.12; }
+.primaryPage.combinedPage.passagePage .primaryAnnual th,
+.primaryPage.combinedPage.passagePage .primaryAnnual td { padding: .4mm .8mm; }
+.primaryPage.combinedPage.passagePage .summary { margin-top: .6mm; }
+.primaryPage.combinedPage.passagePage .appreciation { min-height: 6mm; margin: .6mm 1mm; padding: 1mm; }
+.primaryPage.combinedPage.passagePage .footer { margin-top: 1mm; }
