@@ -1,5 +1,5 @@
 import { isTrustedAppOrigin } from "@/lib/request-origin";
-import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
+import { directAverageMap, directComponentAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
 // src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -87,6 +87,7 @@ type GradeAdjustmentBonusRow = {
 
 type AdjustmentBonusMaps = {
   directSubjectByStudent: Map<string, Map<string, number>>;
+  directComponentByStudent: Map<string, Map<string, number>>;
   subjectBonusByStudent: Map<string, Map<string, number>>;
   generalBonusByStudent: Map<string, number>;
 };
@@ -3139,6 +3140,7 @@ async function loadBulletin(
   }): Promise<AdjustmentBonusMaps> {
     const empty: AdjustmentBonusMaps = {
       directSubjectByStudent: new Map(),
+      directComponentByStudent: new Map(),
       subjectBonusByStudent: new Map(),
       generalBonusByStudent: new Map(),
     };
@@ -3227,6 +3229,7 @@ async function loadBulletin(
 
     const out: AdjustmentBonusMaps = {
       directSubjectByStudent: new Map(),
+      directComponentByStudent: new Map(),
       subjectBonusByStudent: new Map(),
       generalBonusByStudent: new Map(),
     };
@@ -3245,6 +3248,7 @@ async function loadBulletin(
     }
 
     out.directSubjectByStudent = directAverageMap(directRows, params.periodId);
+    out.directComponentByStudent = directComponentAverageMap(directRows, params.periodId);
     return out;
   }
 
@@ -3331,6 +3335,10 @@ async function loadBulletin(
             if (cell && cell.sumCoeff > 0) {
               avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff, 4);
             }
+            // Les sous-matières saisies directement apparaissent au bulletin officiel.
+            const directComp = currentBonusMaps.directComponentByStudent
+              .get(cs.student_id)?.get(comp.id);
+            if (directComp !== undefined) avg20 = directComp;
             return {
               subject_id: comp.subject_id,
               component_id: comp.id,
