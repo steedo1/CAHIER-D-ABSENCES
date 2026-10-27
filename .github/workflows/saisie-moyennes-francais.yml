@@ -1,0 +1,40 @@
+name: Saisie directe des sous-moyennes de Français
+
+on:
+  push:
+    branches: [fix/saisie-moyennes-composantes-francais-20261027]
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - 'src/lib/grades/direct-subject-averages.ts'
+      - 'src/app/api/admin/grades/direct-averages/**'
+      - 'src/app/api/admin/grades/bulletin/**'
+      - 'src/app/api/grades/averages/**'
+      - 'src/components/admin/DirectSubjectAverages.tsx'
+      - 'test/direct-averages*'
+      - '.github/workflows/saisie-moyennes-francais.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-build-anon
+      SUPABASE_SERVICE_ROLE_KEY: isolated-build-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Verification TypeScript
+        run: npm run typecheck
+      - name: Tests API et saisie des moyennes
+        run: node --import tsx --test --test-concurrency=1 test/direct-averages.test.mjs test/direct-averages-ui.test.mjs
+      - name: Compilation Next
+        run: npm run build

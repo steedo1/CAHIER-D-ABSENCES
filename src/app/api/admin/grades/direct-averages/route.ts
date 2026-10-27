@@ -2,7 +2,9 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/sch
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 import { getApplicableGradePeriodById } from "@/lib/education-grading-periods";
-import { directAverage, readDirectAverages, parseAverage20, setDirectAverage } from "@/lib/grades/direct-subject-averages";
+import { directAverage, directComponentAverages, readDirectAverages, parseAverage20, setDirectAverage, setDirectComponentAverages } from "@/lib/grades/direct-subject-averages";
+import { sameSchoolLevel } from "@/lib/school-levels";
+import { isProgramComponentLevel } from "@/lib/school-subject-components";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,6 +48,25 @@ async function context(input: Record<string, unknown>) {
   if (assignments.error) throw assignments.error;
   if (assignments.data?.length && !assignments.data.some(row => [institutionSubjectId, subjectId].includes(String(row.subject_id))))
     return { error: reply({ ok: false, error: "Cette matière n’est pas affectée à la classe." }, 400) };
+  // Composantes officielles de Français uniquement au premier cycle : même
+  // référentiel que le bulletin, jamais de nouveaux sujets ni coefficients inventés.
+  let components: Array<{ id: string; label: string; coeff: number }> = [];
+  const classLevel = String(cls.data.level || "");
+  if (/^[6543](?:e|eme|ème|ième)?$/i.test(classLevel.trim())) {
+    const subject = await srv.from("subjects").select("name").eq("id", subjectId).maybeSingle();
+    if (subject.error) throw subject.error;
+    if (String(subject.data?.name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes("francais")) {
+      const found = await srv.from("grade_subject_components")
+        .select("id,label,short_label,coeff_in_subject,order_index,level,is_active")
+        .eq("institution_id", institutionId).eq("subject_id", subjectId).eq("is_active", true);
+      if (found.error) throw found.error;
+      const ordinary = (found.data || []).filter(c => !isProgramComponentLevel(c.level));
+      const exact = ordinary.filter(c => c.level && sameSchoolLevel(c.level, classLevel, "secondary"));
+      const chosen = exact.length ? exact : ordinary.filter(c => !c.level);
+      components = chosen.sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+        .map(c => ({ id: String(c.id), label: String(c.short_label || c.label), coeff: Number(c.coeff_in_subject || 1) }));
+    }
+  }
   const roster = await srv.from("class_enrollments").select("student_id,students:student_id(first_name,last_name,full_name,matricule)")
     .eq("institution_id", institutionId).eq("class_id", classId).is("end_date", null);
   if (roster.error) throw roster.error;
@@ -53,7 +74,7 @@ async function context(input: Record<string, unknown>) {
     student_id: String(row.student_id), full_name: [row.students?.last_name, row.students?.first_name].filter(Boolean).join(" ") || row.students?.full_name || "Élève",
     matricule: row.students?.matricule || null,
   }])).values()).sort((a,b) => a.full_name.localeCompare(b.full_name, "fr"));
-  return { ...access, classId, subjectId, periodId, year, students };
+  return { ...access, classId, subjectId, periodId, year, students, components };
 }
 
 export async function GET(req: NextRequest) {
@@ -64,7 +85,11 @@ export async function GET(req: NextRequest) {
       .eq("class_id", ctx.classId).eq("subject_id", ctx.subjectId).eq("academic_year", ctx.year);
     if (saved.error) throw saved.error;
     const values = new Map((saved.data || []).map(row => [String(row.student_id), directAverage(row.reason, ctx.periodId)]));
-    return reply({ ok: true, items: ctx.students.map(row => ({ ...row, average: values.get(row.student_id) ?? null })) });
+    const compValues = new Map((saved.data || []).map(row => [String(row.student_id), directComponentAverages(row.reason, ctx.periodId)]));
+    return reply({ ok: true, components: ctx.components, items: ctx.students.map(row => ({
+      ...row, average: values.get(row.student_id) ?? null,
+      component_averages: compValues.get(row.student_id) || {},
+    })) });
   } catch (error: any) { return reply({ ok: false, error: error.message || "Chargement impossible." }, 500); }
 }
 
@@ -79,13 +104,26 @@ export async function POST(req: NextRequest) {
     if (!Array.isArray(body.items) || !body.items.length || body.items.length > 500)
       return reply({ ok: false, error: "Liste de moyennes invalide." }, 400);
     const seen = new Set<string>();
-    const items: { student_id: string; average: number | null }[] = [];
+    const items: { student_id: string; average?: number | null; component_averages?: Record<string, number | null> }[] = [];
+    const allowedComponents = new Set(ctx.components.map(c => c.id));
     for (const row of body.items) {
       if (!row || typeof row !== "object") return reply({ ok: false, error: "Moyenne invalide." }, 400);
-      const average = row.average === null ? null : parseAverage20(row.average);
-      if (!allowed.has(row.student_id) || seen.has(row.student_id) || (average === null && row.average !== null))
-        return reply({ ok: false, error: "Élève invalide, doublon ou moyenne hors de 0 à 20." }, 400);
-      seen.add(row.student_id); items.push({ student_id: row.student_id, average });
+      if (!allowed.has(row.student_id) || seen.has(row.student_id))
+        return reply({ ok: false, error: "Élève invalide ou en double." }, 400);
+      seen.add(row.student_id);
+      if (row.component_averages !== undefined) {
+        const c = row.component_averages;
+        if (!c || typeof c !== "object" || Array.isArray(c) || !ctx.components.length ||
+            Object.keys(c).length === 0 || Object.keys(c).some(id => !allowedComponents.has(id) ||
+              (c[id] !== null && parseAverage20(c[id]) === null)))
+          return reply({ ok: false, error: "Sous-matière invalide ou moyenne hors de 0 à 20." }, 400);
+        items.push({ student_id: row.student_id, component_averages: c });
+      } else {
+        const average = row.average === null ? null : parseAverage20(row.average);
+        if (average === null && row.average !== null)
+          return reply({ ok: false, error: "Moyenne hors de 0 à 20." }, 400);
+        items.push({ student_id: row.student_id, average });
+      }
     }
     const initial = await ctx.srv.from("grade_adjustments").select("id,student_id,reason,bonus,grading_period_id")
       .eq("class_id", ctx.classId).eq("subject_id", ctx.subjectId).eq("academic_year", ctx.year)
@@ -93,7 +131,11 @@ export async function POST(req: NextRequest) {
     if (initial.error) throw initial.error;
     const existingByStudent = new Map((initial.data || []).map(row => [String(row.student_id), row]));
     // Validate every stored source before the first write.
-    for (const item of items) setDirectAverage(existingByStudent.get(item.student_id)?.reason, ctx.periodId, item.average, ctx.user.id, new Date().toISOString());
+    for (const item of items) {
+      const reason = existingByStudent.get(item.student_id)?.reason;
+      if (item.component_averages) setDirectComponentAverages(reason, ctx.periodId, item.component_averages, ctx.user.id, new Date().toISOString());
+      else setDirectAverage(reason, ctx.periodId, item.average ?? null, ctx.user.id, new Date().toISOString());
+    }
 
     // Compare-and-set the reason only. Concurrent bonus edits are preserved;
     // a concurrent period edit is re-read before retrying, never overwritten.
@@ -104,7 +146,9 @@ export async function POST(req: NextRequest) {
           : await ctx.srv.from("grade_adjustments").select("id,student_id,reason,bonus,grading_period_id")
           .eq("class_id", ctx.classId).eq("subject_id", ctx.subjectId).eq("student_id", item.student_id).eq("academic_year", ctx.year).maybeSingle();
         if (lookup.error) throw lookup.error;
-        const reason = setDirectAverage(lookup.data?.reason, ctx.periodId, item.average, ctx.user.id, new Date().toISOString(), !lookup.data);
+        const reason = item.component_averages
+          ? setDirectComponentAverages(lookup.data?.reason, ctx.periodId, item.component_averages, ctx.user.id, new Date().toISOString(), !lookup.data)
+          : setDirectAverage(lookup.data?.reason, ctx.periodId, item.average ?? null, ctx.user.id, new Date().toISOString(), !lookup.data);
         if (lookup.data) {
           const removeEmptySource = reason === null && Number(lookup.data.bonus) === 0 && !lookup.data.grading_period_id && readDirectAverages(lookup.data.reason).createdForDirect;
           let query = (removeEmptySource ? ctx.srv.from("grade_adjustments").delete() : ctx.srv.from("grade_adjustments").update({ reason })).eq("id", lookup.data.id);
@@ -113,7 +157,7 @@ export async function POST(req: NextRequest) {
           const changed = await query.select("id");
           if (changed.error) throw changed.error;
           done = !!changed.data?.length;
-        } else if (item.average === null) done = true;
+        } else if (reason === null) done = true;
         else {
           const created = await ctx.srv.from("grade_adjustments").insert({ class_id: ctx.classId, subject_id: ctx.subjectId,
             student_id: item.student_id, academic_year: ctx.year, grading_period_id: null, bonus: 0, reason, created_by: ctx.user.id });

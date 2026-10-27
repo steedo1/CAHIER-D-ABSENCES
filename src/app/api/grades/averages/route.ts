@@ -1,5 +1,6 @@
 import { mayReadDirectAverages } from "@/lib/server/direct-average-access";
-import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
+import { directAverageMap, directComponentAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
+import { sameSchoolLevel } from "@/lib/school-levels";
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
 import { selectProgramComponents, isProgramComponentLevel } from "@/lib/school-subject-components";
@@ -512,7 +513,7 @@ export async function GET(req: NextRequest) {
       if (scopedComponents && evaluations.some(row => row.subject_component_id && !componentCoeffMap.has(row.subject_component_id)))
         return bad("SUBJECT_COMPONENT_PROGRAM_MISMATCH", 409);
     }
-    const useComponentModel = allowComponents && !!effectiveSubjectId && hasAnyComponentEval && componentCoeffMap.size > 0;
+    let useComponentModel = allowComponents && !!effectiveSubjectId && hasAnyComponentEval && componentCoeffMap.size > 0;
 
     // Pré-calcul : total des coeffs par rubrique pour missing="zero"
     const evalCoeffsByComponent = new Map<string, number>();
@@ -746,10 +747,37 @@ export async function GET(req: NextRequest) {
 
     // Construire le tableau final
     const directByStudent = directAverageMap(bonusRows as BonusRow[], grading_period_id);
-    if (directByStudent.size && !await mayReadDirectAverages(svc, supabase, auth.user.id, class_id, institution_id, effectiveSubjectId)) return bad("FORBIDDEN", 403);
-    if (effectiveSubjectId) for (const [studentId, subjects] of directByStudent) {
-      if (subjects.has(effectiveSubjectId) && !gradesByStudent.has(studentId))
-        gradesByStudent.set(studentId, { sum: 0, denom: 0, counted: 0, present: 0 });
+    const directComponents = directComponentAverageMap(bonusRows as BonusRow[], grading_period_id);
+    if ((directByStudent.size || directComponents.size) &&
+        !await mayReadDirectAverages(svc, supabase, auth.user.id, class_id, institution_id, effectiveSubjectId))
+      return bad("FORBIDDEN", 403);
+    const hasManualComponent = !!effectiveSubjectId && Array.from(directComponents.values())
+      .some(subjects => (subjects.get(effectiveSubjectId)?.size || 0) > 0);
+    // Aucune évaluation n'est nécessaire à la saisie des sous-moyennes :
+    // charger aussi leurs coefficients quand seules des moyennes directes existent.
+    if (hasManualComponent && allowComponents && effectiveSubjectId && institution_id && !componentCoeffMap.size) {
+      const loaded = await svc.from("grade_subject_components")
+        .select("id,level,coeff_in_subject,is_active")
+        .eq("institution_id", institution_id).eq("subject_id", effectiveSubjectId).eq("is_active", true);
+      if (loaded.error) return bad("COMPONENTS_UNAVAILABLE", 503);
+      const all = loaded.data || [];
+      const selected = scopedComponents ? selectProgramComponents(all, componentContext)
+        : all.filter(row => !isProgramComponentLevel(row.level) &&
+          (!row.level || sameSchoolLevel(row.level, classLevel, "secondary")));
+      const exact = selected.filter(row => row.level && sameSchoolLevel(row.level, classLevel, "secondary"));
+      for (const component of (exact.length ? exact : selected.filter(row => !row.level)))
+        componentCoeffMap.set(component.id, Number(component.coeff_in_subject) || 1);
+    }
+    if (hasManualComponent && componentCoeffMap.size) useComponentModel = true;
+    if (effectiveSubjectId) {
+      for (const [studentId, subjects] of directByStudent) {
+        if (subjects.has(effectiveSubjectId) && !gradesByStudent.has(studentId))
+          gradesByStudent.set(studentId, { sum: 0, denom: 0, counted: 0, present: 0 });
+      }
+      for (const [studentId, subjects] of directComponents) {
+        if (subjects.has(effectiveSubjectId) && !gradesByStudent.has(studentId))
+          gradesByStudent.set(studentId, { sum: 0, denom: 0, counted: 0, present: 0 });
+      }
     }
 
     const rows: Row[] = [];
@@ -764,21 +792,21 @@ export async function GET(req: NextRequest) {
         let numSubject = 0;
         let denSubject = 0;
 
-        for (const [compKey, compAgg] of Object.entries(per)) {
-          if (scopedComponents && compKey === "__none__" && Object.keys(per).some(key => key !== "__none__")) continue;
-          const totalCoeffForComp =
-            evalCoeffsByComponent.get(compKey) ?? compAgg.denPresent;
-
-          const denomComp =
-            missing === "zero" ? totalCoeffForComp : compAgg.denPresent;
-
-          if (!denomComp || denomComp <= 0) continue;
-
-          const moyComp = compAgg.num / denomComp;
-
-          const wComp =
-            compKey === "__none__" ? 1 : componentCoeffMap.get(compKey) ?? 1;
-
+        const entered = effectiveSubjectId ? directComponents.get(sid)?.get(effectiveSubjectId) : undefined;
+        const keys = new Set([...Object.keys(per), ...(entered?.keys() || [])]);
+        for (const compKey of keys) {
+          if (compKey === "__none__" && [...keys].some(key => key !== "__none__")) continue;
+          if (compKey !== "__none__" && !componentCoeffMap.has(compKey)) continue;
+          const compAgg = per[compKey];
+          const manual = entered?.get(compKey);
+          let moyComp: number | null = manual ?? null;
+          if (manual === undefined && compAgg) {
+            const totalCoeffForComp = evalCoeffsByComponent.get(compKey) ?? compAgg.denPresent;
+            const denomComp = missing === "zero" ? totalCoeffForComp : compAgg.denPresent;
+            if (denomComp > 0) moyComp = compAgg.num / denomComp;
+          }
+          if (moyComp === null || !Number.isFinite(moyComp)) continue;
+          const wComp = compKey === "__none__" ? 1 : componentCoeffMap.get(compKey) ?? 1;
           numSubject += moyComp * wComp;
           denSubject += wComp;
         }
@@ -791,7 +819,9 @@ export async function GET(req: NextRequest) {
 
       // Aucun calcul possible = pas de ligne.
       // Le front complète avec le roster et affiche NC.
-      const direct = effectiveSubjectId ? directByStudent.get(sid)?.get(effectiveSubjectId) : undefined;
+      const entered = effectiveSubjectId ? directComponents.get(sid)?.get(effectiveSubjectId) : undefined;
+      const direct = entered?.size ? undefined :
+        effectiveSubjectId ? directByStudent.get(sid)?.get(effectiveSubjectId) : undefined;
       if (direct !== undefined) avg20 = direct;
       if (avg20 === null || !Number.isFinite(avg20)) continue;
 
@@ -799,7 +829,10 @@ export async function GET(req: NextRequest) {
       const afterBonus = finalSubjectAverage(avg20, b, direct)!;
       const rounded = round_to ? roundTo(afterBonus, round_to) : afterBonus;
 
-      const isComplete = direct !== undefined || (
+      const completeComponents = !!entered?.size && componentCoeffMap.size > 0 &&
+        [...componentCoeffMap.keys()].every(id => entered.has(id) ||
+          (perStudentComponent.get(sid)?.[id]?.denPresent || 0) > 0);
+      const isComplete = direct !== undefined || completeComponents || (
         missing === "zero"
           ? totalEvals > 0
           : agg.counted >= totalEvals && totalEvals > 0);

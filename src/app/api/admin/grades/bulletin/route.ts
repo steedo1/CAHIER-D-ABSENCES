@@ -1,5 +1,5 @@
 import { isTrustedAppOrigin } from "@/lib/request-origin";
-import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
+import { directAverageMap, directComponentAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
 // src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -87,6 +87,7 @@ type GradeAdjustmentBonusRow = {
 
 type AdjustmentBonusMaps = {
   directSubjectByStudent: Map<string, Map<string, number>>;
+  directComponentByStudent: Map<string, Map<string, Map<string, number>>>;
   subjectBonusByStudent: Map<string, Map<string, number>>;
   generalBonusByStudent: Map<string, number>;
 };
@@ -3139,6 +3140,7 @@ async function loadBulletin(
   }): Promise<AdjustmentBonusMaps> {
     const empty: AdjustmentBonusMaps = {
       directSubjectByStudent: new Map(),
+      directComponentByStudent: new Map(),
       subjectBonusByStudent: new Map(),
       generalBonusByStudent: new Map(),
     };
@@ -3227,6 +3229,7 @@ async function loadBulletin(
 
     const out: AdjustmentBonusMaps = {
       directSubjectByStudent: new Map(),
+      directComponentByStudent: new Map(),
       subjectBonusByStudent: new Map(),
       generalBonusByStudent: new Map(),
     };
@@ -3245,6 +3248,7 @@ async function loadBulletin(
     }
 
     out.directSubjectByStudent = directAverageMap(directRows, params.periodId);
+    out.directComponentByStudent = directComponentAverageMap(directRows, params.periodId);
     return out;
   }
 
@@ -3331,6 +3335,9 @@ async function loadBulletin(
             if (cell && cell.sumCoeff > 0) {
               avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff, 4);
             }
+            const manual = currentBonusMaps.directComponentByStudent
+              .get(cs.student_id)?.get(comp.subject_id)?.get(comp.id);
+            if (manual !== undefined) avg20 = manual;
             return {
               subject_id: comp.subject_id,
               component_id: comp.id,
@@ -3351,10 +3358,11 @@ async function loadBulletin(
 
         for (const comp of comps) {
           const cell = stuCompMap.get(comp.id);
-          if (!cell || cell.sumCoeff <= 0) continue;
-
-          const compAvgRaw = cell.sumWeighted / cell.sumCoeff;
-          if (!Number.isFinite(compAvgRaw)) continue;
+          const manual = currentBonusMaps.directComponentByStudent
+            .get(cs.student_id)?.get(comp.subject_id)?.get(comp.id);
+          const compAvgRaw = manual !== undefined ? manual :
+            cell && cell.sumCoeff > 0 ? cell.sumWeighted / cell.sumCoeff : null;
+          if (compAvgRaw === null || !Number.isFinite(compAvgRaw)) continue;
 
           const w = comp.coeff_in_subject ?? 1;
           if (!w || w <= 0) continue;
@@ -3387,7 +3395,12 @@ async function loadBulletin(
         avg20 = adjusted === null ? null : cleanNumber(adjusted, 4);
       }
 
-      const direct = currentBonusMaps.directSubjectByStudent.get(cs.student_id)?.get(String(s.subject_id));
+      // Les sous-moyennes saisies ont priorité sur l'ancienne moyenne globale
+      // seulement lorsqu'au moins une composante possède une saisie directe.
+      const componentOverride = (currentBonusMaps.directComponentByStudent
+        .get(cs.student_id)?.get(String(s.subject_id))?.size || 0) > 0;
+      const direct = componentOverride ? undefined :
+        currentBonusMaps.directSubjectByStudent.get(cs.student_id)?.get(String(s.subject_id));
       avg20 = finalSubjectAverage(rawAvg20, subjectBonus, direct);
 
       const hasGrade = avg20 !== null && avg20 !== undefined && Number.isFinite(Number(avg20));
@@ -3957,10 +3970,11 @@ async function loadBulletin(
 
             for (const comp of comps) {
               const ccell = cm.get(comp.id);
-              if (!ccell || ccell.sumCoeff <= 0) continue;
-
-              const raw = ccell.sumWeighted / ccell.sumCoeff;
-              if (!Number.isFinite(raw)) continue;
+              const manual = rangeBonusMaps.directComponentByStudent
+                .get(sid)?.get(comp.subject_id)?.get(comp.id);
+              const raw = manual !== undefined ? manual :
+                ccell && ccell.sumCoeff > 0 ? ccell.sumWeighted / ccell.sumCoeff : null;
+              if (raw === null || !Number.isFinite(raw)) continue;
 
               const w = comp.coeff_in_subject ?? 1;
               if (!w || w <= 0) continue;
@@ -3982,7 +3996,10 @@ async function loadBulletin(
 
           const subjectBonus =
             rangeBonusMaps.subjectBonusByStudent.get(sid)?.get(String(s.subject_id)) ?? 0;
-          const direct = rangeBonusMaps.directSubjectByStudent.get(sid)?.get(String(s.subject_id));
+          const componentOverride = (rangeBonusMaps.directComponentByStudent
+            .get(sid)?.get(String(s.subject_id))?.size || 0) > 0;
+          const direct = componentOverride ? undefined :
+            rangeBonusMaps.directSubjectByStudent.get(sid)?.get(String(s.subject_id));
           const adjustedSubjectAvg = finalSubjectAverage(subAvg, subjectBonus, direct);
           if (adjustedSubjectAvg === null) continue;
           subAvg = adjustedSubjectAvg;
