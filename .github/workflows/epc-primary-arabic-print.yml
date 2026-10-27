@@ -1,0 +1,39 @@
+name: EPC Arabic primary A4 print safety
+on:
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - 'src/components/bulletins/**'
+      - 'src/lib/primary-arabic-bulletin-labels.ts'
+      - 'test/primary-bulletin-print.test.mjs'
+      - '.github/workflows/epc-primary-arabic-print.yml'
+permissions:
+  contents: read
+jobs:
+  print-a4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-build-anon
+      SUPABASE_URL: http://127.0.0.1:54321
+      SUPABASE_SERVICE_ROLE_KEY: isolated-build-service
+      PRIMARY_PRINT_OUTPUT: verification/epc-primary-a4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:primary-events:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: epc-primary-a4-pdf-proof
+          path: verification/epc-primary-a4/*.pdf
+          if-no-files-found: ignore
+          retention-days: 7
