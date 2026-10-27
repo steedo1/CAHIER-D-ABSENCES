@@ -11,6 +11,7 @@ import React, {
 import { Printer, RefreshCw, X } from "lucide-react";
 import { createPortal, flushSync } from "react-dom";
 import { bulletinDocumentTitle } from "@/lib/education-bulletins";
+import { computeSubjectAppreciation } from "@/lib/grades/subject-appreciation";
 import { createBulletinQrDataUrl } from "@/lib/bulletin-qr-image";
 import { prepareBulletinQrPreview } from "@/lib/bulletin-qr-preview-client";
 import {
@@ -580,20 +581,6 @@ function formatYesNo(value: boolean | null | undefined): string {
   if (value === true) return "Oui";
   if (value === false) return "Non";
   return "—";
-}
-
-function computeSubjectAppreciation(avg: number | null | undefined): string {
-  if (avg === null || avg === undefined) return "";
-  if (!Number.isFinite(avg)) return "";
-  const a = Number(avg);
-  if (a >= 18) return "Excellent";
-  if (a >= 16) return "TRÈS bien";
-  if (a >= 14) return "Bien";
-  if (a >= 12) return "Assez bien";
-  if (a >= 10) return "Passable";
-  if (a >= 8) return "Insuffisant";
-  if (a >= 6) return "Faible";
-  return "Blâme";
 }
 
 /* ───────── QR Code (généré côté client) ───────── */
@@ -1874,7 +1861,9 @@ function StudentBulletinCard({
               <td className="bdr px-1 py-[1px] text-center">
                 {cHasAvg && cRank != null ? `${cRank}e` : "NC"}
               </td>
-              <td className="bdr px-1 py-[1px]" />
+              <td className="bdr px-1 py-[1px]">
+                {cHasAvg ? computeSubjectAppreciation(cAvg) : "Non classé"}
+              </td>
               <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
               <td className="bdr p-0 align-middle sig-cell">
                 {renderSignatureLine(signaturePng)}
