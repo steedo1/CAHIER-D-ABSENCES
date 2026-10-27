@@ -59,7 +59,7 @@ async function context(input: Record<string, unknown>) {
   if (componentContext !== "invalid" && /^(3|4|5|6)(?:e|eme|ème)/i.test(String(cls.data.level || "").trim())) {
     const configured = await srv.from("grade_subject_components")
       .select("id,level,label,short_label,coeff_in_subject,is_active,order_index")
-      .eq("institution_id", institutionId).eq("subject_id", institutionSubjectId)
+      .eq("institution_id", institutionId).eq("subject_id", subjectId)
       .eq("is_active", true).order("order_index", { ascending: true });
     if (configured.error) return { error: reply({ ok: false, error: "Sous-matières indisponibles." }, 503) };
     const all = configured.data || [];
