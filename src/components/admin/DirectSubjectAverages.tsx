@@ -116,10 +116,21 @@ export default function DirectSubjectAverages({ classId, subjectId, periodId, on
       const data = await response.json() as Response;
       const saved = new Set(data.saved || []);
       const savedValues = new Map((data.values || []).map(row => [row.student_id, row]));
+      // Compatibilité avec les anciennes réponses GET/POST des environnements de test.
+      const submitted = new Map(items.map(row => [row.student_id, row]));
       setRows(previous => previous.map(row => {
         if (!saved.has(row.student_id)) return row;
         const item = savedValues.get(row.student_id);
-        return item ? { ...row, average: item.average, component_averages: item.component_averages || {} } : row;
+        if (item) return { ...row, average: item.average, component_averages: item.component_averages || {} };
+        const input = submitted.get(row.student_id);
+        if (!input) return row;
+        if ("components" in input) {
+          const values = input.components || {};
+          const comps = components.map(comp => ({ id: comp.id, coeff: comp.coeff, average: values[comp.id] }));
+          return { ...row, average: weightedDirectComponentAverage(comps),
+            component_averages: Object.fromEntries(Object.entries(values).filter(([, value]) => value !== null)) as Record<string, number> };
+        }
+        return { ...row, average: input.average };
       }));
       if (!response.ok || !data.ok)
         throw new Error((data.error || "Enregistrement impossible.") +
@@ -196,7 +207,7 @@ export default function DirectSubjectAverages({ classId, subjectId, periodId, on
       </div>
       {!rows.length && !error && <p className="p-3 text-sm">Aucun élève dans cette classe.</p>}
       <div className="mt-4 flex flex-wrap gap-3">
-        <button type="button" onClick={() => void save()} disabled={!dirty || saving || !valid}
+        <button type="button" onClick={() => void save()} disabled={!dirty || saving}
           className="rounded-xl bg-emerald-600 px-4 py-2 font-semibold text-white disabled:opacity-50">
           {saving ? "Enregistrement…" : "Enregistrer les moyennes"}
         </button>
