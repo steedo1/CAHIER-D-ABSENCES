@@ -46,7 +46,7 @@ jobs:
       - run: npm ci
       - name: Vérification TypeScript
         run: npm run typecheck
-      - name: Tests unitaires : sous-matières et barèmes
+      - name: Tests unitaires des sous-matières et barèmes
         run: node --import tsx --test test/direct-subject-component-averages.test.ts
       - name: Tests des routes, bulletins et valeurs directes
         run: node --test test/direct-averages.test.mjs
