@@ -9,6 +9,7 @@ import {
   selectAffectation,
 } from "@/lib/school-results-reports";
 import { buildSchoolReportHtml } from "@/lib/school-results-print";
+import { reportTracksForSelection } from "@/lib/school-report-tracks";
 
 type SchoolClass = { id: string; label: string; level: string | null; academic_year: string };
 type Period = {
@@ -97,6 +98,7 @@ function printHtml(html: string): void {
 
 export default function RapportsScolairesPage() {
   const [classes, setClasses] = useState<SchoolClass[]>([]);
+  const [schoolSettings, setSchoolSettings] = useState<unknown>(null);
   const [academicYear, setAcademicYear] = useState("");
   const [classId, setClassId] = useState("");
   const [periods, setPeriods] = useState<Period[]>([]);
@@ -113,19 +115,26 @@ export default function RapportsScolairesPage() {
 
   useEffect(() => {
     let cancelled = false;
-    void getJson<{ items?: SchoolClass[] }>("/api/admin/classes?academic_year=all&education_type=all&limit=5000")
-      .then(json => {
-        if (cancelled) return;
-        const data = (json.items || []).filter(c => c.id && c.academic_year);
-        setClasses(data);
-        setAcademicYear(Array.from(new Set(data.map(c => c.academic_year))).sort().reverse()[0] || "");
-      }).catch(e => { if (!cancelled) setError(e.message); })
+    void Promise.all([
+      getJson<{ items?: SchoolClass[] }>("/api/admin/classes?academic_year=all&education_type=all&limit=5000"),
+      getJson<{ settings_json?: unknown }>("/api/admin/institution/settings"),
+    ]).then(([json, institution]) => {
+      if (cancelled) return;
+      setSchoolSettings(institution.settings_json ?? null);
+      const data = (json.items || []).filter(c => c.id && c.academic_year);
+      setClasses(data);
+      setAcademicYear(Array.from(new Set(data.map(c => c.academic_year))).sort().reverse()[0] || "");
+    }).catch(e => { if (!cancelled) setError(e.message); })
       .finally(() => { if (!cancelled) setLoadingClasses(false); });
     return () => { cancelled = true; };
   }, []);
 
   const years = useMemo(() => Array.from(new Set(classes.map(c => c.academic_year))).sort().reverse(), [classes]);
   const availableClasses = useMemo(() => classes.filter(c => c.academic_year === academicYear), [classes, academicYear]);
+  const allowedTracks = useMemo(() =>
+    reportTracksForSelection(schoolSettings, availableClasses, classId),
+    [schoolSettings, availableClasses, classId]);
+  const effectiveTrack = allowedTracks.includes(track) ? track : allowedTracks[0];
   const selectedClass = availableClasses.find(c => c.id === classId);
   const firstClass = selectedClass || availableClasses[0];
   const selectedPeriod = periods.find(p => p.id === periodId);
@@ -156,7 +165,7 @@ export default function RapportsScolairesPage() {
   useEffect(() => {
     setResult(null);
     setNotice("");
-  }, [periodId, track]);
+  }, [periodId, effectiveTrack]);
 
   async function loadReport() {
     if (busy || !selectedPeriod || !firstClass) return;
@@ -195,7 +204,7 @@ export default function RapportsScolairesPage() {
           ]);
           const base = buildSchoolReportClass({
             id: cls.id, label: cls.label, level: cls.level || "",
-            roster, bulletin, track,
+            roster, bulletin, track: effectiveTrack,
           });
           const observations = fields.observations?.[p.id] || {};
           return {
@@ -239,7 +248,7 @@ export default function RapportsScolairesPage() {
     printHtml(buildSchoolReportHtml({
       classes: result,
       kind, filter: affectation,
-      academicYear, periodLabel: formatPeriod(selectedPeriod), track,
+      academicYear, periodLabel: formatPeriod(selectedPeriod), track: effectiveTrack,
     }));
   }
 
@@ -290,13 +299,19 @@ export default function RapportsScolairesPage() {
               <option value="unaffected">Élèves non affectés</option>
             </select>
           </div>
-          <div>
-            <label className={formLabel} htmlFor="report-track">Enseignement</label>
-            <select id="report-track" className={inputClass} value={track} onChange={e => setTrack(e.target.value as ReportTrack)}>
-              <option value="french">Enseignement français / général</option>
-              <option value="arabic">Enseignement arabe (si configuré)</option>
-            </select>
-          </div>
+          {allowedTracks.length > 1 && (
+            <div>
+              <label className={formLabel} htmlFor="report-track">Enseignement</label>
+              <select id="report-track" className={inputClass} value={effectiveTrack}
+                onChange={e => setTrack(e.target.value as ReportTrack)}>
+                {allowedTracks.map(value => (
+                  <option key={value} value={value}>
+                    {value === "french" ? "Enseignement français" : "Enseignement arabe"}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <div className="mt-5 flex flex-wrap gap-3">
           <button type="button" disabled={!selectedPeriod || busy || loadingClasses || periodsLoading}
