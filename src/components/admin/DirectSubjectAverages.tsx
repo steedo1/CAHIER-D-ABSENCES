@@ -46,7 +46,7 @@ export default function DirectSubjectAverages({ classId, subjectId, periodId, on
       })
       .then(({ items, components: parts }) => {
         setRows(items); setComponents(parts); setComponentDraft(draftComponents(items, parts));
-        setDraft(Object.fromEntries(items.map(row => [row.student_id, row.average === null ? "" : String(row.average).replace(".", ",")]));
+        setDraft(Object.fromEntries(items.map(row => [row.student_id, row.average === null ? "" : String(row.average).replace(".", ",")])));
       })
       .catch(err => { if (!controller.signal.aborted) setError(err.message || "Chargement impossible."); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
