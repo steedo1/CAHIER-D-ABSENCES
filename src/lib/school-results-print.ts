@@ -95,7 +95,7 @@ function nominalTable(cls: SchoolReportClass, group: boolean | null, filter: Aff
     const cols: unknown[] = [
       index + 1, s.matricule || "NEANT", s.name, s.gender === "G" ? "M" : s.gender,
       s.birthdate || "NEANT", s.nationality || "NEANT",
-      s.repeater === null ? "NEANT" : s.repeater ? "R" : "",
+      s.repeater === null ? "NR" : s.repeater ? "R" : "",
       s.isAffected === true ? "AFF" : s.isAffected === false ? "NAF" : "NEANT",
       s.decisionNumber || "NEANT", s.average === null ? "NC" : number(s.average),
       s.rank ?? "NEANT", s.observation || "",
@@ -178,8 +178,8 @@ export function buildSchoolReportHtml(input: {
     '.nominal td:nth-child(3){text-align:left}.nominal .avg-head{color:#c11}' +
     '.nominal-main{font-size:13px;margin:14px 0}.nominal-group{font-size:11px;font-style:italic;margin:12px 0}' +
     '.empty{padding:10px;text-align:center}.note{font-size:8px;color:#555;margin:7px 0 12px}' +
-    '.footer{display:block;position:static;clear:both;margin:18px 0 0;border-top:1px solid #bbb;padding:7px 0 0;text-align:center;color:#666;font-size:9px;letter-spacing:.03em;break-inside:avoid-page;page-break-inside:avoid}' +
-    '.footer strong{color:#333;font-weight:700}' +
+    '.footer{display:block;position:static;clear:both;margin:2px 0 0;border-top:1px solid #bbb;padding:2px 0 0;text-align:center;color:#666;font-size:7px;line-height:1.1;letter-spacing:.01em;break-inside:avoid-page;page-break-inside:avoid}' +
+    '\n    '.report-section:last-of-type > .recap-block > table{margin-bottom:0}' +\n    '.report-section:last-of-type .class-section:last-child > table{margin-bottom:0}' +\n    '.nominal td:nth-child(7){white-space:nowrap;overflow-wrap:normal}' +\n    '.footer strong{color:#333;font-weight:700}' +
     'thead{display:table-header-group}tr{break-inside:avoid}table{break-inside:auto}' +
     '@media screen {.footer{display:block}}' +
     '</style></head><body>' +
