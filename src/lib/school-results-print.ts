@@ -67,17 +67,17 @@ function statisticsBody(classes: SchoolReportClass[], filter: AffectationFilter)
         const classRows = section.classRows.filter(row => row.level === level);
         const total = section.levelRows.filter(row => row.level === level && row.gender === "T")
           .map(row => ({ ...row, className: "Total " + level }));
-        return '<h3 class="level-title">Niveau ' + e(level) + '</h3>' +
-          statsTable([...classRows, ...total], "Classe");
+        return '<div class="level-block"><h3 class="level-title">Niveau ' + e(level) + '</h3>' +
+          statsTable([...classRows, ...total], "Classe") + '</div>';
       }).join("");
     const recapRows = section.levelRows.map(row => ({ ...row,
       className: row.gender === "T" ? "Total " + row.level : row.level }));
     const schoolTotals = section.schoolRows.map(row => ({
       ...row, className: row.gender === "T" ? "TOTAL ÉTABLISSEMENT" : "Établissement",
     }));
-    return '<section class="report-section' + (index === 0 ? ' first-section' : '') + '">' +
-      detail + '<h2 class="recap-title">' + recapTitle(type) + '</h2>' +
-      statsTable([...recapRows, ...schoolTotals], "Niveau") + '</section>';
+    return '<section class="report-section">' +
+      detail + '<div class="recap-block"><h2 class="recap-title">' + recapTitle(type) + '</h2>' +
+      statsTable([...recapRows, ...schoolTotals], "Niveau") + '</div></section>';
   }).join("");
 }
 
@@ -122,9 +122,10 @@ function nominalBody(classes: SchoolReportClass[], filter: AffectationFilter, pe
     : [{ label: filter === "affected" ? "Liste des élèves affectés par classe" : "Liste des élèves non affectés par classe",
         value: filter === "affected", letter: filter === "affected" ? "a)" : "b)" }];
   return '<h2 class="nominal-main">1- &nbsp; Liste nominative des élèves</h2>' +
-    groups.filter(group => group.value !== null || classes.some(c => c.students.some(s => s.isAffected === null))).map((group, index) => {
-      const printable = classes;
-      return '<section class="report-section' + (index === 0 ? ' first-section' : '') + '">' +
+    groups.filter(group => classes.some(c => c.students.some(s => s.isAffected === group.value))).map(group => {
+      // Les classes sans élève dans ce groupe n'ont pas de tableau à imprimer.
+      const printable = classes.filter(c => c.students.some(s => s.isAffected === group.value));
+      return '<section class="report-section">' +
         '<h3 class="nominal-group">' + e(group.letter) +
         ' &nbsp; Liste <span class="accent">' + e(group.label.slice("Liste ".length).replace(" par classe", "")) +
         '</span> par classe</h3>' +
@@ -150,8 +151,8 @@ export function buildSchoolReportHtml(input: {
     (input.track === "arabic" ? " · Enseignement arabe" : "");
   return '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>' + e(reportName) + '</title>' +
     '<style>' +
-    '@page{size:A4 portrait;margin:12mm 8mm 22mm}' +
-    'html,body{font:9px Arial,Helvetica,sans-serif;color:#111;background:#fff}body{margin:0}' +
+    '@page{size:A4 portrait;margin:12mm 8mm 14mm}' +
+    'html,body{font:10px Arial,Helvetica,sans-serif;color:#111;background:#fff}body{margin:0}' +
     'h1{font-size:20px;margin:10px 0 12px}h2{font-size:12px}h3{font-size:11px}' +
     '.header{text-align:center;border-bottom:1px solid #777;padding-bottom:8px;margin-bottom:15px}' +
     '.header .school{font-size:12px;font-weight:bold}.header .meta{font-size:9px;color:#444}' +
@@ -160,14 +161,14 @@ export function buildSchoolReportHtml(input: {
     '.accent{color:#c11;font-style:italic}.all-levels{text-align:center;color:#c11;margin:7px 0 22px;font-size:11px}' +
     '.level-title{margin:14px 0 9px 20px;font-weight:700}' +
     'table{width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:13px}' +
-    'th,td{border:1px solid #555;padding:3px 2px;vertical-align:middle;overflow-wrap:anywhere}' +
-    'th{font-size:7px;font-weight:700}td{text-align:center;font-size:8px}' +
+    'th,td{border:1px solid #555;padding:4px 2px;vertical-align:middle;overflow-wrap:anywhere}' +
+    'th{font-size:8px;font-weight:700}td{text-align:center;font-size:8.7px}' +
     '.statistics .first-col{width:17%}.statistics th:nth-child(2){width:3%}' +
     '.statistics th:nth-child(3),.statistics th:nth-child(4),.statistics th:nth-child(5){width:6%}' +
     '.total-row{background:#dedede;font-weight:bold}.statistics tbody tr.total-row td{font-weight:bold}' +
-    '.report-section{break-before:page}.report-section.first-section{break-before:auto}' +
-    '.class-section{margin:8px 0 20px}.class-heading{display:grid;grid-template-columns:27% 43% 30%;gap:3px;margin:12px 0 5px;font-size:9px;break-after:avoid}' +
-    '.class-heading strong{font-weight:700}.nominal th{font-size:7px;padding:4px 1px}' +
+    '.report-section{margin-top:18px}.report-section:first-child{margin-top:0}.level-block,.recap-block{break-inside:avoid-page;page-break-inside:avoid}.document-title,.recap-title,.level-title,.nominal-group{break-after:avoid-page;page-break-after:avoid}' +
+    '.class-section{margin:8px 0 17px}.class-heading{display:grid;grid-template-columns:27% 43% 30%;gap:3px;margin:12px 0 5px;font-size:9px;break-after:avoid-page;page-break-after:avoid}' +
+    '.class-heading strong{font-weight:700}.nominal th{font-size:8px;padding:4px 1px}' +
     '.nominal th:nth-child(1){width:4%}.nominal th:nth-child(2){width:12%}' +
     '.nominal th:nth-child(3){width:19%}.nominal th:nth-child(4){width:5%}' +
     '.nominal th:nth-child(5){width:9%}.nominal th:nth-child(6){width:9%}' +
@@ -177,20 +178,18 @@ export function buildSchoolReportHtml(input: {
     '.nominal td:nth-child(3){text-align:left}.nominal .avg-head{color:#c11}' +
     '.nominal-main{font-size:13px;margin:14px 0}.nominal-group{font-size:11px;font-style:italic;margin:12px 0}' +
     '.empty{padding:10px;text-align:center}.note{font-size:8px;color:#555;margin:7px 0 12px}' +
-    '.footer{position:fixed;left:0;right:0;bottom:-15mm;border-top:1px solid #bbb;padding-top:3mm;text-align:center;color:#666;font-size:8px;letter-spacing:.03em}' +
+    '.footer{display:block;position:static;clear:both;margin:18px 0 0;border-top:1px solid #bbb;padding:7px 0 0;text-align:center;color:#666;font-size:9px;letter-spacing:.03em;break-inside:avoid-page;page-break-inside:avoid}' +
     '.footer strong{color:#333;font-weight:700}' +
     'thead{display:table-header-group}tr{break-inside:avoid}table{break-inside:auto}' +
-    '@media screen {.footer{display:none}}' +
+    '@media screen {.footer{display:block}}' +
     '</style></head><body>' +
-    '<footer class="footer">Document édité avec <strong>Mon Cahier</strong> &bull; www.mon-cahier.com</footer>' +
     '<header class="header"><div class="meta">' + e(first?.regionalDirection || "") + '</div>' +
     '<div class="school">' + e(first?.institutionName || "Établissement") + '</div>' +
     '<div class="meta">' + e(subtitle) + '</div></header>' +
     (isStatistics ? '' : '<h1><u>' + (isTrimester ? 'RAPPORT 2 (PAR TRIMESTRE)' : 'RAPPORT 2 — ' + e(input.periodLabel)) + '</u></h1>') +
     (isStatistics
-      ? '<p class="note">Les seuils sont comparés sur /20 pour les barèmes différents. ' +
-        'Les moyennes et rangs proviennent des bulletins officiels.</p>' +
-        statisticsBody(input.classes, input.filter)
+      ? statisticsBody(input.classes, input.filter)
       : nominalBody(input.classes, input.filter, input.periodLabel)) +
+    '<footer class="footer">Document édité avec <strong>Mon Cahier</strong> &bull; www.mon-cahier.com</footer>' +
     '</body></html>';
 }
