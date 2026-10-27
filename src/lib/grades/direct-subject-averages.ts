@@ -84,7 +84,7 @@ export function weightedDirectComponentAverage(items: readonly ComponentAverageI
     numerator += row.average * row.coeff;
     denominator += row.coeff;
   }
-  return denominator > 0 ? Number((numerator / denominator).toFixed(4)) : null;
+  return denominator > 0 ? Number((numerator / denominator).toFixed(2)) : null;
 }
 
 /** L'entrée annuelle grade_adjustments/reason conserve toutes les périodes,
