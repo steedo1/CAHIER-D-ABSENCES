@@ -186,6 +186,49 @@ test('Moyennes directes : vraies routes, droits, trimestres, bulletins, conduite
     assert.equal((await routes.direct.POST(request('/direct',body(null,1,id)))).status,200);assert.equal(row.bonus,0.5);assert.equal(row.reason,null);
    }
   });
+  await t.test('Français collège : sous-matières réelles, moyenne pondérée et bulletin',async()=>{
+    const before=structuredClone(s.tables.grade_adjustments);
+    const comps=[
+      {id:randomUUID(),institution_id:school,subject_id:subject,level:'3eme',code:'c1',label:'Composition française',short_label:'Composition',coeff_in_subject:2,order_index:1,is_active:true},
+      {id:randomUUID(),institution_id:school,subject_id:subject,level:'3eme',code:'c2',label:'Expression orale',short_label:'Oral',coeff_in_subject:1,order_index:2,is_active:true},
+      {id:randomUUID(),institution_id:school,subject_id:subject,level:'3eme',code:'c3',label:'Orthographe-Grammaire',short_label:'Orthographe',coeff_in_subject:1,order_index:3,is_active:true},
+    ];
+    s.tables.grade_subject_components=comps;
+    try{
+      s.tables.user_roles[0].role='file_correspondent';
+      const params='/direct'+query();
+      const get=await routes.direct.GET(request(params));
+      assert.equal(get.status,200,await get.clone().text());
+      const data=await get.json();
+      assert.deepEqual(data.components.map(row=>[row.label,row.coeff]),
+        [['Composition',2],['Oral',1],['Orthographe',1]]);
+      const values=Object.fromEntries(comps.map((c,i)=>[c.id,[14.5,12,13][i]]));
+      const body={class_id:classroom,subject_id:local,grading_period_id:period(1),
+        items:[{student_id:student,components:values}]};
+      const saved=await routes.direct.POST(request('/direct',body));
+      assert.equal(saved.status,200,await saved.clone().text());
+      const savedJson=await saved.json();
+      assert.equal(savedJson.values[0].average,13.5);
+      const fresh=await routes.direct.GET(request(params));
+      const row=(await fresh.json()).items.find(r=>r.student_id===student);
+      assert.equal(row.average,13.5);
+      assert.deepEqual(row.component_averages,values);
+      const result=await routes.bulletin.GET(request(
+        '/bulletin?class_id='+classroom+'&from=2026-09-14&to=2026-12-04&export_light=1'));
+      assert.equal(result.status,200,await result.clone().text());
+      const pupil=(await result.json()).items.find(r=>r.student_id===student);
+      assert.equal(pupil.per_subject.find(r=>r.subject_id===subject).avg20,13.5);
+      for(const [id,avg] of Object.entries(values)){
+        assert.equal(pupil.per_subject_components.find(r=>r.component_id===id)?.avg20,avg);
+      }
+      const other=await routes.direct.GET(request('/direct'+query(2)));
+      assert.equal((await other.json()).items.find(r=>r.student_id===student).average,0);
+    } finally {
+      s.tables.grade_adjustments=before;
+      s.tables.grade_subject_components=[];
+      s.tables.user_roles[0].role='file_correspondent';
+    }
+  });
   await t.test('conduite directe : correspondant autorisé, absences conservées, réinitialisation fidèle',async()=>{
    s.tables.user_roles[0].role='admin';
    const manual={class_id:classroom,academic_year:year,period_code:'T1',items:[{student_id:student,absence_hours:4,sanction_points:1}]};
