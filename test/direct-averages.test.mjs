@@ -197,6 +197,8 @@ test('Moyennes directes : vraies routes, droits, trimestres, bulletins, conduite
     try{
       s.tables.user_roles[0].role='file_correspondent';
       const params='/direct'+query();
+      const oldOther=await routes.direct.GET(request('/direct'+query(2)));
+      const oldT2=(await oldOther.json()).items.find(r=>r.student_id===student).average;
       const get=await routes.direct.GET(request(params));
       assert.equal(get.status,200,await get.clone().text());
       const data=await get.json();
@@ -222,9 +224,7 @@ test('Moyennes directes : vraies routes, droits, trimestres, bulletins, conduite
         assert.equal(pupil.per_subject_components.find(r=>r.component_id===id)?.avg20,avg);
       }
       const other=await routes.direct.GET(request('/direct'+query(2)));
-      const expectedT2=before.find(r=>r.subject_id===subject&&r.student_id===student);
-      const oldT2=expectedT2?.reason && expectedT2.reason.includes('"'+period(2)+'"');
-      assert.equal((await other.json()).items.find(r=>r.student_id===student).average !== null,!!oldT2);
+      assert.equal((await other.json()).items.find(r=>r.student_id===student).average,oldT2);
     } finally {
       s.tables.grade_adjustments=before;
       s.tables.grade_subject_components=[];
