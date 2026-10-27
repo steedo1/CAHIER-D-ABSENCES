@@ -1,0 +1,44 @@
+name: Moyennes directes sous-matières collège
+
+on:
+  push:
+    branches: [fix/direct-moyennes-sous-matieres-francais-20261027]
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - 'src/lib/grades/direct-subject-averages.ts'
+      - 'src/app/api/admin/grades/direct-averages/**'
+      - 'src/app/api/admin/grades/bulletin/**'
+      - 'src/components/admin/DirectSubjectAverages.tsx'
+      - 'test/direct-averages*.test.mjs'
+      - '.github/workflows/direct-french-components.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: https://example.invalid
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-non-secret-anon
+      SUPABASE_URL: https://example.invalid
+      SUPABASE_SERVICE_ROLE_KEY: ci-non-secret-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Vérifier TypeScript
+        run: npm run typecheck
+      - name: Vérifier les routes et les bulletins avec élèves fictifs
+        run: node --import tsx --test test/direct-averages.test.mjs
+      - name: Vérifier les interfaces de saisie manuelle
+        run: node --import tsx --test test/direct-averages-ui.test.mjs
+      - name: Compilation Next.js
+        run: npm run build

@@ -186,6 +186,50 @@ test('Moyennes directes : vraies routes, droits, trimestres, bulletins, conduite
     assert.equal((await routes.direct.POST(request('/direct',body(null,1,id)))).status,200);assert.equal(row.bonus,0.5);assert.equal(row.reason,null);
    }
   });
+  await t.test('Français premier cycle : sous-matières directes, coefficients, bulletin, périodes, saisies sûres',async()=>{
+   const ids=[randomUUID(),randomUUID(),randomUUID()];
+   s.tables.grade_subject_components=[
+    {id:ids[0],institution_id:school,subject_id:subject,level:'3eme',label:'Composition française',coeff_in_subject:2,order_index:1,is_active:true},
+    {id:ids[1],institution_id:school,subject_id:subject,level:'3eme',label:'Expression orale',coeff_in_subject:1,order_index:2,is_active:true},
+    {id:ids[2],institution_id:school,subject_id:subject,level:'3eme',label:'Orthographe-Grammaire',coeff_in_subject:1,order_index:3,is_active:true},
+   ];
+   s.tables.subjects[0].name='Français';
+   const get=await routes.direct.GET(request('/direct'+query()));
+   assert.equal(get.status,200,await get.clone().text());
+   const schema=await get.json();
+   assert.deepEqual(schema.components.map(x=>x.label),['Composition française','Expression orale','Orthographe-Grammaire']);
+   const values={[ids[0]]:12,[ids[1]]:18,[ids[2]]:8};
+   const payload={...body(),items:[{student_id:student,components:values}]};
+   const post=await routes.direct.POST(request('/direct',payload));assert.equal(post.status,200,await post.clone().text());
+   const fetched=await (await routes.direct.GET(request('/direct'+query()))).json();
+   const one=fetched.items.find(x=>x.student_id===student);
+   assert.equal(one.average,null);assert.deepEqual(one.component_averages,values);
+   assert.equal(routes.values.directAverage(s.tables.grade_adjustments.find(x=>x.student_id===student).reason,period(1)),null);
+   const bulletin=await routes.bulletin.GET(request('/bulletin?class_id='+classroom+'&from=2026-09-14&to=2026-12-04&export_light=1'));
+   assert.equal(bulletin.status,200,await bulletin.clone().text());
+   const official=(await bulletin.json()).items.find(x=>x.student_id===student);
+   assert.equal(official.per_subject.find(x=>x.subject_id===subject).avg20,12.5,JSON.stringify(official.per_subject));
+   for(const [id,expected] of Object.entries(values)){
+     assert.equal(official.per_subject_components.find(x=>x.component_id===id)?.avg20,expected);
+   }
+   const before=s.writes.length;
+   assert.equal((await routes.direct.POST(request('/direct',{...body(),items:[{student_id:student,components:{[ids[0]]:15}}]}))).status,400);
+   assert.equal((await routes.direct.POST(request('/direct',{...body(),items:[{student_id:student,components:{...values,[randomUUID()]:2}}]}))).status,400);
+   assert.equal((await routes.direct.POST(request('/direct',{...body(),items:[{student_id:student,components:{...values,[ids[1]]:21}}]}))).status,400);
+   assert.equal(s.writes.length,before);
+   const t2={...body(null,2),items:[{student_id:student,components:{[ids[0]]:0,[ids[1]]:16,[ids[2]]:12}}]};
+   assert.equal((await routes.direct.POST(request('/direct',t2))).status,200);
+   assert.deepEqual((await (await routes.direct.GET(request('/direct'+query()))).json()).items.find(x=>x.student_id===student).component_averages,values);
+   assert.equal((await (await routes.direct.GET(request('/direct'+query(2)))).json()).items.find(x=>x.student_id===student).component_averages[ids[0]],0);
+   const reset={...body(),items:[{student_id:student,components:Object.fromEntries(ids.map(id=>[id,null]))}]};
+   assert.equal((await routes.direct.POST(request('/direct',reset))).status,200);
+   assert.deepEqual((await (await routes.direct.GET(request('/direct'+query()))).json()).items.find(x=>x.student_id===student).component_averages,{});
+   // Conserver la période 2, sans altérer les données de conduite ni les devoirs existants.
+   assert.equal((await (await routes.direct.GET(request('/direct'+query(2)))).json()).items.find(x=>x.student_id===student).component_averages[ids[1]],16);
+   s.tables.grade_subject_components=[];
+   s.tables.subjects[0].name='Mathématiques';
+   await routes.direct.POST(request('/direct',body(null,2)));
+  });
   await t.test('conduite directe : correspondant autorisé, absences conservées, réinitialisation fidèle',async()=>{
    s.tables.user_roles[0].role='admin';
    const manual={class_id:classroom,academic_year:year,period_code:'T1',items:[{student_id:student,absence_hours:4,sanction_points:1}]};
