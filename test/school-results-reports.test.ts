@@ -89,7 +89,12 @@ test("PDF HTML escapes school and student names and has repeating table headings
   assert.ok(html.includes("N° DEC AFF"));
   assert.ok(html.includes("Document édité avec <strong>Mon Cahier</strong> &bull; www.mon-cahier.com"));
   assert.ok(html.includes("@page{size:A4 portrait"));
-  assert.ok(html.includes("bottom:-15mm"));
+  assert.ok(html.includes("position:static"));
+  assert.ok(!html.includes("position:fixed"));
+  assert.ok(!html.includes("bottom:-15mm"));
+  assert.ok(html.lastIndexOf('class="footer"') > html.lastIndexOf("</table>"));
+  assert.ok(!html.includes("break-before:page"));
+  assert.ok(html.includes("page-break-inside:avoid"));
   assert.ok(html.includes("NOM ET PRENOMS"));
   assert.ok(html.includes("RAPPORT 2 (PAR TRIMESTRE)"));
 });
@@ -178,4 +183,52 @@ test("Arabic-only school uses Arabic without a French dropdown", () => {
   };
   assert.deepEqual(reportTracksForSelection(config, [{ id: "cp1", level: "CP1" }], "cp1"), ["arabic"]);
   assert.deepEqual(reportTracksForSelection(config, [{ id: "cp1", level: "CP1" }], ""), ["arabic"]);
+});
+
+
+test("NC students never receive a fictitious rank from bulletin defaults", () => {
+  const cls = buildSchoolReportClass({
+    id: "6A", label: "6ème A", level: "6e", track: "french",
+    roster: { students: [{ id: "s", full_name: "Élève sans notes", gender: "F", is_affecte: true }] },
+    bulletin: { ok: true, items: [{ student_id: "s", general_avg: null, rank: 1 }] },
+  });
+  assert.equal(cls.students[0].average, null);
+  assert.equal(cls.students[0].rank, null);
+  const html = buildSchoolReportHtml({
+    classes: [cls], kind: "nominal", filter: "all",
+    academicYear: "2026-2027", periodLabel: "1er trimestre", track: "french",
+  });
+  assert.match(html, /<td>NC<\/td><td>NEANT<\/td>/);
+  const csv = buildSchoolCsv([cls], "nominal", "all");
+  assert.ok(!csv.includes(";1;")); // aucune position fictive
+});
+
+test("RAPPORT 2 prints unknown assignment only for the class containing an unknown pupil", () => {
+  const cls = schoolFixture();
+  const second = structuredClone(cls);
+  second.id = "autre-classe";
+  second.label = "5ème 2";
+  second.students = second.students.filter(s => s.isAffected !== null);
+  const html = buildSchoolReportHtml({
+    classes: [cls, second], kind: "nominal", filter: "all",
+    academicYear: "2026-2027", periodLabel: "1er trimestre", track: "french",
+  });
+  const unknown = html.slice(html.indexOf("c) &nbsp;"));
+  assert.match(unknown, /Diane/);
+  assert.match(unknown, /6ÈME 1/i);
+  assert.ok(!unknown.includes("5ÈME 2"));
+  assert.ok(!unknown.includes('class="empty"'));
+  assert.equal((unknown.match(/class="class-section"/g) || []).length, 1);
+});
+
+test("RAPPORT 1 stays in normal flow and omits irrelevant technical formula note", () => {
+  const html = buildSchoolReportHtml({
+    classes: [schoolFixture()], kind: "statistics", filter: "all",
+    academicYear: "2026-2027", periodLabel: "1er trimestre", track: "french",
+  });
+  assert.ok(!html.includes("Les seuils sont comparés sur /20"));
+  assert.ok(html.includes('class="level-block"'));
+  assert.ok(html.includes('class="recap-block"'));
+  assert.ok(!html.includes("break-before:page"));
+  assert.ok(html.indexOf('class="footer"') > html.lastIndexOf('</table>'));
 });
