@@ -222,7 +222,9 @@ test('Moyennes directes : vraies routes, droits, trimestres, bulletins, conduite
         assert.equal(pupil.per_subject_components.find(r=>r.component_id===id)?.avg20,avg);
       }
       const other=await routes.direct.GET(request('/direct'+query(2)));
-      assert.equal((await other.json()).items.find(r=>r.student_id===student).average,0);
+      const expectedT2=before.find(r=>r.subject_id===subject&&r.student_id===student);
+      const oldT2=expectedT2?.reason && expectedT2.reason.includes('"'+period(2)+'"');
+      assert.equal((await other.json()).items.find(r=>r.student_id===student).average !== null,!!oldT2);
     } finally {
       s.tables.grade_adjustments=before;
       s.tables.grade_subject_components=[];
