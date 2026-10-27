@@ -15,18 +15,18 @@ export function escapeReportHtml(value: unknown): string {
 }
 const e = escapeReportHtml;
 const td = (value: unknown, tag = "td"): string => "<" + tag + ">" + e(value) + "</" + tag + ">";
-const htmlValue = (n: number, total: number): string => total === 0 ? "NEANT" : String(n);
+// Un effectif égal à zéro reste un vrai résultat statistique.
+// Seules les données absentes ou impossibles à calculer utilisent un tiret.
 
 function statRow(row: ReportStatRow, highlight = false): string {
   const x = row.total;
-  const value = (n: number) => htmlValue(n, x.effectif);
   return '<tr' + (highlight ? ' class="total-row"' : "") + ">" +
     td(row.className) + td(row.gender) +
-    td(value(x.effectif)) + td(value(x.classed)) + td(value(x.unclassed)) +
-    td(value(x.above10)) + td(x.classed ? pct(x.above10, x.classed) : "NEANT") +
-    td(value(x.between850)) + td(x.classed ? pct(x.between850, x.classed) : "NEANT") +
-    td(value(x.below850)) + td(x.classed ? pct(x.below850, x.classed) : "NEANT") +
-    td(x.average20 === null ? "NEANT" : number(x.average20)) + "</tr>";
+    td(x.effectif) + td(x.classed) + td(x.unclassed) +
+    td(x.above10) + td(x.classed > 0 ? pct(x.above10, x.classed) : "—") +
+    td(x.between850) + td(x.classed > 0 ? pct(x.between850, x.classed) : "—") +
+    td(x.below850) + td(x.classed > 0 ? pct(x.below850, x.classed) : "—") +
+    td(x.average20 === null ? "—" : number(x.average20)) + "</tr>";
 }
 
 /** Preserve the exact 12-column, two-tier layout supplied in RAPPORT1.docx. */
@@ -93,20 +93,20 @@ function nominalTable(cls: SchoolReportClass, group: boolean | null, filter: Aff
   const students = selectAffectation(cls.students, filter).filter(s => filter !== "all" || s.isAffected === group);
   const rows = students.map((s, index) => {
     const cols: unknown[] = [
-      index + 1, s.matricule || "NEANT", s.name, s.gender === "G" ? "M" : s.gender,
-      s.birthdate || "NEANT", s.nationality || "NEANT",
+      index + 1, s.matricule || "—", s.name, s.gender === "G" ? "M" : s.gender,
+      s.birthdate || "—", s.nationality || "—",
       s.repeater === null ? "NR" : s.repeater ? "R" : "",
-      s.isAffected === true ? "AFF" : s.isAffected === false ? "NAF" : "NEANT",
-      s.decisionNumber || "NEANT", s.average === null ? "NC" : number(s.average),
-      s.rank ?? "NEANT", s.observation || "",
+      s.isAffected === true ? "AFF" : s.isAffected === false ? "NAF" : "—",
+      s.decisionNumber || "—", s.average === null ? "NC" : number(s.average),
+      s.rank ?? "—", s.observation || "",
     ];
     return '<tr>' + cols.map(value => td(value)).join("") + '</tr>';
   }).join("");
-  const empty = '<tr><td colspan="12" class="empty">NEANT</td></tr>';
+  const empty = '<tr><td colspan="12" class="empty">—</td></tr>';
   return '<section class="class-section">' +
     '<div class="class-heading"><strong>' + e(cls.label.toUpperCase()) + '</strong>' +
-    '<span><strong>Professeur Principal :</strong> ' + e(cls.headTeacher || "NEANT") + '</span>' +
-    '<span><strong>Educateur :</strong> ' + e(cls.educator || "NEANT") + '</span></div>' +
+    '<span><strong>Professeur Principal :</strong> ' + e(cls.headTeacher || "—") + '</span>' +
+    '<span><strong>Educateur :</strong> ' + e(cls.educator || "—") + '</span></div>' +
     '<table class="nominal"><thead><tr>' +
     '<th>N°</th><th>MATRICULE</th><th>NOM ET PRENOMS</th><th>Sexe</th>' +
     '<th>AN</th><th>NAT</th><th>R</th><th>STATUT</th><th>N° DEC AFF</th>' +
