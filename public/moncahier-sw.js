@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-10-25-bandwidth-v1";
+const VERSION = "2026-10-27-bandwidth-v2";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -45,7 +45,22 @@ const OFFLINE_PAGE_PATHS = new Set([
   "/founder/attendance-slots",
 ]);
 const ATTENDANCE_ENTRY_PATHS = new Set(["/", "/redirect", "/login", "/class", "/attendance"]);
+// Même périmètre public et versionné que les en-têtes de next.config.mjs.
+// Ni photos d'élèves, ni ressources privées, ni API dans cette liste.
+const IMMUTABLE_BRANDING_PATHS = new Set([
+  "/admin.v2.webp", "/nexa-digital-logo.v2.webp", "/accueil.v2.webp",
+  "/home/hero-notes.v2.webp", "/home/hero-textes.v2.webp",
+  "/home/hero-communication.v2.webp", "/home/hero-finance.v2.webp",
+  "/favicon.v2.png", "/icons/icon-192.v2.png", "/icons/icon-512.v2.png",
+]);
 let attendanceNavigationOfflineUntil = 0;
+
+function isImmutablePublicAsset(url) {
+  return url.origin === self.location.origin && (
+    url.pathname.startsWith("/_next/static/") ||
+    IMMUTABLE_BRANDING_PATHS.has(url.pathname)
+  );
+}
 
 function isOfflinePagePath(pathname) {
   return (
@@ -73,6 +88,10 @@ async function precacheApplicationFiles() {
   await Promise.allSettled(
     PRECACHE_URLS.map(async (rawUrl) => {
       const request = new Request(rawUrl, { cache: "reload" });
+      if (isImmutablePublicAsset(new URL(request.url))) {
+        const cached = await assets.match(request);
+        if (isCacheable(cached)) return;
+      }
       const response = await fetch(request);
       if (!isCacheable(response)) return;
       const target = isAssetPath(new URL(request.url).pathname) ? assets : shell;
@@ -968,9 +987,10 @@ async function warmDocument(rawUrl) {
       const assetRequest = new Request(assetUrl, { credentials: "include" });
       // Les chunks Next portent leur identité dans l'URL. Plusieurs écrans
       // partagent les mêmes chunks : réutiliser leur copie vérifiée au lieu
-      // de la retélécharger pour chaque écran préparé. Les documents et les
-      // ressources non immuables continuent d'être vérifiés sur le réseau.
-      if (new URL(assetUrl).pathname.startsWith("/_next/static/")) {
+      // de la retélécharger pour chaque écran préparé. Les images publiques
+      // versionnées suivent la même règle. Les documents et les ressources
+      // non immuables continuent d'être vérifiés sur le réseau.
+      if (isImmutablePublicAsset(new URL(assetUrl))) {
         const cached = await assetCache.match(assetRequest);
         if (isCacheable(cached)) return null;
       }

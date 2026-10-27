@@ -141,6 +141,12 @@ export default function BackgroundAttendancePreparation() {
 
     const run = (force = false) => {
       if (disposed || loadingRef.current) return;
+      // Une préparation préventive peut attendre que l'utilisateur revienne.
+      // Ne pas consommer le throttle pendant cette pause : visibilitychange
+      // doit pouvoir vérifier immédiatement la révision au retour à l'écran.
+      // L'envoi des appels déjà saisis est indépendant et reste actif en fond
+      // dans BackgroundAttendanceDeliverySync et le service worker.
+      if (document.visibilityState === "hidden") return;
       if (preparationInFlight) {
         rerunRequested = true;
         return;
