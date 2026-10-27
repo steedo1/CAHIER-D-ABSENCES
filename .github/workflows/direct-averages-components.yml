@@ -2,12 +2,15 @@ name: Saisie directe des moyennes par sous-matière
 
 on:
   push:
-    branches: [fix/saisie-directe-sous-matieres-francais-20261027]
+    branches: [fix/saisie-directe-sous-matieres-francais-20261027, fix/bulletin-appreciations-sous-matieres-20261027]
     paths:
       - 'src/lib/grades/direct-subject-averages.ts'
       - 'src/app/api/admin/grades/direct-averages/**'
       - 'src/components/admin/DirectSubjectAverages.tsx'
       - 'src/app/api/admin/grades/bulletin/**'
+      - 'src/app/admin/notes/bulletins/page.tsx'
+      - 'src/lib/grades/subject-appreciation.ts'
+      - 'test/bulletin-subject-appreciations.test.ts'
       - 'test/direct-averages.test.mjs'
       - 'test/direct-averages-ui.test.mjs'
       - 'test/direct-subject-component-averages.test.ts'
@@ -19,6 +22,9 @@ on:
       - 'src/app/api/admin/grades/direct-averages/**'
       - 'src/components/admin/DirectSubjectAverages.tsx'
       - 'src/app/api/admin/grades/bulletin/**'
+      - 'src/app/admin/notes/bulletins/page.tsx'
+      - 'src/lib/grades/subject-appreciation.ts'
+      - 'test/bulletin-subject-appreciations.test.ts'
       - 'test/direct-averages.test.mjs'
       - 'test/direct-averages-ui.test.mjs'
       - 'test/direct-subject-component-averages.test.ts'
@@ -52,5 +58,7 @@ jobs:
         run: node --test test/direct-averages.test.mjs
       - name: Test du formulaire de saisie
         run: node --test test/direct-averages-ui.test.mjs
+      - name: Vérifier les appréciations des sous-matières
+        run: node --import tsx --test test/bulletin-subject-appreciations.test.ts
       - name: Compilation Next
         run: npm run build
