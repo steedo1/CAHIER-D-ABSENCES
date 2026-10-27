@@ -1,5 +1,5 @@
 import { isTrustedAppOrigin } from "@/lib/request-origin";
-import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
+import { directAverageMap, directComponentAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
 // src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -86,6 +86,7 @@ type GradeAdjustmentBonusRow = {
 };
 
 type AdjustmentBonusMaps = {
+  directComponentByStudent: Map<string, Map<string, number>>;
   directSubjectByStudent: Map<string, Map<string, number>>;
   subjectBonusByStudent: Map<string, Map<string, number>>;
   generalBonusByStudent: Map<string, number>;
@@ -3138,6 +3139,7 @@ async function loadBulletin(
     periodId?: string | null;
   }): Promise<AdjustmentBonusMaps> {
     const empty: AdjustmentBonusMaps = {
+      directComponentByStudent: new Map(),
       directSubjectByStudent: new Map(),
       subjectBonusByStudent: new Map(),
       generalBonusByStudent: new Map(),
@@ -3226,6 +3228,7 @@ async function loadBulletin(
     }
 
     const out: AdjustmentBonusMaps = {
+      directComponentByStudent: new Map(),
       directSubjectByStudent: new Map(),
       subjectBonusByStudent: new Map(),
       generalBonusByStudent: new Map(),
@@ -3245,6 +3248,7 @@ async function loadBulletin(
     }
 
     out.directSubjectByStudent = directAverageMap(directRows, params.periodId);
+    out.directComponentByStudent = directComponentAverageMap(directRows, params.periodId);
     return out;
   }
 
@@ -3320,6 +3324,7 @@ async function loadBulletin(
     const stuCompMap =
       perStudentSubjectComponent.get(cs.student_id) ||
       new Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>();
+    const directComps = currentBonusMaps.directComponentByStudent.get(cs.student_id);
 
     // sous-matières
     const per_subject_components =
@@ -3331,6 +3336,9 @@ async function loadBulletin(
             if (cell && cell.sumCoeff > 0) {
               avg20 = cleanNumber(cell.sumWeighted / cell.sumCoeff, 4);
             }
+            // Priorité à la moyenne directe de la sous-matière.
+            const direct = directComps?.get(comp.id);
+            if (direct !== undefined) avg20 = direct;
             return {
               subject_id: comp.subject_id,
               component_id: comp.id,
@@ -3351,10 +3359,10 @@ async function loadBulletin(
 
         for (const comp of comps) {
           const cell = stuCompMap.get(comp.id);
-          if (!cell || cell.sumCoeff <= 0) continue;
-
-          const compAvgRaw = cell.sumWeighted / cell.sumCoeff;
-          if (!Number.isFinite(compAvgRaw)) continue;
+          const direct = directComps?.get(comp.id);
+          const compAvgRaw = direct !== undefined ? direct
+            : (cell && cell.sumCoeff > 0 ? cell.sumWeighted / cell.sumCoeff : null);
+          if (compAvgRaw === null || !Number.isFinite(compAvgRaw)) continue;
 
           const w = comp.coeff_in_subject ?? 1;
           if (!w || w <= 0) continue;
@@ -3933,6 +3941,7 @@ async function loadBulletin(
       for (const sid of studentIds) {
         const sm = perStuSub.get(sid) || new Map();
         const cm = perStuComp.get(sid) || new Map();
+        const directComps = rangeBonusMaps.directComponentByStudent.get(sid);
 
         let academicSumGen = 0;
         let academicSumCoeffGen = 0;
@@ -3957,10 +3966,10 @@ async function loadBulletin(
 
             for (const comp of comps) {
               const ccell = cm.get(comp.id);
-              if (!ccell || ccell.sumCoeff <= 0) continue;
-
-              const raw = ccell.sumWeighted / ccell.sumCoeff;
-              if (!Number.isFinite(raw)) continue;
+              const direct = directComps?.get(comp.id);
+              const raw = direct !== undefined ? direct
+                : (ccell && ccell.sumCoeff > 0 ? ccell.sumWeighted / ccell.sumCoeff : null);
+              if (raw === null || !Number.isFinite(raw)) continue;
 
               const w = comp.coeff_in_subject ?? 1;
               if (!w || w <= 0) continue;
