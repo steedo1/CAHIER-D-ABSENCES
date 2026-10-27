@@ -233,3 +233,28 @@ test("RAPPORT 1 stays in normal flow and omits irrelevant technical formula note
   assert.ok(!html.includes("break-before:page"));
   assert.ok(html.indexOf('class="footer"') > html.lastIndexOf('</table>'));
 });
+
+
+test("PDF keeps the promotional signature compact so it does not create a page alone", () => {
+  const html = buildSchoolReportHtml({
+    classes: [schoolFixture()], kind: "statistics", filter: "all",
+    academicYear: "2026-2027", periodLabel: "1er trimestre", track: "french",
+  });
+  assert.ok(html.includes("margin:2px 0 0"));
+  assert.ok(html.includes("font-size:7px;line-height:1.1"));
+  assert.ok(html.includes(".report-section:last-of-type > .recap-block > table{margin-bottom:0}"));
+  assert.ok(html.lastIndexOf('class="footer"') > html.lastIndexOf("</table>"));
+  assert.ok(!html.includes("position:fixed"));
+});
+
+test("unknown repeater status is shown as NR, never as wrapped NEANT", () => {
+  const cls = schoolFixture();
+  const html = buildSchoolReportHtml({
+    classes: [cls], kind: "nominal", filter: "all",
+    academicYear: "2026-2027", periodLabel: "1er trimestre", track: "french",
+  });
+  assert.ok(html.includes("white-space:nowrap"));
+  assert.match(html, /<td>NR<\/td><td>AFF<\/td>/);
+  assert.ok(!html.includes("<td>NEANT</td><td>AFF</td>"));
+  assert.match(html, /<td>R<\/td><td>NAF<\/td>|<td>R<\/td><td>AFF<\/td>|<td>NR<\/td><td>NAF<\/td>/);
+});
