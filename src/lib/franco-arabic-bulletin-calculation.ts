@@ -192,8 +192,11 @@ export function buildProgramBulletinDraft(params: {
     const ciDenominator = ciPrimary
       ? primaryDenominators?.[subjectId] ?? null
       : null;
-    if (ciPrimary && evaluations.length && !strictlyPositive(ciDenominator ?? 0)) problems.push("primary_subject_scale_not_configured");
-    const displayScale = ciPrimary ? ciDenominator : targetScale;
+    // A single composition uses its actual recorded denominator, including
+    // any teacher-entered override. Unscored subjects keep their school default.
+    const actualDenominator = ciPrimary && evaluations.length === 1 ? evaluations[0].scale : ciDenominator;
+    if (ciPrimary && evaluations.length && !strictlyPositive(actualDenominator ?? 0)) problems.push("primary_subject_scale_not_configured");
+    const displayScale = ciPrimary ? actualDenominator : targetScale;
     let preciseAverage = displayScale !== null && evaluations.length > 0 &&
       totalEvaluationCoefficient > 0
       ? evaluations.reduce((sum, row) =>
@@ -231,7 +234,7 @@ export function buildProgramBulletinDraft(params: {
       includeInAverage: contributes,
       average, evaluatedCount: evaluations.length,
       ...(componentResults?.length ? { components: componentResults } : {}),
-      ...(ciPrimary && ciDenominator !== null ? { denominator: ciDenominator } : {}),
+      ...(ciPrimary && actualDenominator !== null ? { denominator: actualDenominator } : {}),
     });
     if (contributes) {
       // Empty primary CI bulletin cells are blank, never zero. The total is
@@ -241,7 +244,7 @@ export function buildProgramBulletinDraft(params: {
         if (!ciPrimary) problems.push("included_subject_without_score");
       } else {
         generalSum += (preciseAverage as number) * (ciPrimary ? 1 : weight);
-        generalCoefficientSum += ciPrimary ? ciDenominator! : weight;
+        generalCoefficientSum += ciPrimary ? actualDenominator! : weight;
       }
     }
   }

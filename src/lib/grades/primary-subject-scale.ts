@@ -28,13 +28,17 @@ export function primarySubjectScale(settings: unknown, context: {
   const levelScale = getConfiguredScoringScale(reports, "primary", context.level, context.track);
   if (levelScale === null) return null;
   if (context.track === "arabic" && reports.primarySubjectScales !== undefined) {
-    const subjectScale = getConfiguredPrimarySubjectScale(reports, context.level, context.subjectId);
+    const subjectScale = getConfiguredPrimarySubjectScale(reports, context.level, context.subjectId, "arabic");
     if (subjectScale !== null) return subjectScale;
     if (!reports.primaryArabicDefaultScale) return null;
   }
-  if (context.track === "french" && hasCiPrimaryFrenchReference(settings, context.year, context.classId)) {
-    const entry = ciPrimaryFrenchEntryForName(context.subjectName);
-    if (entry) return ciPrimaryFrenchDenominator(context.level, entry.code);
+  if (context.track === "french") {
+    const schoolOverride = getConfiguredPrimarySubjectScale(reports, context.level, context.subjectId, "french");
+    if (schoolOverride !== null) return schoolOverride;
+    if (hasCiPrimaryFrenchReference(settings, context.year, context.classId)) {
+      const entry = ciPrimaryFrenchEntryForName(context.subjectName);
+      if (entry) return ciPrimaryFrenchDenominator(context.level, entry.code);
+    }
   }
   return levelScale;
 }

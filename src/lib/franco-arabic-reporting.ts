@@ -22,12 +22,12 @@ export type LevelScoringScale = {
   maxScore: number;
 };
 
-/** Teacher evaluation / composition denominator for one Arabic primary subject.
+/** Teacher evaluation / composition denominator for one primary subject.
  * Unlike the /10 bulletin average, this is defined by the school per subject. */
 export type PrimarySubjectScoringScale = {
   cycle: "primary";
   level: string;
-  track: "arabic";
+  track: "arabic" | "french";
   subjectId: string;
   maxScore: number;
 };
@@ -137,17 +137,17 @@ export function validateFrancoArabicReportsInput(
   const subjectScalesSeen = new Set<string>();
   for (const raw of rawPrimarySubjectScales) {
     const item = asObject(raw);
-    if (!item || item.cycle !== "primary" || item.track !== "arabic" ||
+    if (!item || item.cycle !== "primary" || (item.track !== "arabic" && item.track !== "french") ||
       typeof item.subjectId !== "string" ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.subjectId) ||
       !Number.isInteger(item.maxScore) || (item.maxScore as number) < 1 || (item.maxScore as number) > 100) return null;
     const level = normalizedLevel(item.level, "primary");
-    if (!level || !scales.some(scale => scale.cycle === "primary" && scale.track === "arabic" &&
+    if (!level || !scales.some(scale => scale.cycle === "primary" && scale.track === item.track &&
       schoolLevelKey(scale.level, "primary") === schoolLevelKey(level, "primary"))) return null;
-    const key = [schoolLevelKey(level, "primary"), item.subjectId].join("|");
+    const key = [item.track, schoolLevelKey(level, "primary"), item.subjectId].join("|");
     if (subjectScalesSeen.has(key)) return null;
     subjectScalesSeen.add(key);
-    primarySubjectScales.push({ cycle: "primary", level, track: "arabic",
+    primarySubjectScales.push({ cycle: "primary", level, track: item.track,
       subjectId: item.subjectId, maxScore: item.maxScore as number });
   }
   const rawCoefficients = data.coefficients ?? [];
@@ -233,9 +233,10 @@ export function getConfiguredPrimarySubjectScale(
   settings: FrancoArabicReportsSettings,
   level: string,
   subjectId: string,
+  track: "arabic" | "french" = "arabic",
 ): number | null {
   if (!settings.enabled || !subjectId) return null;
-  return settings.primarySubjectScales?.find(row => row.cycle === "primary" && row.track === "arabic" &&
+  return settings.primarySubjectScales?.find(row => row.cycle === "primary" && row.track === track &&
     row.subjectId === subjectId && schoolLevelKey(row.level, "primary") === schoolLevelKey(level, "primary"))?.maxScore ?? null;
 }
 

@@ -166,25 +166,21 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const currentScale = reporting?.scales.find(row => row.cycle === cycle && row.track === track &&
     sameSchoolLevel(row.level, level, row.cycle));
   const scaleDisplay = cycle === "primary" ? "10" : scaleChange || numberInput(currentScale?.maxScore);
-  function primaryArabicSubjectScale(subjectId: string): string {
-    if (cycle !== "primary" || track !== "arabic") return "";
-    const key = [level, subjectId].join("|");
+  function primarySubjectScaleValue(subject: Subject): string {
+    if (cycle !== "primary" || !track) return "";
+    const key = [track, level, subject.id].join("|");
     if (Object.hasOwn(primarySubjectChanges, key)) return primarySubjectChanges[key];
-    return numberInput(reporting?.primarySubjectScales?.find(row =>
-      row.subjectId === subjectId && sameSchoolLevel(row.level, level, "primary"))?.maxScore);
+    const saved = reporting?.primarySubjectScales?.find(row =>
+      row.track === track && row.subjectId === subject.id &&
+      sameSchoolLevel(row.level, level, "primary"))?.maxScore;
+    if (saved !== undefined) return numberInput(saved);
+    if (track === "french" && ciPrimaryApplied) {
+      const entry = ciPrimaryFrenchEntryForName(subject.name);
+      return entry ? numberInput(ciPrimaryFrenchDenominator(level, entry.code)) : "10";
+    }
+    return track === "french" ? "10" : "";
   }
   const primaryFrenchReferenceApplied = cycle === "primary" && track === "french" && ciPrimaryApplied;
-  // CI primary scales are per subject, independent of the bulletin-wide /10 scale.
-  // They are read-only here: editing a denominator without changing validation
-  // and printed reports would create inconsistent official marks.
-  function primaryCompositionScale(subject: Subject): number | null {
-    if (primaryFrenchReferenceApplied) {
-      const reference = ciPrimaryFrenchEntryForName(subject.name);
-      return reference ? ciPrimaryFrenchDenominator(level, reference.code) : null;
-    }
-    const common = Number(scaleDisplay);
-    return Number.isInteger(common) && common > 0 ? common : null;
-  }
   const isLoadingSubjects = loading || loadingClass || (Boolean(actualClassId) && subjectClassId !== actualClassId);
 
   useEffect(() => {
@@ -301,18 +297,18 @@ export default function SchoolCoefficientsClassicWorkflow() {
           sameSchoolLevel(row.level, level, cycle)));
         next = { ...next, scales: [...current, { cycle, track, level, maxScore: maximum }] };
       }
-      if (cycle === "primary" && track === "arabic") {
+      if (cycle === "primary") {
         const untouched = old.primarySubjectScales?.filter(row =>
-          !(row.cycle === "primary" && row.track === "arabic" &&
+          !(row.cycle === "primary" && row.track === track &&
             sameSchoolLevel(row.level, level, "primary") &&
             configuredSubjects.some(subject => subject.id === row.subjectId))) || [];
         const saved = configuredSubjects.flatMap(subject => {
-          const raw = primaryArabicSubjectScale(subject.id).trim();
+          const raw = primarySubjectScaleValue(subject).trim();
           if (!raw) return [];
           const value = Number(raw);
           if (!Number.isInteger(value) || value < 1 || value > 100)
             throw new Error("Barème invalide pour " + subject.name + " : indiquez un entier de 1 à 100.");
-          return [{ cycle: "primary" as const, track: "arabic" as const, level,
+          return [{ cycle: "primary" as const, track: track as "arabic" | "french", level,
             subjectId: subject.id, maxScore: value }];
         });
         next = { ...next, primarySubjectScales: [...untouched, ...saved] };
@@ -354,7 +350,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
       });
       const value = await parseResponse<SettingsPayload>(response,
         "Les coefficients sont enregistrés, mais les paramètres du bulletin doivent être rechargés.");
-      if (isPrimaryArabic) {
+      if (cycle === "primary") {
         // Confirm actual persistence from the server, not just React's local state.
         const verifyResponse = await fetch(endpoint, { cache: "no-store" });
         const verified = await parseResponse<SettingsPayload>(verifyResponse,
@@ -362,14 +358,14 @@ export default function SchoolCoefficientsClassicWorkflow() {
         const persisted = verified.reporting?.primarySubjectScales || [];
         const expected = next.primarySubjectScales || [];
         const scaleFor = (rows: typeof expected, id: string) => rows.find(row =>
-          row.cycle === "primary" && row.track === "arabic" && row.subjectId === id &&
+          row.cycle === "primary" && row.track === track && row.subjectId === id &&
           sameSchoolLevel(row.level, level, "primary"))?.maxScore ?? null;
         if (!configuredSubjects.every(subject =>
           scaleFor(expected, subject.id) === scaleFor(persisted, subject.id))) {
           throw new Error("L'enregistrement n'a pas été confirmé après rechargement. Vérifiez avant de quitter.");
         }
         setSettings(verified);
-        setMessage("Barèmes arabes enregistrés et retrouvés après rechargement — " + selectedClass.label + ".");
+        setMessage("Barèmes des matières enregistrés et retrouvés après rechargement — " + selectedClass.label + ".");
       } else {
         setSettings(prev => prev && ({ ...prev, reporting: value.reporting || next, revision: value.revision || prev.revision }));
         setMessage("Paramètres enregistrés pour " + selectedClass.label + " — " + trackLabel[track] + ".");
@@ -551,18 +547,16 @@ export default function SchoolCoefficientsClassicWorkflow() {
                   <td className="px-3 py-2 text-right">
                     {showCoefficients ? <button type="button" className="rounded-lg border px-2 py-1 text-xs"
                         disabled={componentsBusy || saving} onClick={() => void editComponents(subject)}>Ajouter / modifier les sous-matières</button>
-                      : cycle === "primary" && track === "arabic"
+                      : cycle === "primary"
                         ? <input aria-label={"Barème de composition " + subject.name}
                             type="number" min={1} max={100} step={1}
                             disabled={saving} placeholder="Non défini"
-                            value={primaryArabicSubjectScale(subject.id)}
+                            value={primarySubjectScaleValue(subject)}
                             onChange={event => { setPrimarySubjectChanges(old => ({
-                              ...old, [[level, subject.id].join("|")]: event.target.value,
+                              ...old, [[track, level, subject.id].join("|")]: event.target.value,
                             })); setMessage(""); }}
                             className="w-28 rounded-lg border px-2 py-1 text-right"/>
-                        : <span aria-label={"Barème de composition " + subject.name} className="font-semibold text-slate-800">
-                          {primaryCompositionScale(subject) === null ? "Non défini" : "/" + primaryCompositionScale(subject)}
-                        </span>}
+                        : null}
                   </td>
                 </tr>)}
               </tbody>
@@ -571,8 +565,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
         {configuredSubjects.length > 0 && !isLoadingSubjects &&
           <div className="flex justify-end"><button type="button" disabled={saving}
             onClick={() => void save()} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            {saving ? "Enregistrement…" : cycle === "primary" ? track === "arabic"
-              ? "Enregistrer les barèmes des matières" : "Enregistrer l’échelle de la moyenne" : "Enregistrer les coefficients"}
+            {saving ? "Enregistrement…" : cycle === "primary" ? "Enregistrer les barèmes des matières" : "Enregistrer les coefficients"}
           </button></div>}
       </div>}
     </>}
