@@ -1,7 +1,7 @@
 name: Primary gradebook and bulletin regression
 on:
   pull_request:
-    branches: [reprise-propre-5418ce7-20260729]
+    branches: [reprise-propre-5418ce7-20260729, migration-render-test-20261021]
     paths:
       - 'src/**'
       - 'test/**'

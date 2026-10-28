@@ -40,7 +40,12 @@ export function isCiPrimaryFrenchLevel(level: string): boolean {
 }
 
 export function ciPrimaryFrenchDenominator(level: string, code: CiPrimaryFrenchCode): number {
-  if (!/^cm[12]$/i.test(level.replace(/[\s.-]/g, ""))) return 10;
+  const course = level.replace(/[\s.-]/g, "").toUpperCase();
+  // CP2 and CE1/CE2: local school booklets supplied for the default template.
+  if (course === "CP2" && code === "mathematiques") return 20;
+  if ((course === "CE1" || course === "CE2") &&
+      (code === "exploitation_texte" || code === "mathematiques" || code === "eveil_milieu")) return 30;
+  if (course !== "CM1" && course !== "CM2") return 10;
   if (code === "orthographe_dictee") return 20;
   if (code === "exploitation_texte" || code === "mathematiques" || code === "eveil_milieu") return 50;
   return 10;
@@ -102,7 +107,7 @@ export function ciPrimaryFrenchBulletinRows<T extends {
     if (candidates.length !== 1 || used.has(candidates[0].id)) return [];
     const subject = candidates[0];
     used.add(subject.id);
-    return [{ ...subject, name: entry.label, denominator: ciPrimaryFrenchDenominator(level, entry.code) }];
+    return [{ ...subject, name: entry.label, denominator: subject.denominator ?? ciPrimaryFrenchDenominator(level, entry.code) }];
   });
   return [...ordered, ...scored.filter(row => !used.has(row.id))];
 }

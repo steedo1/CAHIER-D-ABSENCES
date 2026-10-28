@@ -79,8 +79,15 @@ test("refuser les doublons, mauvaises matières et barèmes hors bornes", () => 
       ...config, primarySubjectScales: [{ ...first, maxScore }],
     }), null);
   }
+  // French primary school overrides are now supported, without affecting Arabic.
+  const bilingual = validateFrancoArabicReportsInput({
+    ...config, primarySubjectScales: [...config.primarySubjectScales!, { ...first, track: "french" }],
+  });
+  assert.ok(bilingual);
+  assert.equal(getConfiguredPrimarySubjectScale(bilingual, "CP1", first.subjectId, "french"), first.maxScore);
+  assert.equal(getConfiguredPrimarySubjectScale(bilingual, "CP1", first.subjectId, "arabic"), first.maxScore);
   assert.equal(validateFrancoArabicReportsInput({
-    ...config, primarySubjectScales: [{ ...first, track: "french" }],
+    ...config, primarySubjectScales: [{ ...first, track: "spanish" }],
   }), null);
   assert.equal(validateFrancoArabicReportsInput({
     ...config, primarySubjectScales: [{ ...first, subjectId: "invalid" }],

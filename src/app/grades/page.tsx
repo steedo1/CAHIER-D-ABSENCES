@@ -667,7 +667,7 @@ export default function TeacherNotesPage() {
     new Date().toISOString().slice(0, 10)
   );
   const [newType, setNewType] = useState<EvalKind>("devoir");
-  const [newScale, setNewScale] = useState<number>(20);
+  const [newScale, setNewScale] = useState<number | string>(20);
   const [newCoeff, setNewCoeff] = useState<number>(1);
   useEffect(() => {
     setMode("saisie");
@@ -683,7 +683,7 @@ export default function TeacherNotesPage() {
     if (selected?.school_cycle === "primary" && selected.configured_scale) {
       setNewScale(selected.configured_scale);
     }
-  }, [selected?.class_id, selected?.configured_scale, selected?.school_cycle]);
+  }, [selected?.class_id, selected?.subject_id, selected?.configured_scale, selected?.school_cycle]);
   const [creating, setCreating] = useState(false);
 
   /* -------- Colonne active sur mobile -------- */
@@ -1283,6 +1283,11 @@ export default function TeacherNotesPage() {
       setMsg("Barème non configuré pour le primaire et cet enseignement : demandez à la direction de le définir avant toute saisie.");
       return false;
     }
+    if (isPrimaryProgram && (!Number.isInteger(Number(newScale || selected.configured_scale)) ||
+        Number(newScale || selected.configured_scale) < 1 || Number(newScale || selected.configured_scale) > 100)) {
+      setMsg("Saisissez un barème entier de 1 à 100.");
+      return false;
+    }
     if (!isOnline) {
       setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
       return false;
@@ -1312,7 +1317,7 @@ export default function TeacherNotesPage() {
           ? (selectedPrimaryEvent?.kind === "official" || selectedPrimaryEvent?.kind === "passage" ? "composition" : "devoir")
           : newType,
         ...(isPrimaryProgram && primaryCatalogEnabled ? { primary_event_code: newPrimaryEventCode, teaching_track: selected.teaching_track } : {}),
-        scale: newScale,
+        scale: Number(isPrimaryProgram ? (newScale || selected.configured_scale) : newScale),
         // The subject coefficient is configured by the school. In primary
         // classes, evaluations have equal weight, not a teacher-picked coefficient.
         coeff: isPrimaryProgram ? 1 : newCoeff,
@@ -2477,20 +2482,17 @@ export default function TeacherNotesPage() {
               )}
 
               <div>
-                <Select
-                  value={String(newScale)}
-                  onChange={(e) =>
-                    setNewScale(Number(e.target.value))
-                  }
-                  aria-label="Échelle"
-                  disabled={selectedPeriodClosed}
-                >
-                  {(isPrimaryProgram && selected?.configured_scale ? [selected.configured_scale] : [5, 10, 20]).map((s) => (
-                    <option key={s} value={s}>
-                      /{s}
-                    </option>
-                  ))}
-                </Select>
+                {isPrimaryProgram ? (
+                  <input aria-label="Barème" type="number" min={1} max={100} step={1}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                    value={String(newScale)} placeholder={String(selected?.configured_scale || 10)}
+                    disabled={selectedPeriodClosed} onChange={e => setNewScale(e.target.value)} />
+                ) : (
+                  <Select value={String(newScale)} aria-label="Échelle" disabled={selectedPeriodClosed}
+                    onChange={e => setNewScale(Number(e.target.value))}>
+                    {[5, 10, 20].map(s => <option key={s} value={s}>/{s}</option>)}
+                  </Select>
+                )}
               </div>
               {!isPrimaryProgram && (
                 <div className="col-span-2 md:col-span-2">
