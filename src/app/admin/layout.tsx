@@ -9,7 +9,6 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { ROLE_PRIORITY, type AppRole } from "@/lib/auth/role";
 import { getSchoolNavigationSettings } from "@/lib/server/school-navigation";
 import { SchoolNavigationProvider } from "@/components/admin/SchoolNavigationProvider";
-import AdminPwaInstallPrompt from "@/components/admin/AdminPwaInstallPrompt";
 
 export const metadata: Metadata = { title: "Espace Etablissement — Admin" };
 export const dynamic = "force-dynamic";
@@ -46,7 +45,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     <>
       <OfflineScheduleSyncBridge />
       <RelaySupervisionBadge />
-      {(primaryRole === "admin" || primaryRole === "file_correspondent") && <AdminPwaInstallPrompt />}
       {primaryRole === "file_correspondent" ? (
         <FileCorrespondentShell>{children}</FileCorrespondentShell>
       ) : (

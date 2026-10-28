@@ -38,7 +38,6 @@ import { warmOfflineShell } from "@/lib/offline";
 import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
 import MonCahierAiChatBubble from "@/components/admin/MonCahierAiChatBubble";
-import AdminPwaInstallShortcut from "@/components/admin/AdminPwaInstallShortcut";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import type { AppRole } from "@/lib/auth/role";
 import { fetchAuthRole } from "@/lib/auth/role-client";
@@ -519,7 +518,6 @@ export default function AdminShell({
                   </Link>
                 ) : null}
 
-                {(role === "admin" || role === "file_correspondent") && !essentialAdminMode ? <AdminPwaInstallShortcut /> : null}
                 <ContactUsButton variant="chip" />
 
                 {isFounderFinance ? (

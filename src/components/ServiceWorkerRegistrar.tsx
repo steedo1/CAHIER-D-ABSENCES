@@ -2,12 +2,9 @@
 
 import { useEffect } from "react";
 import { registerServiceWorker } from "@/lib/offline";
-import { beginPwaInstallCapture } from "@/lib/pwa-install-prompt";
 
 export default function ServiceWorkerRegistrar() {
   useEffect(() => {
-    // Capturer avant que l’utilisateur passe de /login à /admin.
-    beginPwaInstallCapture();
     if (!("serviceWorker" in navigator)) return;
 
     let disposed = false;
