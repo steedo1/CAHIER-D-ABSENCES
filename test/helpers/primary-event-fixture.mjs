@@ -44,7 +44,7 @@ function setup(level = "CP1", bilingual = true) {
   db.tables.grade_periods = []; db.tables.grade_evaluations = []; db.tables.grade_published_scores = [];
   db.teacher = createFixtureRouteLoader(db, teacher);
   db.admin = createFixtureRouteLoader(db, db.legacyAdminId);
-  db.scale = track => track === "arabic" ? 20 : level.startsWith("CM") ? 50 : 10;
+  db.scale = track => track === "arabic" ? 20 : level.startsWith("CM") ? 50 : level === "CP2" ? 20 : ["CE1", "CE2"].includes(level) ? 30 : 10;
   return db;
 }
 async function create(db, code, track = "french", overrides = {}) {
