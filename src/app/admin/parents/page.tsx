@@ -13,6 +13,7 @@ import {
 } from "react";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import { resolveAttestationSignatories } from "@/lib/franco-arabic-document-signatories";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
 import { attestationPhotoUrlForCurrentOrigin } from "@/lib/attestation-photo-url";
 import { documentNationalEmblem } from "@/lib/document-national-emblem";
 import {
@@ -959,6 +960,18 @@ export default function AdminStudentsByClassPage() {
   const level = educationScope.levelCode;
   const classId = educationScope.classId;
   const isPedagogicalClass = Boolean(classId && pedagogicalClassIds.includes(classId));
+  const selectedClass = classes.find((row) => row.id === classId);
+  const schoolCycles = useMemo(() => parseSchoolCyclesSettings(cfg.settings_json), [cfg.settings_json]);
+  const chosenCycle = selectedClass && schoolCycles.enabled
+    ? resolveSchoolCycleForClass(selectedClass, schoolCycles)
+    : null;
+  const scopeTypeLabel = chosenCycle === "primary"
+    ? (isPedagogicalClass ? "Primaire — Enseignement arabe" : "Primaire")
+    : chosenCycle === "preschool"
+      ? (isPedagogicalClass ? "Préscolaire — Enseignement arabe" : "Préscolaire")
+      : chosenCycle === "secondary" && isPedagogicalClass
+        ? "Secondaire — Enseignement arabe"
+        : undefined;
   const [q, setQ] = useState("");
 
   const [page, setPage] = useState(1);
@@ -1788,6 +1801,7 @@ export default function AdminStudentsByClassPage() {
           showClass
           disabled={loading}
           title="Périmètre de la liste des élèves"
+          typeLabelOverride={scopeTypeLabel}
         />
 
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -1950,7 +1964,7 @@ export default function AdminStudentsByClassPage() {
                       </td>
                       <td className="px-3 py-2">{student.matricule || "-"}</td>
                       <td className="px-3 py-2">{isPedagogicalClass
-                        ? (classes.find((cls) => cls.id === classId)?.name || classes.find((cls) => cls.id === classId)?.label || "-")
+                        ? (selectedClass?.name || selectedClass?.label || "-")
                         : (student.class_label || "-")}</td>
 
                       <td className="px-3 py-2">
@@ -1965,7 +1979,7 @@ export default function AdminStudentsByClassPage() {
 
                           {canTransferOrRemoveStudents ? (
                             <>
-                              {canCreateOrEditStudents ? (
+                              {canCreateOrEditStudents && !isPedagogicalClass ? (
                                 <Button tone="white" onClick={() => openEdit(student)}>
                                   Modifier
                                 </Button>
