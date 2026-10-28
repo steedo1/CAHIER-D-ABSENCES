@@ -110,6 +110,9 @@ type ClassRow = EducationScopedClass & {
 type StudentRow = {
   id: string;
   full_name: string;
+  full_name_ar?: string | null;
+  /** Lecture pédagogique seulement : ne jamais créer, transférer ni supprimer une inscription depuis cette ligne. */
+  pedagogical_link?: boolean;
   first_name?: string | null;
   last_name?: string | null;
   class_id: string | null;
@@ -947,6 +950,9 @@ function openPrintDocument(html: string) {
 export default function AdminStudentsByClassPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [students, setStudents] = useState<StudentRow[]>([]);
+  const [arabicRoster, setArabicRoster] = useState<{ classId: string; items: StudentRow[] } | null>(null);
+  const [arabicRosterLoading, setArabicRosterLoading] = useState(false);
+  const [arabicRosterError, setArabicRosterError] = useState<string | null>(null);
   const [cfg, setCfg] = useState<InstitutionSettings>({});
   const [academicYear, setAcademicYear] = useState("");
 
@@ -955,6 +961,14 @@ export default function AdminStudentsByClassPage() {
   );
   const level = educationScope.levelCode;
   const classId = educationScope.classId;
+  // The official French enrollment is deliberately unique. Arabic classes have
+  // a second, pedagogical roster resolved by the already-validated PDF API.
+  const selectedClass = classes.find((row) => row.id === classId);
+  const isArabicClassSelection = Boolean(
+    selectedClass && /(?:^|[\s—-])arabe(?:$|[\s—-])/i.test(
+      String(selectedClass.name || selectedClass.label || ""),
+    ),
+  );
   const [q, setQ] = useState("");
 
   const [page, setPage] = useState(1);
@@ -1164,6 +1178,49 @@ export default function AdminStudentsByClassPage() {
     })();
   }, []);
 
+  useEffect(() => {
+    setArabicRoster(null);
+    setArabicRosterError(null);
+    if (!classId || !isArabicClassSelection) {
+      setArabicRosterLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setArabicRosterLoading(true);
+    (async () => {
+      try {
+        const response = await fetch(
+          `/api/admin/classes/${encodeURIComponent(classId)}/roster`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload?.error || "ROSTER_UNAVAILABLE");
+        // Do not infer membership from labels or create extra enrollments:
+        // the backend verifies institution, year, cycle, and explicit links.
+        if (payload?.class?.teaching_track !== "arabic") {
+          throw new Error("L'enseignement arabe de cette classe n'est pas configuré.");
+        }
+        const classLabel = String(payload.class.label || selectedClass?.name || "");
+        const rows: StudentRow[] = (payload.students || []).map((student: StudentRow) => ({
+          ...student,
+          class_id: classId,
+          class_label: classLabel,
+          pedagogical_link: true,
+        }));
+        if (!controller.signal.aborted) setArabicRoster({ classId, items: rows });
+      } catch (error) {
+        if (!controller.signal.aborted) setArabicRosterError(
+          error instanceof Error ? error.message : "Impossible de charger les élèves de l'enseignement arabe.",
+        );
+      } finally {
+        if (!controller.signal.aborted) setArabicRosterLoading(false);
+      }
+    })();
+    return () => controller.abort();
+    // selectedClass name is stable once the school class list is loaded.
+  }, [classId, isArabicClassSelection]);
+
   const classLevelById = useMemo(() => {
     const map = new Map<string, string>();
     for (const c of classes) {
@@ -1174,6 +1231,15 @@ export default function AdminStudentsByClassPage() {
 
   const studentsFiltered = useMemo(() => {
     let list = students;
+    if (classId && isArabicClassSelection) {
+      const actualById = new Map(students.map((row) => [row.id, row]));
+      list = (arabicRoster?.classId === classId ? arabicRoster.items : [])
+        .map((row) => ({
+          ...(actualById.get(row.id) || {}),
+          ...row,
+          photo_url: actualById.get(row.id)?.photo_url || row.photo_url || null,
+        })) as StudentRow[];
+    }
 
     if (level) {
       list = list.filter(
@@ -1205,7 +1271,7 @@ export default function AdminStudentsByClassPage() {
         { sensitivity: "base" }
       )
     );
-  }, [students, level, classId, q, classLevelById]);
+  }, [students, level, classId, q, classLevelById, isArabicClassSelection, arabicRoster]);
 
   const total = studentsFiltered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -1389,7 +1455,7 @@ export default function AdminStudentsByClassPage() {
   }
 
   async function removeFromClass(student: StudentRow) {
-    if (!student.class_id) return;
+    if (!student.class_id || student.pedagogical_link) return;
 
     const ok = window.confirm(
       `RETIRER = SUPPRIMER DÉFINITIVEMENT. Supprimer ${nomAvantPrenoms(
@@ -1804,7 +1870,7 @@ export default function AdminStudentsByClassPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {canTransferOrRemoveStudents ? (
+            {canTransferOrRemoveStudents && !isArabicClassSelection ? (
               <Button
                 tone="slate"
                 onClick={() => {
@@ -1860,7 +1926,7 @@ export default function AdminStudentsByClassPage() {
           </div>
         </div>
 
-        {loading ? (
+        {loading || (isArabicClassSelection && arabicRosterLoading) ? (
           <div className="space-y-3">
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
@@ -1869,6 +1935,10 @@ export default function AdminStudentsByClassPage() {
         ) : !classId ? (
           <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
             Choisissez d'abord une <b>classe</b>.
+          </div>
+        ) : isArabicClassSelection && arabicRosterError ? (
+          <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Impossible de charger cette liste arabe : {arabicRosterError}
           </div>
         ) : pageItems.length === 0 ? (
           <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
@@ -1927,7 +1997,11 @@ export default function AdminStudentsByClassPage() {
 
                       <td className="px-3 py-2 tabular-nums">{numero}</td>
                       <td className="px-3 py-2">
-                        {nomAvantPrenoms(student.full_name)}
+                        {isArabicClassSelection && student.full_name_ar ? (
+                          <span lang="ar" dir="rtl" className="font-medium" title={student.full_name}>
+                            {student.full_name_ar}
+                          </span>
+                        ) : nomAvantPrenoms(student.full_name)}
                       </td>
                       <td className="px-3 py-2">{student.matricule || "-"}</td>
                       <td className="px-3 py-2">{student.class_label || "-"}</td>
@@ -1942,7 +2016,7 @@ export default function AdminStudentsByClassPage() {
                             Attestation
                           </Button>
 
-                          {canTransferOrRemoveStudents ? (
+                          {canTransferOrRemoveStudents && !student.pedagogical_link ? (
                             <>
                               {canCreateOrEditStudents ? (
                                 <Button tone="white" onClick={() => openEdit(student)}>
