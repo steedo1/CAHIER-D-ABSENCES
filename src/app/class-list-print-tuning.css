@@ -225,3 +225,48 @@
     font-size: calc(var(--class-list-name-font-size, 12px) * 0.9) !important;
   }
 }
+
+
+/* Arabic classes use the same standard class-list PDF, never a new print engine.
+ * Arabic spans keep their own bidi direction without reversing identity columns.
+ * Browser PDF printing shapes Arabic letters using installed Arabic system fonts.
+ */
+.arabic-class-list .roster-table th,
+.arabic-class-list .list-title,
+.arabic-class-list .right-meta {
+  unicode-bidi: plaintext;
+}
+.arabic-class-list .roster-table .col-name[dir="rtl"],
+.arabic-class-list .arabic-subject-heading {
+  font-family: "Noto Naskh Arabic", "Amiri", "Noto Sans Arabic", "Tahoma", Arial, sans-serif;
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+.arabic-class-list .roster-table .col-name[dir="rtl"] {
+  text-align: right;
+  font-size: 12px;
+}
+.arabic-class-list .arabic-subject-heading {
+  display: block;
+  font-size: 9px;
+  line-height: 1.1;
+  white-space: normal;
+}
+.arabic-student-input {
+  font-family: "Noto Naskh Arabic", "Amiri", "Noto Sans Arabic", Tahoma, Arial, sans-serif;
+}
+@media print {
+  body .arabic-class-list .roster-table .col-name[dir="rtl"] {
+    font-size: var(--class-list-name-font-size, 12px) !important;
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+  }
+  body .arabic-class-list .roster-table thead th {
+    white-space: normal !important;
+    line-height: 1.15 !important;
+  }
+  body .arabic-class-list .roster-table thead th.col-note {
+    font-size: 8px !important;
+  }
+}

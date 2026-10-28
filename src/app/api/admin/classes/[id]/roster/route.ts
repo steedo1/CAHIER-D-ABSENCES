@@ -1,4 +1,6 @@
 import { loadPrimaryClassRoster } from "@/lib/server/primary-class-roster";
+import { loadLinkedClassEnrollments } from "@/lib/server/school-linked-class-roster";
+import { readStudentProgramSettings } from "@/lib/school-student-programs";
 import { resolveTeachingDocumentSignatories } from "@/lib/franco-arabic-document-signatories";
 // src/app/api/admin/classes/[id]/roster/route.ts
 import { revalidatePath } from "next/cache";
@@ -488,6 +490,7 @@ export async function GET(
           first_name,
           last_name,
           full_name,
+          full_name_ar,
           matricule,
           gender,
           birthdate,
@@ -583,8 +586,27 @@ export async function GET(
   } catch (error) {
     return respond({ error: error instanceof Error ? error.message : "primary_roster_unavailable" }, { status: 409 });
   }
+  const configuredTracks = readStudentProgramSettings(
+    (institutionRes.data as any)?.settings_json,
+  ).years[String((cls as any).academic_year || "")]?.classes[classId]?.tracks || [];
+  const isArabicClass = configuredTracks.length === 1 && configuredTracks[0] === "arabic";
+
+  // An Arabic class may contain only pedagogically linked pupils: they
+  // keep their ONE active administrative enrollment in the French class.
+  // The primary helper already resolves this; the secondary path was missing.
+  let linkedEnrollments = primaryRoster?.linkedEnrollments || [];
+  if (!primaryRoster && isArabicClass) {
+    try {
+      linkedEnrollments = await loadLinkedClassEnrollments(
+        srv, institutionId, cls as any,
+        (institutionRes.data as any)?.settings_json,
+      );
+    } catch (error) {
+      return respond({ error: error instanceof Error ? error.message : "STUDENT_PROGRAM_LINK_STALE" }, { status: 409 });
+    }
+  }
   const currentIds = new Set((enrollments || []).map((row: any) => row.student_id));
-  const allEnrollments = [...(enrollments || []), ...(primaryRoster?.linkedEnrollments || [])
+  const allEnrollments = [...(enrollments || []), ...linkedEnrollments
     .filter(row => !currentIds.has(row.student_id))];
   const students = allEnrollments
     .map((row: any) => {
@@ -596,6 +618,7 @@ export async function GET(
         id: sid,
         matricule: s.matricule ? String(s.matricule) : null,
         full_name: name,
+        full_name_ar: s.full_name_ar ?? null,
         first_name: s.first_name ?? null,
         last_name: s.last_name ?? null,
         gender: s.gender ?? null,
@@ -638,13 +661,15 @@ export async function GET(
 
   return respond({
     ok: true,
-    can_edit: canWrite && !primaryRoster?.linkedEnrollments.length,
+    can_edit: canWrite && !linkedEnrollments.length,
+    can_edit_arabic_names: canWrite && isArabicClass,
     ...(primaryRoster ? { school_cycle: "primary", mark_subjects: primaryRoster.subjects } : {}),
     class: {
       id: String((cls as any).id),
       label: String((cls as any).label || (cls as any).code || "Classe"),
       level: (cls as any).level ?? null,
       code: (cls as any).code ?? null,
+      teaching_track: isArabicClass ? "arabic" : configuredTracks.length === 1 ? configuredTracks[0] : null,
       academic_year: (cls as any).academic_year ?? null,
       official_track_code: (cls as any).official_track_code ?? null,
       education_type: (cls as any).education_type ?? null,
