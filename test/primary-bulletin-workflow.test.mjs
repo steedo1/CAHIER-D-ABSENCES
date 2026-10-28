@@ -86,7 +86,10 @@ for (const level of ["CP1", "CP2", "CE1", "CE2", "CM1", "CM2"]) test(`${level}: 
   assert.deepEqual(arOptions.items.map(item => item.configured_scale).sort((a,b) => a-b), [20,50]);
   const created = await postEvaluation(db, teacherAr, cAr, institutionSubjectId(7), 50);
   assert.equal(created.status, 200, JSON.stringify(created));
-  assert.equal((await postEvaluation(db, teacherAr, cAr, institutionSubjectId(7), 10)).status, 400);
+  assert.equal((await postEvaluation(db, teacherAr, cAr, institutionSubjectId(7), 10)).status, 200,
+    "a teacher may override the Arabic school default for one evaluation");
+  assert.equal((await postEvaluation(db, teacherAr, cAr, institutionSubjectId(7), 0)).status, 400);
+  assert.equal((await postEvaluation(db, teacherAr, cAr, institutionSubjectId(7), 101)).status, 400);
   assert.equal((await postEvaluation(db, teacherFr, cAr, institutionSubjectId(7), 50)).status, 403);
   assert.equal((await postEvaluation(db, teacherAr, cAr, institutionSubjectId(1), 10)).status, 409);
 });
