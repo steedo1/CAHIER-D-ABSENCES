@@ -33,15 +33,39 @@ function applyPrintMutations(sheet: HTMLElement, mode: PrintMode): PrintMutation
 
   if (state.title) {
     state.originalTitle = cleanText(state.title.textContent);
-    const classLabel = classLabelFromTitle(state.title);
-    const prefix = mode === "provisional" ? "LISTE PROVISOIRE" : "LISTE DE CLASSE";
-    state.title.textContent = classLabel ? `${prefix} ${classLabel}` : prefix;
+    const arabic = Boolean(sheet.closest(".arabic-class-list"));
+    if (arabic) {
+      // Preserve Arabic class identifiers and bilingual title in both print modes.
+      const label = state.originalTitle.replace(
+        /^قائمة التلاميذ\s*\(Liste de classe\)\s*[—-]?\s*/u, "",
+      ).trim();
+      const heading = mode === "provisional"
+        ? "القائمة الأولية للتلاميذ (Liste provisoire)"
+        : "قائمة التلاميذ (Liste de classe)";
+      state.title.textContent = label ? `${heading} — ${label}` : heading;
+    } else {
+      const classLabel = classLabelFromTitle(state.title);
+      const prefix = mode === "provisional" ? "LISTE PROVISOIRE" : "LISTE DE CLASSE";
+      state.title.textContent = classLabel ? `${prefix} ${classLabel}` : prefix;
+    }
   }
 
   const context = document.createElement("canvas").getContext("2d");
   if (context) context.font = "700 12px Arial, Helvetica, sans-serif";
   sheet.querySelectorAll<HTMLElement>("tbody .col-name").forEach((cell) => {
     state.names.push({ cell, text: cell.textContent || "", fontSize: cell.style.getPropertyValue("--class-list-name-font-size") });
+    if (cell.lang === "ar" && cell.textContent?.trim()) {
+      // Crucial: do not replace a verified Arabic spelling with dataset.fullName
+      // (the canonical French identity). Fit the actual Arabic glyphs instead.
+      const name = cell.textContent.trim();
+      if (context) context.font = '700 12px "Noto Naskh Arabic", "Noto Sans Arabic", Tahoma, sans-serif';
+      const measured = context?.measureText(name).width ?? name.length * 8;
+      const available = Math.max(100, cell.clientWidth - 8);
+      const scale = Math.max(0.7, Math.min(1, available / Math.max(measured, 1)));
+      cell.style.setProperty("--class-list-name-font-size", `${12 * scale}px`);
+      return;
+    }
+    if (context) context.font = "700 12px Arial, Helvetica, sans-serif";
     const fitted = fitClassListName({
       fullName: cell.dataset.fullName || cell.textContent || "",
       lastName: cell.dataset.lastName, firstName: cell.dataset.firstName,
