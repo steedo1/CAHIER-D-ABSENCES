@@ -14,6 +14,9 @@ import type { ClassListMarkSubject } from "@/lib/class-list-subjects";
 import DocumentDirectionSignatures from "@/components/DocumentDirectionSignatures";
 import type { TeachingDocumentSignatory } from "@/lib/franco-arabic-document-signatories";
 import { fitClassListName, estimateClassListNameWidth } from "@/lib/class-list-name";
+import {
+  arabicClassListLevel, arabicClassListSubject, isValidWrittenArabicName,
+} from "@/lib/class-list-arabic";
 
 type ProfileMini = {
   id: string;
@@ -26,6 +29,7 @@ type StudentRow = {
   id: string;
   matricule: string | null;
   full_name: string;
+  full_name_ar?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   gender: string | null;
@@ -47,11 +51,13 @@ type ClassListPayload = {
   school_cycle?: "primary";
   mark_subjects?: ClassListMarkSubject[];
   can_edit?: boolean;
+  can_edit_arabic_names?: boolean;
   class: {
     id: string;
     label: string;
     level: string | null;
     code: string | null;
+    teaching_track?: "french" | "arabic" | null;
     academic_year: string | null;
     education_type: EducationType | null;
     formation_code: string | null;
@@ -371,6 +377,10 @@ export default function ClassListPrintPage() {
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [showCorrections, setShowCorrections] = useState(false);
+  const [arabicNameEdits, setArabicNameEdits] = useState<Record<string, string>>({});
+  const [showArabicNames, setShowArabicNames] = useState(false);
+  const [savingArabicNames, setSavingArabicNames] = useState(false);
+  const [arabicNameMessage, setArabicNameMessage] = useState<string | null>(null);
   const [showNewStudent, setShowNewStudent] = useState(false);
   const [creatingStudent, setCreatingStudent] = useState(false);
   const [newStudentMsg, setNewStudentMsg] = useState<string | null>(null);
@@ -433,6 +443,11 @@ export default function ClassListPrintPage() {
         }
       }
       setData(json as ClassListPayload);
+      setArabicNameEdits(Object.fromEntries(
+        (Array.isArray(json?.students) ? json.students : []).map((student: StudentRow) => [
+          student.id, student.full_name_ar || "",
+        ]),
+      ));
       setEditable(
         cloneEditable(Array.isArray(json?.students) ? json.students : []),
       );
@@ -518,6 +533,10 @@ export default function ClassListPrintPage() {
     "—";
   const headTeacherLabel = personLabel(data?.staff?.head_teacher);
   const students = data?.students || [];
+  const arabicList = data?.class?.teaching_track === "arabic";
+  const arabicClassLabel = arabicList
+    ? arabicClassListLevel(data?.class?.level, data?.class?.label || "Classe")
+    : data?.class?.label || "Classe";
   const canEdit = data?.can_edit !== false;
 
   const printedStudents = useMemo(
@@ -770,6 +789,42 @@ export default function ClassListPrintPage() {
     }
   }
 
+  async function saveArabicNames() {
+    if (!data?.can_edit_arabic_names || !arabicList || savingArabicNames) return;
+    const updates = data.students.flatMap((student) => {
+      const name = String(arabicNameEdits[student.id] ?? "").trim();
+      if (!isValidWrittenArabicName(name)) return [];
+      if (name === String(student.full_name_ar || "").trim()) return [];
+      return [{ student_id: student.id, full_name_ar: name || null }];
+    });
+    if (data.students.some((student) =>
+      !isValidWrittenArabicName(String(arabicNameEdits[student.id] ?? "").trim()))) {
+      setArabicNameMessage("Saisissez les noms en caractères arabes (140 caractères maximum), ou laissez vide.");
+      return;
+    }
+    if (!updates.length) {
+      setArabicNameMessage("Aucune modification des noms arabes à enregistrer.");
+      return;
+    }
+    setSavingArabicNames(true);
+    setArabicNameMessage(null);
+    try {
+      const res = await fetch(`/api/admin/classes/${encodeURIComponent(classId)}/arabic-names`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updates }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result.ok) throw new Error(result.error || "Enregistrement des noms arabes impossible.");
+      await load();
+      setArabicNameMessage(`${result.updated} nom(s) arabe(s) enregistré(s) dans le dossier unique des élèves.`);
+    } catch (e) {
+      setArabicNameMessage(e instanceof Error ? e.message : "Erreur d'enregistrement.");
+    } finally {
+      setSavingArabicNames(false);
+    }
+  }
+
   function printPdf() {
     setTimeout(() => window.print(), 60);
   }
@@ -998,7 +1053,7 @@ export default function ClassListPrintPage() {
       <div className="screen-toolbar mx-auto mb-4 flex max-w-6xl flex-col gap-3 rounded-2xl border bg-white p-4 shadow-sm lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="text-lg font-semibold">
-            Liste de classe imprimable
+            {arabicList ? "قائمة التلاميذ (Liste de classe imprimable)" : "Liste de classe imprimable"}
           </div>
           <div className="text-sm text-slate-600">
             Vérifiez l’éducateur et les informations d’identité utiles, puis
@@ -1059,6 +1114,16 @@ export default function ClassListPrintPage() {
               className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               Corriger les champs
+            </button>
+          ) : null}
+          {arabicList && data?.can_edit_arabic_names ? (
+            <button
+              type="button"
+              onClick={() => setShowArabicNames((value) => !value)}
+              disabled={loading || !!error}
+              className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+            >
+              الأسماء بالعربية (Noms en arabe)
             </button>
           ) : null}
           <a
@@ -1477,6 +1542,38 @@ export default function ClassListPrintPage() {
         </div>
       ) : null}
 
+      {showArabicNames && arabicList && data?.can_edit_arabic_names ? (
+        <section className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="mb-3 font-semibold">الأسماء بالعربية — Orthographe arabe des élèves</div>
+          <div className="mb-3 text-sm text-slate-600">
+            Cette écriture est facultative. Elle ne change ni le matricule ni le nom officiel français.
+            Sans écriture arabe enregistrée, le nom français reste imprimé.
+          </div>
+          <div className="max-h-[420px] overflow-auto">
+            {students.map((student) => (
+              <label key={student.id} className="flex flex-col gap-1 border-b py-2 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-sm">{formatTraditionalStudentName(student)}</span>
+                <input
+                  aria-label={`Nom en arabe de ${formatTraditionalStudentName(student)}`}
+                  dir="rtl"
+                  lang="ar"
+                  value={arabicNameEdits[student.id] ?? ""}
+                  onChange={(e) => setArabicNameEdits((previous) => ({ ...previous, [student.id]: e.target.value }))}
+                  maxLength={140}
+                  placeholder="الاسم واللقب"
+                  className="arabic-student-input w-full rounded-lg border px-3 py-2 text-base sm:w-[350px]"
+                />
+              </label>
+            ))}
+          </div>
+          {arabicNameMessage ? <p className="mt-2 text-sm">{arabicNameMessage}</p> : null}
+          <button type="button" onClick={() => void saveArabicNames()}
+            disabled={savingArabicNames} className="mt-3 rounded-xl bg-slate-900 px-4 py-2 font-semibold text-white disabled:opacity-60">
+            {savingArabicNames ? "Enregistrement…" : "Enregistrer les noms arabes"}
+          </button>
+        </section>
+      ) : null}
+
       {loading ? (
         <div className="mx-auto max-w-6xl rounded-2xl border bg-white p-6 text-sm text-slate-600 shadow-sm">
           Chargement de la liste…
@@ -1489,7 +1586,7 @@ export default function ClassListPrintPage() {
           </button>
         </div>
       ) : data ? (
-        <section className={`class-list-print-root ${primaryList ? "primary-class-list" : ""}`}>
+        <section className={`class-list-print-root ${primaryList ? "primary-class-list" : ""} ${arabicList ? "arabic-class-list" : ""}`}>
           {printedPages.map(({ students: pageStudents, startIndex }, pageIndex) => (
           <article
             className={`class-list-sheet ${primaryList
@@ -1530,20 +1627,21 @@ export default function ClassListPrintPage() {
 
               <div className="class-list-title-block">
                 <div className="list-title">
-                  LISTE DE CLASSE {data.class.label}
+                  {arabicList ? "قائمة التلاميذ (Liste de classe) — " : "LISTE DE CLASSE "}
+                  {arabicClassLabel}
                 </div>
               </div>
 
               <div className="right-meta">
                 <div>
-                  {data.totals.students} Élève
-                  {data.totals.students > 1 ? "s" : ""}
+                  {arabicList ? "عدد التلاميذ (Effectif) : " : ""}
+                  {data.totals.students} {arabicList ? "" : `Élève${data.totals.students > 1 ? "s" : ""}`}
                 </div>
                 <span className="year-line">
-                  Année scolaire&nbsp;: {academicYearLabel}
+                  {arabicList ? "السنة الدراسية (Année scolaire)" : "Année scolaire"}&nbsp;: {academicYearLabel}
                 </span>
                 <span className="class-line">
-                  Classe&nbsp;: {data.class.label}
+                  {arabicList ? "القسم (Classe)" : "Classe"}&nbsp;: {arabicClassLabel}
                 </span>
               </div>
             </header>}
@@ -1564,10 +1662,10 @@ export default function ClassListPrintPage() {
 
             {pageIndex === 0 && <div className="staff-line">
               <div>
-                <strong>{primaryList ? "Instituteur :" : "Professeur principal :"}</strong> {headTeacherLabel}
+                <strong>{arabicList ? "الأستاذ (Enseignant) :" : primaryList ? "Instituteur :" : "Professeur principal :"}</strong> {headTeacherLabel}
               </div>
               <div>
-                <strong>Éducateur de niveau :</strong> {selectedEducator}
+                <strong>{arabicList ? "المربي (Éducateur) :" : "Éducateur de niveau :"}</strong> {selectedEducator}
               </div>
               <div>
                 {data.institution.document_signatories != null
@@ -1585,16 +1683,21 @@ export default function ClassListPrintPage() {
             <table className="roster-table">
               <thead>
                 <tr>
-                  <th className="col-no">N°</th>
-                  <th className="col-matricule">Matricule</th>
-                  <th className="col-name">Nom et prénoms</th>
-                  <th className="col-affect">Aff.</th>
-                  <th className="col-date">Né(e) le</th>
-                  <th className="col-sex">Sexe</th>
-                  <th className="col-red">Red</th>
+                  <th className="col-no">{arabicList ? "م" : "N°"}</th>
+                  <th className="col-matricule">{arabicList ? "الرقم (Mat.)" : "Matricule"}</th>
+                  <th className="col-name">{arabicList ? "الاسم واللقب (Nom et prénoms)" : "Nom et prénoms"}</th>
+                  <th className="col-affect">{arabicList ? "Aff." : "Aff."}</th>
+                  <th className="col-date">{arabicList ? "الميلاد (Né le)" : "Né(e) le"}</th>
+                  <th className="col-sex">{arabicList ? "الجنس" : "Sexe"}</th>
+                  <th className="col-red">{arabicList ? "إعادة" : "Red"}</th>
                   {noteColumns.map(subject => <th key={subject.id} className="col-note"
                     title={subject.name} style={primaryList ? { width: `${42 / Math.max(noteColumns.length, 1)}%` } : undefined}>
-                    <span>{subject.shortName}</span>
+                    {arabicList && primaryList ? (
+                      <span className="arabic-subject-heading" dir="rtl" lang="ar"
+                        title={arabicClassListSubject(subject.name, subject.shortName).legend}>
+                        {arabicClassListSubject(subject.name, subject.shortName).header}
+                      </span>
+                    ) : <span>{arabicList ? `علامة ${subject.shortName.replace(/[^0-9]/g, "") || subject.shortName}` : subject.shortName}</span>}
                     {primaryList && subject.denominator !== null && <small className="subject-denominator">/{subject.denominator}</small>}
                   </th>)}
                 </tr>
@@ -1606,7 +1709,7 @@ export default function ClassListPrintPage() {
                       colSpan={7 + noteColumns.length}
                       className="py-8 text-center text-slate-500"
                     >
-                      Aucun élève inscrit dans cette classe.
+                      {arabicList ? "لا يوجد تلاميذ في هذا القسم (Aucun élève)" : "Aucun élève inscrit dans cette classe."}
                     </td>
                   </tr>
                 ) : (
@@ -1617,15 +1720,21 @@ export default function ClassListPrintPage() {
                         {student.matricule || ""}
                       </td>
                       <td className="col-name"
-                        title={formatTraditionalStudentName(student)}
+                        dir={arabicList && student.full_name_ar ? "rtl" : "ltr"}
+                        lang={arabicList && student.full_name_ar ? "ar" : undefined}
+                        title={arabicList && student.full_name_ar
+                          ? `${student.full_name_ar} — ${formatTraditionalStudentName(student)}`
+                          : formatTraditionalStudentName(student)}
                         data-full-name={formatTraditionalStudentName(student)}
                         data-last-name={student.last_name || ""}
                         data-first-name={student.first_name || ""}
                       >
-                        {fitClassListName({
-                          fullName: formatTraditionalStudentName(student),
-                          lastName: student.last_name, firstName: student.first_name,
-                        }, 285, estimateClassListNameWidth).text}
+                        {arabicList && student.full_name_ar
+                          ? student.full_name_ar
+                          : fitClassListName({
+                              fullName: formatTraditionalStudentName(student),
+                              lastName: student.last_name, firstName: student.first_name,
+                            }, 285, estimateClassListNameWidth).text}
                       </td>
                       <td className="col-affect">
                         {affectationShort(student.is_affecte)}
@@ -1647,13 +1756,14 @@ export default function ClassListPrintPage() {
 
             <footer className="sheet-footer">
               <div>
-                Filles : {data.totals.girls} &nbsp;|&nbsp; Garçons :{" "}
+                {arabicList ? "بنات (Filles)" : "Filles"} : {data.totals.girls}
+                &nbsp;|&nbsp; {arabicList ? "بنون (Garçons)" : "Garçons"} :{" "}
                 {data.totals.boys}
               </div>
               <div className="export-brand-footer">
                 {MON_CAHIER_EXPORT_SIGNATURE}
               </div>
-              <div className="footer-right">Page {pageIndex + 1} / {printedPages.length}</div>
+              <div className="footer-right">{arabicList ? "الصفحة (Page)" : "Page"} {pageIndex + 1} / {printedPages.length}</div>
             </footer>
           </article>
           ))}
