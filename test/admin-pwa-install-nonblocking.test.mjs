@@ -3,56 +3,48 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const read = (path) => readFileSync(path, "utf8");
-const modal = read("src/components/admin/AdminPwaInstallPrompt.tsx");
-const capture = read("src/lib/pwa-install-prompt.ts");
+const adminLayout = read("src/app/admin/layout.tsx");
+const adminShell = read("src/app/admin/ui/shell.tsx");
 const registrar = read("src/components/ServiceWorkerRegistrar.tsx");
-const shell = read("src/app/admin/ui/shell.tsx");
-const shortcut = read("src/components/admin/AdminPwaInstallShortcut.tsx");
+const classLayout = read("src/app/class/layout.tsx");
+const classInstall = read("src/components/ClassDeviceInstallButton.tsx");
+const manifest = read("src/app/manifest.ts");
+const worker = read("public/moncahier-sw.js");
 
-test("la PWA ne verrouille pas le tableau de bord", () => {
-  assert.doesNotMatch(modal, /document\.body\.style\.overflow\s*=/);
-  assert.match(modal, /pointer-events-none fixed inset-0/);
-  assert.match(modal, /pointer-events-none absolute inset-0/);
-  assert.match(modal, /pointer-events-auto relative/);
-  assert.doesNotMatch(modal, /aria-modal="true"/);
+test("aucune invitation PWA n'est montée dans l'administration", () => {
+  assert.doesNotMatch(adminLayout, /AdminPwaInstallPrompt/);
+  assert.doesNotMatch(adminShell, /AdminPwaInstallShortcut/);
+  assert.match(adminLayout, /<AdminShell/);
+  assert.match(adminLayout, /<FileCorrespondentShell/);
 });
 
-test("l'interface n'annonce Installer maintenant que si le prompt natif existe", () => {
-  assert.match(modal, /hasNativePrompt \? "Installer maintenant" : "Voir comment installer"/);
-  assert.match(modal, /const event = consumePwaInstallPrompt\(\)/);
-  assert.match(modal, /await event\.prompt\(\)/);
-  assert.match(modal, /event\.userChoice/);
-  assert.match(modal, /setShowHelp\(true\)/);
+test("aucune interception PWA globale ne concurrence les comptes classe et professeur", () => {
+  assert.doesNotMatch(registrar, /pwa-install-prompt|beginPwaInstallCapture/);
+  assert.match(registrar, /registerServiceWorker/);
+  assert.match(registrar, /registration\?\.update\(\)/);
 });
 
-test("l'événement avant connexion est capturé et proposé ensuite à l'Admin", () => {
-  assert.match(capture, /window\.addEventListener\("beforeinstallprompt"/);
-  assert.match(capture, /event\.preventDefault\(\)/);
-  assert.match(capture, /deferredPrompt = event/);
-  assert.match(capture, /return prompt/);
-  assert.match(registrar, /beginPwaInstallCapture\(\)/);
-  assert.match(modal, /getPwaInstallPrompt\(\)/);
+test("le parcours d'installation existant pour téléphone de classe est préservé", () => {
+  assert.match(classLayout, /<ClassDeviceInstallButton/);
+  assert.match(classInstall, /beforeinstallprompt/);
+  assert.match(classInstall, /await promptEvent\.prompt\(\)/);
+  assert.match(classInstall, /Installer l.application/);
+  assert.match(classInstall, /Sur Android/);
 });
 
-test("l'aide remplace la fenêtre centrale sans masquer le menu navigateur", () => {
-  assert.match(modal, /if \(showHelp\)\s*\{\s*return/);
-  assert.match(modal, /pointer-events-none fixed inset-x-3 top-16/);
-  assert.match(modal, /Ouvrez Mon Cahier directement dans Chrome/);
-  assert.match(modal, /Safari/);
-  assert.match(modal, /Compris, accéder à Mon Cahier/);
+test("la PWA partagée et les données hors ligne ne sont pas désactivées", () => {
+  assert.match(manifest, /display: "standalone"/);
+  assert.match(manifest, /start_url: "\/"/);
+  assert.match(manifest, /scope: "\/"/);
+  assert.match(worker, /self\.addEventListener\("install"/);
+  assert.match(worker, /self\.addEventListener\("activate"/);
+  assert.match(worker, /self\.addEventListener\("fetch"/);
 });
 
-test("Plus tard reste facultatif et l'installation peut être relancée", () => {
-  assert.match(modal, /REMIND_AFTER_MS = 14/);
-  assert.match(modal, /PWA_INSTALL_OPEN_EVENT/);
-  assert.match(modal, /window\.addEventListener\(PWA_INSTALL_OPEN_EVENT, onShortcutClick\)/);
-  assert.match(shell, /<AdminPwaInstallShortcut \/>/);
-  assert.match(shortcut, /window\.dispatchEvent\(new Event\(PWA_INSTALL_OPEN_EVENT\)\)/);
-  assert.match(shortcut, /isPwaStandalone\(\)/);
-});
-
-test("l'invitation n'ajoute aucune requête ni image", () => {
-  assert.doesNotMatch(modal, /\bfetch\s*\(|\bsupabase\./);
-  assert.doesNotMatch(modal, /<img\b|next\/image/);
-  assert.doesNotMatch(capture + shortcut, /\bfetch\s*\(|\bsupabase\./);
+test("le retrait ne modifie pas la navigation et les données scolaires de l'administration", () => {
+  assert.match(adminLayout, /getPrimaryRole/);
+  assert.match(adminLayout, /<OfflineScheduleSyncBridge/);
+  assert.match(adminLayout, /<RelaySupervisionBadge/);
+  assert.match(adminShell, /<ContactUsButton/);
+  assert.match(adminShell, /<MonCahierAiChatBubble/);
 });
