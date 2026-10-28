@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { adminStudentPedagogicalLinks } from "../src/lib/admin-student-pedagogical-links.ts";
+import { adminStudentPedagogicalLinks } from "../src/lib/admin-student-pedagogical-links";
 
 const classFrench = "11111111-1111-4111-8111-111111111111";
 const classArabic = "22222222-2222-4222-8222-222222222222";
