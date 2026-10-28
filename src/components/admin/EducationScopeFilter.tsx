@@ -30,6 +30,8 @@ type Props = {
   className?: string;
   title?: string;
   classLabel?: string;
+  /** Uniquement cosmétique : libellé du contexte pour des niveaux historiques sans type distinct. */
+  educationTypeLabelOverride?: string;
 };
 
 type Choice = {
@@ -90,6 +92,7 @@ export default function EducationScopeFilter({
   className = "",
   title = "Périmètre pédagogique",
   classLabel = "Classe",
+  educationTypeLabelOverride,
 }: Props) {
   const context = useEducationTeachingContext();
 
@@ -292,7 +295,7 @@ export default function EducationScopeFilter({
         </div>
         {!showTypeSelector ? (
           <span className="rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-medium text-sky-800">
-            {typeLabel(value.educationType)}
+            {educationTypeLabelOverride || typeLabel(value.educationType)}
           </span>
         ) : null}
       </div>
