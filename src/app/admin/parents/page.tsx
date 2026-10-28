@@ -14,6 +14,7 @@ import {
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import { resolveAttestationSignatories } from "@/lib/franco-arabic-document-signatories";
 import { attestationPhotoUrlForCurrentOrigin } from "@/lib/attestation-photo-url";
+import { inferSchoolCycleFromLevel } from "@/lib/school-cycles";
 import { documentNationalEmblem } from "@/lib/document-national-emblem";
 import {
   DEFAULT_EDUCATION_SCOPE,
@@ -104,12 +105,15 @@ type ClassRow = EducationScopedClass & {
   id: string;
   name: string;
   level: string;
+  code?: string | null;
   label?: string | null;
 };
 
 type StudentRow = {
   id: string;
   full_name: string;
+  full_name_ar?: string | null;
+  is_pedagogical_link?: boolean;
   first_name?: string | null;
   last_name?: string | null;
   class_id: string | null;
@@ -947,6 +951,9 @@ function openPrintDocument(html: string) {
 export default function AdminStudentsByClassPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [students, setStudents] = useState<StudentRow[]>([]);
+  const [arabicRoster, setArabicRoster] = useState<{ classId: string; students: StudentRow[] } | null>(null);
+  const [arabicRosterLoading, setArabicRosterLoading] = useState(false);
+  const [arabicRosterError, setArabicRosterError] = useState<string | null>(null);
   const [cfg, setCfg] = useState<InstitutionSettings>({});
   const [academicYear, setAcademicYear] = useState("");
 
@@ -1164,6 +1171,46 @@ export default function AdminStudentsByClassPage() {
     })();
   }, []);
 
+  // Only Arabic teaching-class selections request the verified pedagogical roster.
+  // Do not append those identities to the global physical student list: finance,
+  // enrolments, other year groups and French class counts must remain unchanged.
+  const selectedClass = classes.find((item) => item.id === classId);
+  const isArabicTrackClass = Boolean(selectedClass?.code && /-AR$/i.test(selectedClass.code));
+  const selectedCycle = inferSchoolCycleFromLevel(selectedClass?.level || level);
+  const pedagogicalScopeLabel = selectedCycle === "primary"
+    ? `Primaire · enseignement ${isArabicTrackClass ? "arabe" : "français"}`
+    : selectedCycle === "preschool"
+      ? `Maternelle · enseignement ${isArabicTrackClass ? "arabe" : "français"}`
+      : isArabicTrackClass ? "Secondaire · enseignement arabe" : undefined;
+
+  useEffect(() => {
+    if (!classId || !isArabicTrackClass) {
+      setArabicRoster(null);
+      setArabicRosterError(null);
+      setArabicRosterLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setArabicRoster(null);
+    setArabicRosterError(null);
+    setArabicRosterLoading(true);
+    (async () => {
+      try {
+        const params = new URLSearchParams({ class_id: classId });
+        if (academicYear) params.set("academic_year", academicYear);
+        const res = await fetch(`/api/admin/students?${params}`, { cache: "no-store" });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(String(payload?.error || "Impossible de charger les élèves arabes"));
+        if (!cancelled) setArabicRoster({ classId, students: (payload.items || []) as StudentRow[] });
+      } catch (e: any) {
+        if (!cancelled) setArabicRosterError(e?.message || "Chargement impossible");
+      } finally {
+        if (!cancelled) setArabicRosterLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [classId, isArabicTrackClass, academicYear]);
+
   const classLevelById = useMemo(() => {
     const map = new Map<string, string>();
     for (const c of classes) {
@@ -1173,7 +1220,9 @@ export default function AdminStudentsByClassPage() {
   }, [classes]);
 
   const studentsFiltered = useMemo(() => {
-    let list = students;
+    let list = isArabicTrackClass
+      ? (arabicRoster?.classId === classId ? arabicRoster.students : [])
+      : students;
 
     if (level) {
       list = list.filter(
@@ -1193,6 +1242,7 @@ export default function AdminStudentsByClassPage() {
         return (
           norm(full).includes(k) ||
           norm(display).includes(k) ||
+          norm(s.full_name_ar ?? "").includes(k) ||
           norm(s.matricule ?? "").includes(k)
         );
       });
@@ -1205,7 +1255,7 @@ export default function AdminStudentsByClassPage() {
         { sensitivity: "base" }
       )
     );
-  }, [students, level, classId, q, classLevelById]);
+  }, [students, arabicRoster, isArabicTrackClass, level, classId, q, classLevelById]);
 
   const total = studentsFiltered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -1500,6 +1550,10 @@ export default function AdminStudentsByClassPage() {
   }
 
   async function submitAssign() {
+    if (isArabicTrackClass) {
+      setMsg("Les élèves arabes sont rattachés pédagogiquement : aucun transfert administratif nécessaire.");
+      return;
+    }
     if (!classId) {
       setMsg("Choisissez d'abord une classe.");
       return;
@@ -1776,6 +1830,7 @@ export default function AdminStudentsByClassPage() {
           showClass
           disabled={loading}
           title="Périmètre de la liste des élèves"
+          scopeBadgeLabel={pedagogicalScopeLabel}
         />
 
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -1804,7 +1859,7 @@ export default function AdminStudentsByClassPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {canTransferOrRemoveStudents ? (
+            {canTransferOrRemoveStudents && !isArabicTrackClass ? (
               <Button
                 tone="slate"
                 onClick={() => {
@@ -1860,7 +1915,7 @@ export default function AdminStudentsByClassPage() {
           </div>
         </div>
 
-        {loading ? (
+        {loading || (isArabicTrackClass && arabicRosterLoading) ? (
           <div className="space-y-3">
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
@@ -1869,6 +1924,10 @@ export default function AdminStudentsByClassPage() {
         ) : !classId ? (
           <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
             Choisissez d'abord une <b>classe</b>.
+          </div>
+        ) : arabicRosterError ? (
+          <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+            Erreur de chargement de la liste arabe : {arabicRosterError}
           </div>
         ) : pageItems.length === 0 ? (
           <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
@@ -1926,8 +1985,10 @@ export default function AdminStudentsByClassPage() {
                       </td>
 
                       <td className="px-3 py-2 tabular-nums">{numero}</td>
-                      <td className="px-3 py-2">
-                        {nomAvantPrenoms(student.full_name)}
+                      <td className="px-3 py-2" lang={isArabicTrackClass && student.full_name_ar ? "ar" : undefined} dir={isArabicTrackClass && student.full_name_ar ? "rtl" : undefined}>
+                        {isArabicTrackClass && student.full_name_ar
+                          ? student.full_name_ar
+                          : nomAvantPrenoms(student.full_name)}
                       </td>
                       <td className="px-3 py-2">{student.matricule || "-"}</td>
                       <td className="px-3 py-2">{student.class_label || "-"}</td>
@@ -1942,7 +2003,7 @@ export default function AdminStudentsByClassPage() {
                             Attestation
                           </Button>
 
-                          {canTransferOrRemoveStudents ? (
+                          {canTransferOrRemoveStudents && !isArabicTrackClass ? (
                             <>
                               {canCreateOrEditStudents ? (
                                 <Button tone="white" onClick={() => openEdit(student)}>

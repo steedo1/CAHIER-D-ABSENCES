@@ -30,6 +30,7 @@ type Props = {
   className?: string;
   title?: string;
   classLabel?: string;
+  scopeBadgeLabel?: string;
 };
 
 type Choice = {
@@ -90,6 +91,7 @@ export default function EducationScopeFilter({
   className = "",
   title = "Périmètre pédagogique",
   classLabel = "Classe",
+  scopeBadgeLabel,
 }: Props) {
   const context = useEducationTeachingContext();
 
@@ -292,7 +294,7 @@ export default function EducationScopeFilter({
         </div>
         {!showTypeSelector ? (
           <span className="rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-medium text-sky-800">
-            {typeLabel(value.educationType)}
+            {scopeBadgeLabel || typeLabel(value.educationType)}
           </span>
         ) : null}
       </div>
