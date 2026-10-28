@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useState } from "react";
 import { Download, Smartphone, X } from "lucide-react";
 
 type BeforeInstallPromptEvent = Event & {
@@ -23,17 +23,20 @@ function isPhone() {
 }
 
 /**
- * Proposition d'installation PWA pour les rôles Admin et Correspondant fichier
- * (contrôlés par le layout serveur). Le visuel est 100% local : pas d'image,
- * pas de téléchargement de logo, pas d'API ni de nouvelle requête Supabase.
+ * Invitation PWA réservée aux comptes administrateur et correspondant fichier
+ * par le layout serveur. Aucun nouveau logo/image, appel API ou accès Supabase.
+ *
+ * Le fond est purement visuel : il ne capte jamais les clics ou le défilement
+ * sur le tableau de bord. Si le navigateur ne fournit pas la boîte native
+ * d'installation, l'aide remplace la carte centrale par un guide non bloquant
+ * pour que le menu Chrome/Safari soit immédiatement utilisable.
  */
 export default function AdminPwaInstallPrompt() {
   const [visible, setVisible] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [showInstructions, setShowInstructions] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
   const [busy, setBusy] = useState(false);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!isPhone() || isStandalone()) return;
@@ -42,7 +45,7 @@ export default function AdminPwaInstallPrompt() {
       const dismissedUntil = Number(window.localStorage.getItem(DISMISS_KEY) ?? 0);
       if (dismissedUntil > Date.now()) return;
     } catch {
-      // Le stockage local n'est pas indispensable à l'invitation.
+      // Le stockage local est facultatif ; aucun appel réseau de remplacement.
     }
 
     setIsIOS(/iphone|ipod/i.test(navigator.userAgent));
@@ -50,7 +53,10 @@ export default function AdminPwaInstallPrompt() {
 
     const mediaQuery = window.matchMedia("(display-mode: standalone)");
     const onDisplayModeChange = () => {
-      if (isStandalone()) setVisible(false);
+      if (isStandalone()) {
+        setVisible(false);
+        setShowHelp(false);
+      }
     };
     const onInstallAvailable = (event: Event) => {
       event.preventDefault();
@@ -58,6 +64,7 @@ export default function AdminPwaInstallPrompt() {
     };
     const onInstalled = () => {
       setVisible(false);
+      setShowHelp(false);
       setInstallPrompt(null);
     };
 
@@ -72,36 +79,21 @@ export default function AdminPwaInstallPrompt() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!visible) return;
-
-    const previousOverflow = document.body.style.overflow;
-    const previousFocus = document.activeElement instanceof HTMLElement
-      ? document.activeElement : null;
-
-    document.body.style.overflow = "hidden";
-    dialogRef.current?.focus();
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      previousFocus?.focus();
-    };
-  }, [visible]);
-
   const dismiss = () => {
     try {
       window.localStorage.setItem(DISMISS_KEY, String(Date.now() + REMIND_AFTER_MS));
     } catch {
-      // Aucun enregistrement sur un serveur.
+      // Jamais de requête vers Render ou Supabase.
     }
     setVisible(false);
+    setShowHelp(false);
   };
 
   const install = async () => {
-    // iOS et les navigateurs n'offrant plus beforeinstallprompt :
-    // expliquer l'installation manuelle au lieu de présenter un faux succès.
+    // Le navigateur n'a pas proposé l'installation automatique :
+    // basculer sur un guide léger qui laisse le menu du navigateur utilisable.
     if (!installPrompt) {
-      setShowInstructions(true);
+      setShowHelp(true);
       return;
     }
 
@@ -113,84 +105,98 @@ export default function AdminPwaInstallPrompt() {
       if (choice?.outcome === "accepted") {
         setVisible(false);
       } else {
-        setShowInstructions(true);
+        setShowHelp(true);
       }
     } catch {
       setInstallPrompt(null);
-      setShowInstructions(true);
+      setShowHelp(true);
     } finally {
       setBusy(false);
     }
   };
 
-  const onDialogKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      dismiss();
-      return;
-    }
-    if (event.key !== "Tab") return;
-
-    const buttons = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
-    );
-    if (!buttons.length) return;
-
-    const first = buttons[0];
-    const last = buttons[buttons.length - 1];
-    if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-
   if (!visible) return null;
 
+  if (showHelp) {
+    return (
+      <section
+        aria-label="Installer Mon Cahier depuis le navigateur"
+        role="status"
+        className="pointer-events-none fixed inset-x-3 top-3 z-[200] flex justify-center"
+      >
+        <div className="pointer-events-auto w-full max-w-sm rounded-2xl border-2 border-amber-400 bg-slate-900 p-4 text-white shadow-2xl">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-base font-extrabold text-amber-300">
+              Installer depuis le navigateur
+            </p>
+            <button
+              type="button"
+              onClick={dismiss}
+              aria-label="Fermer les instructions d’installation"
+              className="shrink-0 rounded-lg p-2 text-white hover:bg-white/10"
+            >
+              <X className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
+          <p className="mt-2 text-sm leading-6">
+            {isIOS
+              ? "Dans Safari : touchez Partager, puis Ajouter à l’écran d’accueil."
+              : "Dans Chrome : touchez ⋮ en haut à droite, puis Installer l’application (ou Ajouter à l’écran d’accueil)."}
+          </p>
+          <p className="mt-2 text-xs text-slate-300">
+            Si cette option est absente, l’application peut déjà être installée
+            ou le navigateur peut ne pas proposer l’installation.
+          </p>
+          <button
+            type="button"
+            onClick={dismiss}
+            className="mt-3 w-full rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-bold text-slate-950"
+          >
+            Compris, continuer
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-[3px]">
+    <section
+      aria-label="Proposition d’installation de Mon Cahier"
+      className="pointer-events-none fixed inset-0 z-[200] flex items-center justify-center px-4 py-5"
+    >
       <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="admin-install-title"
-        aria-describedby="admin-install-description"
-        onKeyDown={onDialogKeyDown}
-        tabIndex={-1}
-        className="relative max-h-[calc(100dvh-3rem)] w-full max-w-sm overflow-y-auto rounded-[28px] border-2 border-amber-300 bg-slate-900 px-5 pb-6 pt-7 text-center text-white shadow-2xl outline-none"
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-slate-950/45 backdrop-blur-[1px]"
+      />
+      <div
+        className="pointer-events-auto relative max-h-[calc(100dvh-2.5rem)] w-full max-w-sm overflow-y-auto rounded-[28px] border-2 border-amber-300 bg-slate-900 px-5 pb-5 pt-6 text-center text-white shadow-2xl"
       >
         <button
           type="button"
           onClick={dismiss}
-          aria-label="Fermer la proposition d'installation"
-          className="absolute right-3 top-3 rounded-full p-2 text-slate-300 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300"
+          aria-label="Fermer la proposition d’installation"
+          className="absolute right-3 top-3 rounded-full p-2 text-slate-300 hover:bg-white/10"
         >
           <X className="h-5 w-5" aria-hidden="true" />
         </button>
-
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-200 bg-amber-400 text-slate-950 shadow-lg">
-          <Smartphone className="h-9 w-9" aria-hidden="true" />
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-200 bg-amber-400 text-slate-950">
+          <Smartphone className="h-8 w-8" aria-hidden="true" />
         </div>
-
-        <p className="mt-5 text-xs font-black uppercase tracking-[0.2em] text-amber-300">
+        <p className="mt-4 text-xs font-black uppercase tracking-[0.18em] text-amber-300">
           Mon Cahier sur mobile
         </p>
-        <h2 id="admin-install-title" className="mt-2 text-2xl font-black leading-tight">
+        <h2 className="mt-2 text-2xl font-black leading-tight">
           Installez Mon Cahier !
         </h2>
-        <p id="admin-install-description" className="mx-auto mt-3 max-w-xs text-sm leading-6 text-slate-200">
+        <p className="mx-auto mt-3 max-w-xs text-sm leading-6 text-slate-200">
           Accédez directement à votre espace scolaire depuis l’écran d’accueil
           de votre téléphone.
         </p>
-
         <button
           type="button"
           onClick={install}
           disabled={busy}
-          aria-expanded={showInstructions}
-          className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl bg-amber-400 px-4 py-3.5 text-base font-extrabold text-slate-950 shadow-lg transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-wait disabled:opacity-70"
+          className="mt-5 flex w-full items-center justify-center gap-3 rounded-xl bg-amber-400 px-4 py-3.5 text-base font-extrabold text-slate-950 shadow-lg transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-70"
         >
           <Download className="h-5 w-5" aria-hidden="true" />
           {busy ? "Installation…" : "Installer maintenant"}
@@ -198,22 +204,14 @@ export default function AdminPwaInstallPrompt() {
         <button
           type="button"
           onClick={dismiss}
-          className="mt-3 w-full rounded-xl border border-white/40 bg-slate-800 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300"
+          className="mt-3 w-full rounded-xl border border-white/40 bg-slate-800 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-700"
         >
           Plus tard
         </button>
-
-        {showInstructions && (
-          <div role="status" className="mt-4 rounded-xl border border-amber-300/50 bg-slate-800 p-3 text-left text-xs leading-5 text-white">
-            {isIOS
-              ? "Sur iPhone, ouvrez Mon Cahier dans Safari, puis Partager → Ajouter à l’écran d’accueil."
-              : "Sur Android, ouvrez Mon Cahier dans Chrome, puis menu ⋮ → Installer l’application (ou Ajouter à l’écran d’accueil)."}
-            <p className="mt-2 text-slate-300">
-              Si cette option n’apparaît pas, vérifiez que l’application n’est pas déjà installée.
-            </p>
-          </div>
-        )}
+        <p className="mt-3 text-xs text-slate-300">
+          Installation facultative. Votre tableau de bord reste accessible.
+        </p>
       </div>
-    </div>
+    </section>
   );
 }
