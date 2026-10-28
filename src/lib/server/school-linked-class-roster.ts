@@ -27,7 +27,7 @@ export async function loadLinkedClassEnrollments(service: SupabaseClient, instit
     .filter(row => row.class_id === classroom.id).map(row => row.student_id);
   if (links.some(id => !allowed.includes(id))) throw Error("STUDENT_PROGRAM_LINK_STALE");
   const { data: students, error: studentError } = await service.from("students")
-    .select("id,first_name,last_name,full_name,matricule,gender,birthdate,birth_place,parent_names,parent_contact,nationality,is_repeater,lv2,is_affecte,is_boarder")
+    .select("id,first_name,last_name,full_name,full_name_ar,matricule,gender,birthdate,birth_place,parent_names,parent_contact,nationality,is_repeater,lv2,is_affecte,is_boarder")
     .eq("institution_id", institutionId).in("id", allowed).limit(701);
   if (studentError || !students || students.length !== links.length) throw Error("STUDENT_SCOPE_INVALID");
   return students.map(student => ({
