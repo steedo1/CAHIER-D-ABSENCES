@@ -43,7 +43,8 @@ async function changeValue(node, value) {
 function valueFor(container, name) {
   const row = [...container.querySelectorAll("tbody tr")].find(row => row.textContent.includes(name));
   assert.ok(row, "discipline not rendered: " + name);
-  return row.querySelector('[aria-label^="Barème de composition "]')?.textContent.trim();
+  const input = row.querySelector('input[aria-label^="Barème de composition "]');
+  return input ? "/" + input.value : row.querySelector('[aria-label^="Barème de composition "]')?.textContent.trim();
 }
 
 test("EPC : barèmes CM1 /20 et /50 affichés à la bonne matière, CP1 /10, sans écriture serveur", async () => {
@@ -100,7 +101,7 @@ test("EPC : barèmes CM1 /20 et /50 affichés à la bonne matière, CP1 /10, san
       assert.equal(valueFor(target, name), "/10", name);
     assert.equal(target.querySelectorAll("tbody tr").length, 11);
     assert.equal(target.querySelectorAll('input[aria-label^="Coefficient "]').length, 0);
-    assert.equal(target.querySelectorAll('input[aria-label^="Barème de composition "]').length, 0);
+    assert.equal(target.querySelectorAll('input[aria-label^="Barème de composition "]').length, 11);
 
     await changeValue(target.querySelector('select[aria-label="Niveau et classe"]'), cp1);
     await flush(); await flush();

@@ -639,7 +639,7 @@ export default function ClassDeviceNotesPage() {
     new Date().toISOString().slice(0, 10)
   );
   const [newType, setNewType] = useState<EvalKind>("devoir");
-  const [newScale, setNewScale] = useState<number>(20);
+  const [newScale, setNewScale] = useState<number | string>(20);
   const [newCoeff, setNewCoeff] = useState<number>(1);
   const [creating, setCreating] = useState(false);
 
@@ -1352,6 +1352,10 @@ export default function ClassDeviceNotesPage() {
         setCreating(false);
         return;
       }
+      if (isPrimaryProgram && (!Number.isInteger(Number(newScale || selected.configured_scale)) ||
+          Number(newScale || selected.configured_scale) < 1 || Number(newScale || selected.configured_scale) > 100)) {
+        setMsg("Saisissez un barème entier de 1 à 100."); setCreating(false); return;
+      }
       const payload = {
         class_id: selected.class_id,
         subject_id: selected?.subject_id ?? null,
@@ -1362,7 +1366,7 @@ export default function ClassDeviceNotesPage() {
           ? selectedPrimaryEvent?.kind === "official" || selectedPrimaryEvent?.kind === "passage" ? "composition" : "devoir"
           : newType,
         ...(isPrimaryProgram && primaryCatalogEnabled ? { primary_event_code: newPrimaryEventCode, teaching_track: selected.teaching_track } : {}),
-        scale: isPrimaryProgram ? selected.configured_scale! : newScale,
+        scale: Number(isPrimaryProgram ? (newScale || selected.configured_scale) : newScale),
         coeff: isPrimaryProgram ? 1 : newCoeff,
       };
       logInfo("addEvaluation -> POST /api/grades/evaluations", payload);
@@ -2696,24 +2700,17 @@ export default function ClassDeviceNotesPage() {
               )}
 
               <div>
-                <Select
-                  value={String(newScale)}
-                  onChange={(e) => {
-                    logInfo(
-                      "UI -> changement échelle nouvelle note",
-                      e.target.value
-                    );
-                    setNewScale(Number(e.target.value));
-                  }}
-                  aria-label="Échelle"
-                  disabled={selectedPeriodClosed}
-                >
-                  {(isPrimaryProgram && selected?.configured_scale ? [selected.configured_scale] : [5, 10, 20]).map((s) => (
-                    <option key={s} value={s}>
-                      /{s}
-                    </option>
-                  ))}
-                </Select>
+                {isPrimaryProgram ? (
+                  <input aria-label="Barème" type="number" min={1} max={100} step={1}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                    value={String(newScale)} placeholder={String(selected?.configured_scale || 10)}
+                    disabled={selectedPeriodClosed} onChange={e => setNewScale(e.target.value)} />
+                ) : (
+                  <Select value={String(newScale)} aria-label="Échelle" disabled={selectedPeriodClosed}
+                    onChange={e => setNewScale(Number(e.target.value))}>
+                    {[5, 10, 20].map(s => <option key={s} value={s}>/{s}</option>)}
+                  </Select>
+                )}
               </div>
               {!isPrimaryProgram && <div className="col-span-2 md:col-span-2">
                 <Select

@@ -100,7 +100,7 @@ test("server dates, publication identity, repeated event selection and used cale
   assert.equal(db.tables.grade_evaluations.length, 1, "no duplicate column or double-counting");
   const foreign = await db.teacher(evaluationPath).POST(req("/api/teacher/grades/evaluations", { class_id: "foreign", eval_kind: "devoir", scale: 10, primary_event_code: "DEC", teaching_track: "french" }));
   assert.equal(foreign.status, 403);
-  for (const changes of [{ scale: 20 }, { coeff: 2 }, { primary_event_code: "UNKNOWN" }, { teaching_track: "bogus" }]) {
+  for (const changes of [{ scale: 0 }, { scale: 101 }, { coeff: 2 }, { primary_event_code: "UNKNOWN" }, { teaching_track: "bogus" }]) {
     const response = await db.teacher(evaluationPath).POST(req("/api/teacher/grades/evaluations", { class_id: cls, subject_id: math, eval_kind: "devoir", scale: 10, coeff: 1, primary_event_code: "DEC", teaching_track: "french", ...changes }));
     assert.ok(response.status >= 400);
   }
@@ -217,6 +217,32 @@ test("French-only primary retains its existing administrator validation policy",
   assert.equal(result.status,200,JSON.stringify(await result.clone().json()));
   assert.equal(db.tables.grade_evaluations[0].publication_status,"submitted");
   assert.equal(db.tables.grade_published_scores.length,0);
+});
+
+test("CP2: teacher may enter /30 over the configured default and the published bulletin uses /30", async () => {
+  const db = setup("CP2");
+  const ev = await create(db, "DEC", "french", { scale: 30 });
+  assert.equal(ev.scale, 30);
+  assert.equal(db.tables.grade_evaluations[0].scale, 60);
+  assert.match(db.tables.grade_evaluations[0].title, /:S30$/);
+  const stored = db.tables.grade_evaluations[0];
+  stored.class = { ...db.tables.classes[0] };
+  stored.subject = { id: math, name: "Mathématiques" };
+  db.tables.students = [db.tables.class_enrollments[0].students];
+  const loader = createFixtureRouteLoader(db, teacher);
+  const saved = await loader("src/app/api/teacher/grades/scores/bulk/route.ts")
+    .POST(req("/api/teacher/grades/scores/bulk", {
+      evaluation_id: ev.id, items: [{ student_id: pupil0, score: 24 }],
+    }));
+  assert.equal(saved.status, 200, JSON.stringify(await saved.clone().json()));
+  const published = await loader(evaluationPath).PATCH(
+    req("/api/teacher/grades/evaluations", { evaluation_id: ev.id, is_published: true }, "PATCH"));
+  assert.equal(published.status, 200, JSON.stringify(await published.clone().json()));
+  assert.equal(db.tables.grade_published_scores[0].scale, 30);
+  assert.equal(db.tables.grade_published_scores[0].score, 24);
+  const bulletin = (await report(db, "DEC")).specialized.documents[0].document.french;
+  assert.equal(bulletin.generalAverage, 8);
+  assert.equal(bulletin.subjects.find(s => s.average !== null).denominator, 30);
 });
 
 test("actual production scale CHECK: /50 keeps raw points, displayed scales and official snapshots without DDL", async () => {

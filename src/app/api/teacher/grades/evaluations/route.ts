@@ -920,7 +920,7 @@ export async function POST(req: NextRequest) {
       if (primaryScale === null) {
         return NextResponse.json({ ok: false, error: "primary_scale_not_configured" }, { status: 409 });
       }
-      if (!Number.isFinite(scale) || scale !== primaryScale || coeff !== 1) {
+      if (!Number.isInteger(scale) || scale < 1 || scale > 100 || coeff !== 1) {
         return NextResponse.json({ ok: false, error: "primary_scale_or_weight_mismatch" }, { status: 400 });
       }
       const encoded = encodePrimaryEvaluation(primaryKind);
