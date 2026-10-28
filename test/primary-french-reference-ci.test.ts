@@ -50,9 +50,12 @@ test("ambiguous aliases fail closed rather than silently choosing the wrong subj
 });
 
 test("CI elementary denominators are per subject, never coefficients", () => {
-  for (const level of ["CP1", "CP2", "CE1", "CE2"]) {
-    for (const row of CI_PRIMARY_FRENCH_REFERENCE) {
-      assert.equal(ciPrimaryFrenchDenominator(level, row.code), 10);
+  for (const row of CI_PRIMARY_FRENCH_REFERENCE) {
+    assert.equal(ciPrimaryFrenchDenominator("CP1", row.code), 10);
+    assert.equal(ciPrimaryFrenchDenominator("CP2", row.code), row.code === "mathematiques" ? 20 : 10);
+    for (const level of ["CE1", "CE2"]) {
+      assert.equal(ciPrimaryFrenchDenominator(level, row.code),
+        ["exploitation_texte", "eveil_milieu", "mathematiques"].includes(row.code) ? 30 : 10);
     }
   }
   for (const level of ["CM1", "CM2"]) {
@@ -174,4 +177,36 @@ test("applied primary CI computes total points over actual barèmes and ignores 
   assert.equal(ci.subjects.find(x => x.subjectId === math)?.denominator, 50);
   assert.equal(ci.subjects.find(x => x.subjectId === math)?.average, 25);
   assert.equal(ci.subjects.find(x => x.subjectId === eps)?.average, null);
+});
+
+
+test("CE1/CE2: manual /30 replaces default and contributes its actual points to the /10 bulletin", () => {
+  const math = sid(1), lecture = sid(2);
+  const school = parseSchoolCyclesSettings({ school_cycles_v1: {
+    version: 1, enabled: true, enabledCycles: ["primary"],
+    teachingTracksByCycle: { primary: ["french"] },
+    subjectTracksByCycle: { primary: { [math]: ["french"], [lecture]: ["french"] } },
+  } });
+  const reports = parseFrancoArabicReportsSettings({ franco_arabic_reports_v1: {
+    version: 1, enabled: true, format: "separate",
+    scales: [{ cycle: "primary", track: "french", level: "CE2", maxScore: 10 }],
+    coefficients: [],
+  } });
+  const result = buildProgramBulletinDraft({
+    studentId: "A", cycle: "primary", level: "CE2", track: "french",
+    school, reports,
+    resolvedPolicies: [{ subjectId: math, coefficient: 1, includeInAverage: true },
+      { subjectId: lecture, coefficient: 1, includeInAverage: true }],
+    officialScores: [
+      { studentId: "A", subjectId: math, evaluationId: "math", score: 24,
+        scale: 30, evaluationCoefficient: 1, isCurrentPublished: true },
+      { studentId: "A", subjectId: lecture, evaluationId: "lecture", score: 8,
+        scale: 10, evaluationCoefficient: 1, isCurrentPublished: true },
+    ],
+    primaryCiDenominators: { [math]: 20, [lecture]: 10 },
+  });
+  assert.equal(result.status, "ready");
+  assert.equal(result.generalAverage, 8);
+  assert.equal(result.subjects.find(s => s.subjectId === math)?.denominator, 30);
+  assert.equal(result.subjects.find(s => s.subjectId === math)?.average, 24);
 });

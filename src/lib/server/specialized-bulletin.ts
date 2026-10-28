@@ -300,7 +300,10 @@ export async function loadSpecializedBulletin(input: {
       hasCiPrimaryFrenchReference(input.settingsJson, year, schoolClass.id);
     const ciDenominators = Object.fromEntries(activeSubjects.map(row => {
       const entry = ciPrimaryFrenchEntryForName(subjectNames.get(row.subject_id) || "");
-      return [row.subject_id, entry ? ciPrimaryFrenchDenominator(level, entry.code) : 10];
+      return [row.subject_id, primarySubjectScale(input.settingsJson, {
+        year, classId: schoolClass.id, level, track: "french", subjectId: row.subject_id,
+        subjectName: subjectNames.get(row.subject_id) || "",
+      }) ?? (entry ? ciPrimaryFrenchDenominator(level, entry.code) : 10)];
     }));
     const primaryDenominators = cycle === "primary" && reports.primarySubjectScales !== undefined
       ? Object.fromEntries(activeSubjects.map(row => [row.subject_id, primarySubjectScale(input.settingsJson, {

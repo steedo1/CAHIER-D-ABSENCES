@@ -128,9 +128,9 @@ export async function PUT(req: NextRequest) {
     }
     for (const row of incoming.primarySubjectScales || []) {
       if (!cycles.enabledCycles.includes("primary") ||
-        !cycles.teachingTracksByCycle.primary?.includes("arabic") ||
-        !cycles.subjectTracksByCycle.primary?.[row.subjectId]?.includes("arabic")) {
-        return json({ error: "primary_arabic_subject_not_configured_for_program" }, 400);
+        !cycles.teachingTracksByCycle.primary?.includes(row.track) ||
+        !cycles.subjectTracksByCycle.primary?.[row.subjectId]?.includes(row.track)) {
+        return json({ error: "primary_subject_not_configured_for_program" }, 400);
       }
     }
     const ids = [...new Set([...incoming.coefficients.map(row => row.subjectId),
