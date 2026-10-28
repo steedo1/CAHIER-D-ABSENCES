@@ -1,0 +1,38 @@
+name: Vérification installation PWA Admin
+
+on:
+  pull_request:
+    branches: [migration-render-test-20261021]
+    paths:
+      - "src/lib/pwa-install-prompt.ts"
+      - "src/components/admin/AdminPwaInstallPrompt.tsx"
+      - "src/components/admin/AdminPwaInstallShortcut.tsx"
+      - "src/components/ServiceWorkerRegistrar.tsx"
+      - "src/app/admin/ui/shell.tsx"
+      - "test/admin-pwa-install-nonblocking.test.mjs"
+      - ".github/workflows/pwa-install-admin.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_SUPABASE_URL: https://example.invalid
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: isolated-ci-anon
+      SUPABASE_URL: https://example.invalid
+      SUPABASE_SERVICE_ROLE_KEY: isolated-ci-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: node --test test/admin-pwa-install-nonblocking.test.mjs
+      - run: npm run typecheck
+      - run: npm run build
