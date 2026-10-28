@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
+import { loadLinkedClassEnrollments } from "@/lib/server/school-linked-class-roster";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -35,7 +36,37 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-  const items = (data ?? [])
+  // An Arabic pedagogical group can have no physical class_enrollments:
+  // its pupils retain their single administrative enrollment in French.
+  // Avoid additional DB reads for normally populated class rosters.
+  let linked: Array<any> = [];
+  if (!data?.length) {
+    const { data: classroom, error: classError } = await srv
+      .from("classes")
+      .select("id,institution_id,level,academic_year")
+      .eq("id", class_id)
+      .maybeSingle();
+    if (classError || !classroom) {
+      return NextResponse.json({ error: "class_not_found" }, { status: 404 });
+    }
+    const { data: institution, error: institutionError } = await srv
+      .from("institutions")
+      .select("settings_json")
+      .eq("id", classroom.institution_id)
+      .maybeSingle();
+    if (institutionError || !institution) {
+      return NextResponse.json({ error: "school_configuration_unavailable" }, { status: 503 });
+    }
+    try {
+      linked = await loadLinkedClassEnrollments(
+        srv, classroom.institution_id, classroom, institution.settings_json,
+      );
+    } catch {
+      return NextResponse.json({ error: "STUDENT_PROGRAM_LINK_STALE" }, { status: 409 });
+    }
+  }
+
+  const items = [...(data ?? []), ...linked]
     .map((row: any) => {
       const s = row.students || {};
       const full = [s.last_name, s.first_name].filter(Boolean).join(" ").trim() || "";
