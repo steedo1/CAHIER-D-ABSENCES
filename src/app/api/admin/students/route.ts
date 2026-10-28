@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
+import { loadLinkedClassEnrollments } from "@/lib/server/school-linked-class-roster";
 import {
   choosePreferredEquivalentClass,
   generalSecondaryClassSemanticKey,
@@ -185,6 +186,7 @@ export async function GET(req: NextRequest) {
         first_name,
         last_name,
         full_name,
+        full_name_ar,
         matricule,
         institution_id,
         photo_path,
@@ -246,6 +248,8 @@ export async function GET(req: NextRequest) {
     first_name: string | null;
     last_name: string | null;
     full_name: string;
+    full_name_ar: string | null;
+    is_pedagogical_link?: boolean;
     matricule: string | null;
     class_id: string;
     class_label: string | null;
@@ -292,6 +296,7 @@ export async function GET(req: NextRequest) {
       first_name: (s.first_name ?? null) as string | null,
       last_name: (s.last_name ?? null) as string | null,
       full_name: full,
+      full_name_ar: (s.full_name_ar ?? null) as string | null,
       matricule: (s.matricule ?? null) as string | null,
       class_id: canonicalClassId,
       class_label: (canonicalClass?.label ?? c.label ?? null) as string | null,
@@ -318,6 +323,55 @@ export async function GET(req: NextRequest) {
         typeof s.is_boarder === "boolean" ? (s.is_boarder as boolean) : null,
       regime: (s.regime ?? null) as string | null,
     });
+  }
+
+  // An Arabic teaching group is an additional pedagogical membership, NOT a
+  // second physical enrolment. Only the explicitly selected class can load its
+  // verified linked roster. The unfiltered API (used by finance, parent tools,
+  // and other screens) keeps returning one physical record per student.
+  const selectedClass = classId ? classById.get(classId) : null;
+  if (selectedClass && /-AR$/i.test(String(selectedClass.code || ""))) {
+    const schoolResult = await srv.from("institutions").select("settings_json")
+      .eq("id", inst).maybeSingle();
+    if (schoolResult.error || !schoolResult.data) {
+      return NextResponse.json({ error: "school_roster_settings_unavailable" }, { status: 503 });
+    }
+    try {
+      const linked = await loadLinkedClassEnrollments(srv, inst, {
+        id: selectedClass.id,
+        level: selectedClass.level,
+        academic_year: selectedClass.academic_year,
+      }, schoolResult.data.settings_json);
+      for (const row of linked) {
+        const s = row.students;
+        if (seen.has(s.id)) continue;
+        seen.add(s.id);
+        const full = [s.last_name || "", s.first_name || ""].filter(Boolean).join(" ").trim()
+          || String(s.full_name || "").trim() || "—";
+        const photo = buildProtectedStudentPhotoUrl({
+          id: s.id, photo_path: s.photo_path ?? null,
+          photo_updated_at: s.photo_updated_at ?? null,
+        });
+        items.push({
+          id: s.id, first_name: s.first_name ?? null, last_name: s.last_name ?? null,
+          full_name: full, full_name_ar: s.full_name_ar ?? null,
+          is_pedagogical_link: true, matricule: s.matricule ?? null,
+          class_id: selectedClass.id, class_label: selectedClass.label ?? null,
+          class_level: selectedClass.level ?? null,
+          academic_year: selectedClass.academic_year ?? null,
+          photo_url: photo ? new URL(photo, url.origin).toString() : null,
+          birthdate: s.birthdate ?? null, birth_date: s.birthdate ?? null,
+          birth_place: s.birth_place ?? null, parent_names: s.parent_names ?? null,
+          parent_contact: s.parent_contact ?? null, nationality: s.nationality ?? null,
+          gender: s.gender ?? null, is_repeater: s.is_repeater ?? null,
+          is_affecte: s.is_affecte ?? null, is_boarder: s.is_boarder ?? null,
+          regime: s.regime ?? null,
+        });
+      }
+    } catch {
+      // Never misreport a stale link as an empty class. Keep the problem visible.
+      return NextResponse.json({ error: "pedagogical_roster_unavailable" }, { status: 409 });
+    }
   }
 
   return NextResponse.json({
