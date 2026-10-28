@@ -13,6 +13,7 @@ import {
 } from "react";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import { resolveAttestationSignatories } from "@/lib/franco-arabic-document-signatories";
+import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
 import { attestationPhotoUrlForCurrentOrigin } from "@/lib/attestation-photo-url";
 import { documentNationalEmblem } from "@/lib/document-national-emblem";
 import {
@@ -110,6 +111,8 @@ type ClassRow = EducationScopedClass & {
 type StudentRow = {
   id: string;
   full_name: string;
+  full_name_ar?: string | null;
+  linked_class_ids?: string[];
   first_name?: string | null;
   last_name?: string | null;
   class_id: string | null;
@@ -947,6 +950,7 @@ function openPrintDocument(html: string) {
 export default function AdminStudentsByClassPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [students, setStudents] = useState<StudentRow[]>([]);
+  const [pedagogicalClassIds, setPedagogicalClassIds] = useState<string[]>([]);
   const [cfg, setCfg] = useState<InstitutionSettings>({});
   const [academicYear, setAcademicYear] = useState("");
 
@@ -955,6 +959,19 @@ export default function AdminStudentsByClassPage() {
   );
   const level = educationScope.levelCode;
   const classId = educationScope.classId;
+  const isPedagogicalClass = Boolean(classId && pedagogicalClassIds.includes(classId));
+  const selectedClass = classes.find((row) => row.id === classId);
+  const schoolCycles = useMemo(() => parseSchoolCyclesSettings(cfg.settings_json), [cfg.settings_json]);
+  const chosenCycle = selectedClass && schoolCycles.enabled
+    ? resolveSchoolCycleForClass(selectedClass, schoolCycles)
+    : null;
+  const scopeTypeLabel = chosenCycle === "primary"
+    ? (isPedagogicalClass ? "Primaire — Enseignement arabe" : "Primaire")
+    : chosenCycle === "preschool"
+      ? (isPedagogicalClass ? "Préscolaire — Enseignement arabe" : "Préscolaire")
+      : chosenCycle === "secondary" && isPedagogicalClass
+        ? "Secondaire — Enseignement arabe"
+        : undefined;
   const [q, setQ] = useState("");
 
   const [page, setPage] = useState(1);
@@ -1132,7 +1149,7 @@ export default function AdminStudentsByClassPage() {
       try {
         const [classesRes, studentsRes] = await Promise.all([
           fetch("/api/admin/classes?limit=999", { cache: "no-store" }),
-          fetch("/api/admin/students", { cache: "no-store" }),
+          fetch("/api/admin/students?include_pedagogical_links=1", { cache: "no-store" }),
         ]);
 
         if (classesRes.status === 401 || studentsRes.status === 401) {
@@ -1154,6 +1171,9 @@ export default function AdminStudentsByClassPage() {
 
         setClasses((classesJson.items || []) as ClassRow[]);
         setStudents((studentsJson.items || []) as StudentRow[]);
+        setPedagogicalClassIds(Array.isArray(studentsJson.pedagogical_class_ids)
+          ? studentsJson.pedagogical_class_ids.filter((id: unknown): id is string => typeof id === "string")
+          : []);
 
         await loadInstitutionAndYears();
       } catch (e: any) {
@@ -1182,7 +1202,7 @@ export default function AdminStudentsByClassPage() {
     }
 
     if (classId) {
-      list = list.filter((s) => s.class_id === classId);
+      list = list.filter((s) => s.class_id === classId || s.linked_class_ids?.includes(classId));
     }
 
     if (q.trim()) {
@@ -1192,6 +1212,7 @@ export default function AdminStudentsByClassPage() {
         const display = nomAvantPrenoms(full);
         return (
           norm(full).includes(k) ||
+          norm(s.full_name_ar || "").includes(k) ||
           norm(display).includes(k) ||
           norm(s.matricule ?? "").includes(k)
         );
@@ -1504,6 +1525,10 @@ export default function AdminStudentsByClassPage() {
       setMsg("Choisissez d'abord une classe.");
       return;
     }
+    if (isPedagogicalClass) {
+      setMsg("Pour inscrire ou transférer un élève, utilisez sa classe administrative française. Le rattachement arabe est pédagogique.");
+      return;
+    }
 
     if (!canCreateOrEditStudents && assignMode === "new") {
       setAssignMode("transfer");
@@ -1776,6 +1801,7 @@ export default function AdminStudentsByClassPage() {
           showClass
           disabled={loading}
           title="Périmètre de la liste des élèves"
+          typeLabelOverride={scopeTypeLabel}
         />
 
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -1804,7 +1830,7 @@ export default function AdminStudentsByClassPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {canTransferOrRemoveStudents ? (
+            {canTransferOrRemoveStudents && !isPedagogicalClass ? (
               <Button
                 tone="slate"
                 onClick={() => {
@@ -1860,6 +1886,10 @@ export default function AdminStudentsByClassPage() {
           </div>
         </div>
 
+        {isPedagogicalClass && !loading ? (
+          <p className="mb-3 text-xs text-slate-600">Classe pédagogique arabe : les inscriptions et transferts restent gérés dans la classe française.</p>
+        ) : null}
+
         {loading ? (
           <div className="space-y-3">
             <Skeleton className="h-16 w-full" />
@@ -1907,6 +1937,9 @@ export default function AdminStudentsByClassPage() {
                   const numero = startIdx + i + 1;
                   const zebra = i % 2 === 0 ? "bg-white" : "bg-slate-50";
                   const checked = selectedIds.has(student.id);
+                  const displayName = isPedagogicalClass && student.full_name_ar?.trim()
+                    ? student.full_name_ar.trim()
+                    : nomAvantPrenoms(student.full_name);
 
                   return (
                     <tr
@@ -1927,10 +1960,12 @@ export default function AdminStudentsByClassPage() {
 
                       <td className="px-3 py-2 tabular-nums">{numero}</td>
                       <td className="px-3 py-2">
-                        {nomAvantPrenoms(student.full_name)}
+                        <span lang={isPedagogicalClass && student.full_name_ar ? "ar" : "fr"} dir="auto">{displayName}</span>
                       </td>
                       <td className="px-3 py-2">{student.matricule || "-"}</td>
-                      <td className="px-3 py-2">{student.class_label || "-"}</td>
+                      <td className="px-3 py-2">{isPedagogicalClass
+                        ? (selectedClass?.name || selectedClass?.label || "-")
+                        : (student.class_label || "-")}</td>
 
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-2">
@@ -1944,20 +1979,20 @@ export default function AdminStudentsByClassPage() {
 
                           {canTransferOrRemoveStudents ? (
                             <>
-                              {canCreateOrEditStudents ? (
+                              {canCreateOrEditStudents && !isPedagogicalClass ? (
                                 <Button tone="white" onClick={() => openEdit(student)}>
                                   Modifier
                                 </Button>
                               ) : null}
 
-                              <Button
+                              {!isPedagogicalClass ? <Button
                                 tone="danger"
                                 onClick={() => removeFromClass(student)}
                                 disabled={!student.class_id || removingId === student.id}
                                 title="Supprimer définitivement l'élève et ses données associées"
                               >
                                 {removingId === student.id ? "Retrait..." : "Retirer"}
-                              </Button>
+                              </Button> : null}
                             </>
                           ) : null}
                         </div>

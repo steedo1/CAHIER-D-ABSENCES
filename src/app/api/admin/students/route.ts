@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
+import { adminStudentPedagogicalLinks } from "@/lib/admin-student-pedagogical-links";
 import {
   choosePreferredEquivalentClass,
   generalSecondaryClassSemanticKey,
@@ -170,6 +171,8 @@ export async function GET(req: NextRequest) {
   const academicYearParam = String(
     url.searchParams.get("academic_year") || "",
   ).trim();
+  // Opt-in: keep the historical API payload and read cost unchanged for other callers.
+  const includePedagogicalLinks = url.searchParams.get("include_pedagogical_links") === "1";
   const academicYear =
     academicYearParam || (await getCurrentAcademicYear(inst));
   const shouldFilterYear = Boolean(academicYear && academicYear !== "all");
@@ -185,6 +188,7 @@ export async function GET(req: NextRequest) {
         first_name,
         last_name,
         full_name,
+        full_name_ar,
         matricule,
         institution_id,
         photo_path,
@@ -206,7 +210,9 @@ export async function GET(req: NextRequest) {
     .eq("institution_id", inst)
     .is("end_date", null);
 
-  if (classId) query = query.eq("class_id", classId);
+  // A pedagogical Arabic class has no physical enrollment. Filter it after
+  // virtual links are expanded, while old consumers retain the DB filter.
+  if (classId && !includePedagogicalLinks) query = query.eq("class_id", classId);
   if (shouldFilterYear) query = query.eq("classes.academic_year", academicYear);
 
   let classesQuery = srv
@@ -240,12 +246,35 @@ export async function GET(req: NextRequest) {
   const { classById, canonicalIdById } =
     buildCanonicalGeneralSecondaryClassMaps(classesResult.data ?? []);
 
+  let byStudent: Record<string, string[]> = {};
+  let pedagogicalClassIds: string[] = [];
+  if (includePedagogicalLinks) {
+    const { data: institution, error: settingsError } = await srv
+      .from("institutions")
+      .select("settings_json")
+      .eq("id", inst)
+      .maybeSingle();
+    if (settingsError) return NextResponse.json({ error: settingsError.message }, { status: 400 });
+    const links = adminStudentPedagogicalLinks(
+      institution?.settings_json ?? null,
+      classesResult.data ?? [],
+      (data ?? []).map((row: any) => ({
+        student_id: String(row.student_id || ""),
+        class_id: String(row.class_id || ""),
+      })),
+    );
+    byStudent = links.byStudent;
+    pedagogicalClassIds = links.pedagogicalClassIds;
+  }
+
   const seen = new Set<string>();
   const items: Array<{
     id: string;
     first_name: string | null;
     last_name: string | null;
     full_name: string;
+    full_name_ar: string | null;
+    linked_class_ids: string[];
     matricule: string | null;
     class_id: string;
     class_label: string | null;
@@ -292,6 +321,8 @@ export async function GET(req: NextRequest) {
       first_name: (s.first_name ?? null) as string | null,
       last_name: (s.last_name ?? null) as string | null,
       full_name: full,
+      full_name_ar: (s.full_name_ar ?? null) as string | null,
+      linked_class_ids: byStudent[sid] || [],
       matricule: (s.matricule ?? null) as string | null,
       class_id: canonicalClassId,
       class_label: (canonicalClass?.label ?? c.label ?? null) as string | null,
@@ -321,7 +352,10 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
-    items,
+    items: classId && includePedagogicalLinks
+      ? items.filter(row => row.class_id === classId || row.linked_class_ids.includes(classId))
+      : items,
+    ...(includePedagogicalLinks ? { pedagogical_class_ids: pedagogicalClassIds } : {}),
     academic_year: shouldFilterYear ? academicYear : null,
   });
 }
