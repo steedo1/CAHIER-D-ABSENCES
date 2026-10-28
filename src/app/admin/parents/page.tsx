@@ -969,6 +969,9 @@ export default function AdminStudentsByClassPage() {
       String(selectedClass.name || selectedClass.label || ""),
     ),
   );
+  const isPrimaryClassSelection = /^(?:MAT|CP[12]|CE[12]|CM[12])$/i.test(
+    String(selectedClass?.level || level || "").trim(),
+  );
   const [q, setQ] = useState("");
 
   const [page, setPage] = useState(1);
@@ -1842,6 +1845,11 @@ export default function AdminStudentsByClassPage() {
           showClass
           disabled={loading}
           title="Périmètre de la liste des élèves"
+          educationTypeLabelOverride={
+            isPrimaryClassSelection
+              ? isArabicClassSelection ? "Primaire — enseignement arabe" : "Primaire"
+              : undefined
+          }
         />
 
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
