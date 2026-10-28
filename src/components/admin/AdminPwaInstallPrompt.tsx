@@ -150,7 +150,7 @@ export default function AdminPwaInstallPrompt() {
   if (!visible) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-[3px] md:hidden">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-[3px]">
       <div
         ref={dialogRef}
         role="dialog"
