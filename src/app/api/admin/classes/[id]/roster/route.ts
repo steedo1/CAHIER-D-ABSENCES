@@ -1,4 +1,5 @@
 import { loadPrimaryClassRoster } from "@/lib/server/primary-class-roster";
+import { loadLinkedClassEnrollments } from "@/lib/server/school-linked-class-roster";
 import { resolveTeachingDocumentSignatories } from "@/lib/franco-arabic-document-signatories";
 // src/app/api/admin/classes/[id]/roster/route.ts
 import { revalidatePath } from "next/cache";
@@ -583,8 +584,21 @@ export async function GET(
   } catch (error) {
     return respond({ error: error instanceof Error ? error.message : "primary_roster_unavailable" }, { status: 409 });
   }
+  // The primary roster helper already includes linked pupils. For secondary
+  // Franco-Arabic classes, use the same validated pedagogical links.
+  let linkedEnrollments = primaryRoster?.linkedEnrollments || [];
+  if (!primaryRoster) {
+    try {
+      linkedEnrollments = await loadLinkedClassEnrollments(
+        srv, institutionId, cls as any,
+        (institutionRes.data as unknown as { settings_json?: unknown } | null)?.settings_json,
+      );
+    } catch {
+      return respond({ error: "STUDENT_PROGRAM_LINK_STALE" }, { status: 409 });
+    }
+  }
   const currentIds = new Set((enrollments || []).map((row: any) => row.student_id));
-  const allEnrollments = [...(enrollments || []), ...(primaryRoster?.linkedEnrollments || [])
+  const allEnrollments = [...(enrollments || []), ...linkedEnrollments
     .filter(row => !currentIds.has(row.student_id))];
   const students = allEnrollments
     .map((row: any) => {
@@ -638,7 +652,7 @@ export async function GET(
 
   return respond({
     ok: true,
-    can_edit: canWrite && !primaryRoster?.linkedEnrollments.length,
+    can_edit: canWrite && !linkedEnrollments.length,
     ...(primaryRoster ? { school_cycle: "primary", mark_subjects: primaryRoster.subjects } : {}),
     class: {
       id: String((cls as any).id),

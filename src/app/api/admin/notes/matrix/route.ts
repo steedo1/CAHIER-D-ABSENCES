@@ -1,6 +1,8 @@
 // src/app/api/admin/notes/matrix/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { loadLinkedClassEnrollments } from "@/lib/server/school-linked-class-roster";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -145,7 +147,7 @@ export async function GET(req: NextRequest) {
     /* ───────── Vérifier la classe ───────── */
     const { data: cls, error: clsErr } = await supabase
       .from("classes")
-      .select("id, institution_id, label, level")
+      .select("id, institution_id, label, level, academic_year")
       .eq("id", classId)
       .maybeSingle();
 
@@ -218,6 +220,29 @@ export async function GET(req: NextRequest) {
           full_name: studentFullName(s),
           matricule: (s.matricule ?? null) as string | null,
         });
+      }
+
+      // A second pedagogical teaching does not create a second administrative
+      // enrollment. Resolve linked pupils only when the physical roster is empty.
+      if (map.size === 0) {
+        const service = getSupabaseServiceClient();
+        const { data: school, error: schoolError } = await service
+          .from("institutions").select("settings_json")
+          .eq("id", institutionId).maybeSingle();
+        if (schoolError || !school) throw new Error("SCHOOL_CONFIGURATION_UNAVAILABLE");
+        const linked = await loadLinkedClassEnrollments(
+          service, institutionId, cls as any, school.settings_json,
+        );
+        for (const row of linked) {
+          // A future entry is outside a past evaluation's date range.
+          if (to && row.start_date && String(row.start_date) > to) continue;
+          const s = row.students || {};
+          map.set(row.student_id, {
+            student_id: row.student_id,
+            full_name: studentFullName(s),
+            matricule: s.matricule ?? null,
+          });
+        }
       }
 
       return Array.from(map.values()).sort((a, b) =>
