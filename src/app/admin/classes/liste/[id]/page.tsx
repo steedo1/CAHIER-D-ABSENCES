@@ -846,7 +846,7 @@ export default function ClassListPrintPage() {
            Secondaire et maternelle conservent strictement A4 portrait. */
         @page {
           size: ${primaryList ? "A4 landscape" : "A4 portrait"};
-          margin: 8mm;
+          margin: ${primaryList ? "6mm" : "8mm"};
         }
 
         .class-list-sheet {
