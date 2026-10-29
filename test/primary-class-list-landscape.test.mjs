@@ -77,7 +77,12 @@ test("48 primary students: French and EPC Arabic use two spacious A4 landscape s
         const names = text.match(/ÉLÈVE\d{3}/g) || [];
         assert.equal(names.length, teaching === "arabic" ? 46 : 48,
           "every printed pupil is present exactly once");
-        if (teaching === "arabic") assert.ok(text.includes("تراوري"), "Arabic names remain visible");
+        if (teaching === "arabic") {
+          // PDF text extractors may reorder Arabic glyphs, so validate the
+          // shaped text in the actual print DOM instead of extracted glyph order.
+          assert.match((await page.locator(".roster-table tbody .col-name").first().innerText()).trim(),
+            /محمد تراوري/, "Arabic names remain visible in print layout");
+        }
         await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
       }
       assert.deepEqual(errors, []);
