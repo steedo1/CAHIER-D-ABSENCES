@@ -2659,6 +2659,7 @@ export default function BulletinsPage() {
       }
 
       if (!usesPrimaryEventBulletins && selectedPeriod?.id) params.set("grading_period_id", selectedPeriod.id);
+      params.set("skip_qr_png", "1");
       const [resBulletin, resConduct] = await Promise.all([
         fetch(`/api/admin/grades/bulletin?${params.toString()}`),
         fetch(`/api/admin/conduite/averages?${params.toString()}`),

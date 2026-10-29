@@ -117,6 +117,18 @@ test('Moyennes directes : vraies routes, droits, trimestres, bulletins, conduite
    const one=data.items.find(row=>row.student_id===student), two=data.items.find(row=>row.student_id===second);
    assert.equal(one.per_subject.find(row=>row.subject_id===subject).avg20,12.5,JSON.stringify(data));assert.equal(one.per_subject.find(row=>row.subject_id===subject).bonus,0);
    assert.ok(one.general_avg!==null);assert.ok(two.rank<one.rank);
+   // Preview with real QR identifiers, but without 600px PNG on the server.
+   const preview = await routes.bulletin.GET(request(`/bulletin?class_id=${classroom}&from=2026-09-14&to=2026-12-04&skip_qr_png=1`));
+   assert.equal(preview.status,200,await preview.clone().text());
+   const fast = await preview.json();
+   assert.deepEqual(fast.items.map(x=>x.per_subject),data.items.map(x=>x.per_subject));
+   assert.deepEqual(fast.items.map(x=>x.general_avg),data.items.map(x=>x.general_avg));
+   assert.deepEqual(fast.items.map(x=>x.rank),data.items.map(x=>x.rank));
+   for(const item of fast.items) {
+     assert.ok(item.official_document_source_id);
+     assert.ok(item.official_document_number);
+     assert.equal(item.qr_png,undefined);
+   }
   });
   await t.test('bulletins annuels et QR : trois périodes saisies sans devoir, même moyenne annuelle',async()=>{
    for(const [n,value] of [[1,10],[2,12],[3,14]])await routes.direct.POST(request('/direct',body(value,n)));

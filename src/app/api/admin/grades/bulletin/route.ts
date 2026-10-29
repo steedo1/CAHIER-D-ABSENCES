@@ -1736,6 +1736,13 @@ async function loadBulletin(
   const exportLight = ["1", "true", "yes", "on"].includes(
     String(searchParams.get("export_light") || "").toLowerCase()
   );
+  // The interactive consultation may render QR images locally. Keep stable
+  // official source IDs/tokens but avoid server-side PNG generation for every
+  // pupil until an explicit official print (POST), which remains unchanged.
+  const skipPreviewQrPng = !createQr && ["1", "true", "yes", "on"].includes(
+    String(searchParams.get("skip_qr_png") || "").toLowerCase()
+  );
+  const bulletinStartedAt = Date.now();
 
   if (!classId) {
     return NextResponse.json({ ok: false, error: "MISSING_CLASS_ID" }, { status: 400 });
@@ -2009,6 +2016,27 @@ async function loadBulletin(
       : null,
   };
 
+  async function prepareQrItemsForResponse<T extends { student_id: string }>(rows: T[]) {
+    const withQr = await addQrToItems(srvClient, rows, {
+      createQr,
+      origin,
+      institutionId,
+      classId: classRow.id,
+      classAcademicYear: classRow.academic_year ?? null,
+      periodMeta: {
+        from: periodMeta.from ?? null,
+        to: periodMeta.to ?? null,
+        code: periodMeta.code ?? null,
+        label: periodMeta.label ?? null,
+        short_label: periodMeta.short_label ?? null,
+        academic_year: periodMeta.academic_year ?? null,
+      },
+    });
+    // The QR/official ID contract is unchanged; the browser can create the
+    // PNG from qr_url in the existing QR component.
+    return skipPreviewQrPng ? withQr : attachQrPng(withQr);
+  }
+
   /* 2) Récupérer les élèves
    *
    * ✅ Règle métier Mon Cahier :
@@ -2226,6 +2254,12 @@ async function loadBulletin(
 
     return out;
   }
+
+  // Conduct is independently retrieved and can overlap the ordinary grade
+  // reads, rather than blocking the very last step of the response.
+  const pendingConductMap = dateFrom && dateTo
+    ? fetchConductAverageMap(String(dateFrom), String(dateTo))
+    : Promise.resolve(null);
 
   /* 3) Coefficients bulletin par matière (tolérant sur le niveau) */
   // ✅ IMPORTANT : les coefficients officiels doivent être lus avec le client service.
@@ -2540,23 +2574,7 @@ async function loadBulletin(
 
     const itemsForResponse = exportLight
       ? baseItems
-      : await attachQrPng(
-          await addQrToItems(srvClient, baseItems, {
-            createQr,
-            origin,
-            institutionId,
-            classId: classRow.id,
-            classAcademicYear: classRow.academic_year ?? null,
-            periodMeta: {
-              from: periodMeta.from ?? null,
-              to: periodMeta.to ?? null,
-              code: periodMeta.code ?? null,
-              label: periodMeta.label ?? null,
-              short_label: periodMeta.short_label ?? null,
-              academic_year: periodMeta.academic_year ?? null,
-            },
-          })
-        );
+      : await prepareQrItemsForResponse(baseItems);
 
     return NextResponse.json({
       ok: true,
@@ -3323,8 +3341,7 @@ async function loadBulletin(
   /* 9) Construire la réponse (par élève) */
 
   // ✅ Conduite (coef 1) : on la récupère une seule fois pour la période demandée
-  const conductAvgByStudent =
-    dateFrom && dateTo ? await fetchConductAverageMap(String(dateFrom), String(dateTo)) : null;
+  const conductAvgByStudent = await pendingConductMap;
 
   const items = classStudents.map((cs) => {
     const stu = cs.students || {};
@@ -4302,23 +4319,15 @@ async function loadBulletin(
   // ✅ Les exports statistiques n'ont pas besoin des QR/PNG : on évite ce traitement lourd.
   const itemsForResponse = exportLight
     ? items
-    : await attachQrPng(
-        await addQrToItems(srvClient, items, {
-          createQr,
-          origin,
-          institutionId,
-          classId: classRow.id,
-          classAcademicYear: classRow.academic_year ?? null,
-          periodMeta: {
-            from: periodMeta.from ?? null,
-            to: periodMeta.to ?? null,
-            code: periodMeta.code ?? null,
-            label: periodMeta.label ?? null,
-            short_label: periodMeta.short_label ?? null,
-            academic_year: periodMeta.academic_year ?? null,
-          },
-        })
-      );
+    : await prepareQrItemsForResponse(items);
+
+  // Diagnostic aggregates only; no student names, grade values or tokens.
+  if (skipPreviewQrPng && Date.now() - bulletinStartedAt > 8_000) {
+    console.info("[bulletin] slow fast-preview", {
+      elapsed_ms: Date.now() - bulletinStartedAt,
+      student_count: items.length,
+    });
+  }
 
   return NextResponse.json({
     ok: true,

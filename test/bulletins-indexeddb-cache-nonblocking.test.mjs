@@ -42,3 +42,17 @@ test("online bulletin errors cannot be concealed by stale NC cache", () => {
   assert.match(section,/if \(!canUseBulletinCache\(\)\)/);
   assert.match(section,/isRetryableStatus\(res\.status\) && canUseBulletinCache\(\)/);
 });
+
+test("bulletin preview keeps QR identities and skips server PNG without changing official printing", () => {
+  const api = read("src/app/api/admin/grades/bulletin/route.ts");
+  const main = read("src/app/admin/bulletins/page.tsx");
+  const notes = read("src/app/admin/notes/bulletins/page.tsx");
+  assert.match(api, /const skipPreviewQrPng = !createQr/);
+  assert.match(api, /return skipPreviewQrPng \? withQr : attachQrPng\(withQr\)/);
+  assert.match(api, /const withQr = await addQrToItems/);
+  assert.match(api, /const pendingConductMap = dateFrom && dateTo/);
+  assert.match(api, /const conductAvgByStudent = await pendingConductMap/);
+  assert.match(main, /params\.set\("skip_qr_png", "1"\)/);
+  assert.match(notes, /params\.set\("skip_qr_png", "1"\)/);
+  assert.match(main, /method: "POST", cache: "no-store"/);
+});
