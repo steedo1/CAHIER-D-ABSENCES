@@ -34,10 +34,19 @@ const students = Array.from({ length: count }, (_, index) => ({
 const logo = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><circle cx="90" cy="90" r="82" fill="none" stroke="#0f766e" stroke-width="8"/><path d="M40 55h40l10 12 10-12h40v65h-40l-10 12-10-12H40z" fill="#b91c1c"/><text x="90" y="155" text-anchor="middle" fill="#0f766e" font-size="18">ÉCOLE TEST</text></svg>');
 window.fetch = async (input) => {
   if (String(input).startsWith("/api/admin/classes/fixture/roster")) return Response.json({
-    ...(params.has("primary") ? { school_cycle: "primary", mark_subjects: (arabicRoster ? [
-      { code:"ar-lecture", label:"Lecture", value:10 },
-      { code:"ar-coran", label:"Coran", value:10 },
-    ] : CI_PRIMARY_FRENCH_REFERENCE).map((row: any) => ({
+    ...(params.has("primary") ? { school_cycle: "primary", mark_subjects: (arabicRoster ? (
+      params.has("epcSubjects") ? [
+        { code: "ar-letters", label: "Apprentissage des lettres", value: 10 },
+        { code: "ar-chant", label: "Chants et dessin", value: 10 },
+        { code: "ar-coran", label: "Coran (poème) et écriture", value: 10 },
+        { code: "ar-hadith", label: "Hadith (tradition prophétique)", value: 10 },
+        { code: "ar-fiqh", label: "Jurisprudence et croyance (Al-Muslim As-Saghîr)", value: 10 },
+        { code: "ar-math", label: "Mathématiques", value: 10 },
+      ] : [
+        { code:"ar-lecture", label:"Lecture", value:10 },
+        { code:"ar-coran", label:"Coran", value:10 },
+      ]
+    ) : CI_PRIMARY_FRENCH_REFERENCE).map((row: any) => ({
       id: row.code, name: row.label, shortName: classListSubjectShortName(row.label),
       denominator: arabicRoster ? 10 : ciPrimaryFrenchDenominator(params.get("level") || "CP1", row.code),
     })) } : {}),
