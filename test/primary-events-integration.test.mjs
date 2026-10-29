@@ -219,6 +219,48 @@ test("French-only primary retains its existing administrator validation policy",
   assert.equal(db.tables.grade_published_scores.length,0);
 });
 
+test("saved school barèmes reach teacher entry and the /10 bulletin; teacher override and historical marks stay authoritative", async () => {
+  const db = setup("CP2");
+  const api = db.admin("src/app/api/admin/bulletin-templates/route.ts");
+  const before = await (await api.GET()).json();
+  const settings = { ...before.reporting, primaryArabicDefaultScale: true,
+    primarySubjectScales: [...before.reporting.primarySubjectScales,
+      { cycle: "primary", level: "CP2", track: "french", subjectId: math, maxScore: 40 }],
+    revision: before.revision };
+  const saved = await api.PUT(req("/api/admin/bulletin-templates", settings, "PUT"));
+  assert.equal(saved.status, 200, JSON.stringify(await saved.clone().json()));
+  const classes = await (await db.teacher("src/app/api/grades/classes/route.ts").GET(req("/api/grades/classes"))).json();
+  assert.equal(classes.items.find(row => row.teaching_track === "french").configured_scale, 40);
+  assert.equal(classes.items.find(row => row.teaching_track === "arabic").configured_scale, 20);
+  const evaluation = await create(db, "DEC", "french", { scale: 40 });
+  const result = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts").POST(req("/api/teacher/grades/scores/bulk", {
+    evaluation_id: evaluation.id, items: [{ student_id: pupil0, score: 32 }],
+  }));
+  assert.equal(result.status, 200, JSON.stringify(await result.clone().json()));
+  let bulletin = (await report(db, "DEC")).specialized.documents[0].document.french;
+  assert.equal(bulletin.denominator, 10);
+  assert.equal(bulletin.generalAverage, 8);
+  assert.equal(bulletin.subjects.find(row => row.id === math).denominator, 40);
+  // A later settings edit is a default for new evaluations, not a rewrite of
+  // existing published points or their denominator.
+  const reloaded = await (await api.GET()).json();
+  const changed = await api.PUT(req("/api/admin/bulletin-templates", { ...reloaded.reporting,
+    primarySubjectScales: reloaded.reporting.primarySubjectScales.map(row => row.track === "french" ? { ...row, maxScore: 50 } : row),
+    revision: reloaded.revision }, "PUT"));
+  assert.equal(changed.status, 200);
+  bulletin = (await report(db, "DEC")).specialized.documents[0].document.french;
+  assert.equal(bulletin.generalAverage, 8);
+  assert.equal(bulletin.subjects.find(row => row.id === math).denominator, 40);
+  const overridden = await create(db, "FEV", "french", { scale: 30 });
+  const entered = await db.teacher("src/app/api/teacher/grades/scores/bulk/route.ts").POST(req("/api/teacher/grades/scores/bulk", {
+    evaluation_id: overridden.id, items: [{ student_id: pupil0, score: 27 }],
+  }));
+  assert.equal(entered.status, 200);
+  const second = (await report(db, "FEV")).specialized.documents[0].document.french;
+  assert.equal(second.generalAverage, 9);
+  assert.equal(second.subjects.find(row => row.id === math).denominator, 30);
+});
+
 test("CP2: teacher may enter /30 over the configured default and the published bulletin uses /30", async () => {
   const db = setup("CP2");
   const ev = await create(db, "DEC", "french", { scale: 30 });

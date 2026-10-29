@@ -178,7 +178,11 @@ export default function SchoolCoefficientsClassicWorkflow() {
       const entry = ciPrimaryFrenchEntryForName(subject.name);
       return entry ? numberInput(ciPrimaryFrenchDenominator(level, entry.code)) : "10";
     }
-    return track === "french" ? "10" : "";
+    // Show the same saved level fallback used by teacher entry and bulletins.
+    // Explicit Arabic subject-only configurations still leave missing values blank.
+    if (track === "arabic" && reporting?.primarySubjectScales !== undefined &&
+        !reporting.primaryArabicDefaultScale) return "";
+    return numberInput(currentScale?.maxScore);
   }
   const primaryFrenchReferenceApplied = cycle === "primary" && track === "french" && ciPrimaryApplied;
   const isLoadingSubjects = loading || loadingClass || (Boolean(actualClassId) && subjectClassId !== actualClassId);

@@ -47,7 +47,11 @@ function valueFor(container, name) {
   return input ? "/" + input.value : row.querySelector('[aria-label^="Barème de composition "]')?.textContent.trim();
 }
 
-test("EPC : barèmes CM1 /20 et /50 affichés à la bonne matière, CP1 /10, sans écriture serveur", async () => {
+for (const arabicRules of [
+  { label: "legacy level /20", maxScore: 20, expected: "/20" },
+  { label: "EPC level /10", maxScore: 10, primaryArabicDefaultScale: true, primarySubjectScales: [], expected: "/10" },
+  { label: "subject-only configuration", maxScore: 10, primarySubjectScales: [], expected: "/" },
+]) test(`EPC : French CM1/CP1 and Arabic ${arabicRules.label} show the effective barèmes without writes`, async () => {
   const win = new Window({ url: "https://fixture.invalid" });
   const originals = new Map(["window", "document", "navigator", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -63,8 +67,10 @@ test("EPC : barèmes CM1 /20 et /50 affichés à la bonne matière, CP1 /10, san
     scales: [
       { cycle: "primary", track: "french", level: "CM1", maxScore: 10 },
       { cycle: "primary", track: "french", level: "CP1", maxScore: 10 },
-      { cycle: "primary", track: "arabic", level: "CM1", maxScore: 20 },
+      { cycle: "primary", track: "arabic", level: "CM1", maxScore: arabicRules.maxScore },
     ], coefficients: [],
+    ...(arabicRules.primaryArabicDefaultScale ? { primaryArabicDefaultScale: true } : {}),
+    ...(arabicRules.primarySubjectScales ? { primarySubjectScales: arabicRules.primarySubjectScales } : {}),
   };
   for (const [key, value] of Object.entries({
     window: win, document: win.document, navigator: win.navigator,
@@ -110,6 +116,7 @@ test("EPC : barèmes CM1 /20 et /50 affichés à la bonne matière, CP1 /10, san
     await changeValue(target.querySelector('select[aria-label="Enseignement"]'), "arabic");
     await flush(); await flush();
     assert.equal(target.querySelector('input[aria-label="Barème de composition Coran"]')?.getAttribute("placeholder"), "Non défini");
+    assert.equal(valueFor(target, "Coran"), arabicRules.expected, "same effective Arabic scale as teacher entry");
     assert.equal(target.textContent.includes("Barème de composition"), true);
     assert.equal(changes.length, 0);
   } finally {
