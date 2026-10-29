@@ -62,7 +62,15 @@ test("48 primary students: French and EPC Arabic use two spacious A4 landscape s
 
         const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
         const { pages, text, boxes } = await pdfDetails(pdf);
-        assert.equal(pages.length, 2, "48 students must not split into three or blank pages");
+        const geometry = await page.locator(".class-list-sheet").evaluateAll(sheets => sheets.map(sheet => ({
+          heightMm: +(sheet.getBoundingClientRect().height / (96 / 25.4)).toFixed(1),
+          tableMm: +(sheet.querySelector(".roster-table").getBoundingClientRect().height / (96 / 25.4)).toFixed(1),
+          headingMm: +(sheet.querySelector(".roster-table thead").getBoundingClientRect().height / (96 / 25.4)).toFixed(1),
+          footerMm: +(sheet.querySelector(".sheet-footer").getBoundingClientRect().height / (96 / 25.4)).toFixed(1),
+        })));
+        assert.equal(pages.length, 2, `48 students must fit 2 pages (found ${pages.length}): ${JSON.stringify({
+          geometry, sizes, pageContents: pages.map(p => p.text.slice(0, 120)),
+        })}`);
         assert.ok(boxes.slice(0, 2).every(p => p.width > p.height &&
           Math.abs(p.width - 842) < 4 && Math.abs(p.height - 595) < 4),
           "printed paper must be A4 landscape, not Android's A4 portrait default");
