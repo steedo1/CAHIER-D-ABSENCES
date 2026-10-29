@@ -3026,6 +3026,7 @@ function BulletinsPageContent() {
       if (effectivePeriodCode) {
         params.set("period_code", effectivePeriodCode);
       }
+      if (!usesPrimaryEventBulletins && selectedPeriod?.id) params.set("grading_period_id", selectedPeriod.id);
       if (liveDuplicateMode) {
         params.set("active_only", "false");
       }
@@ -3525,6 +3526,7 @@ function BulletinsPageContent() {
         const year = selectedAcademicYear || selectedPeriod?.academic_year;
         if (year) params.set("academic_year", year);
         if (selectedPeriod?.code) params.set("period_code", selectedPeriod.code);
+        if (!usesPrimaryEventBulletins && selectedPeriod?.id) params.set("grading_period_id", selectedPeriod.id);
         const qrResponse = await fetch(`/api/admin/grades/bulletin?${params}`, {
           method: "POST", cache: "no-store",
         });
