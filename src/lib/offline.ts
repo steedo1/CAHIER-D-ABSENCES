@@ -776,6 +776,9 @@ function outboxRetryDelayMs(attempts: number) {
 export async function offlineGetJson<T = any>(url: string, cacheKey: string): Promise<T> {
   const scoped = isTeacherCacheKey(cacheKey);
   const isAdminBulletin = /^\/api\/admin\/grades\/bulletin(?:\?|$)/.test(url);
+  // Online official bulletins must not display an older cached NC snapshot.
+  const canUseBulletinCache = () =>
+    !isAdminBulletin || (typeof navigator !== "undefined" && navigator.onLine === false);
   const actor = scoped ? await attendanceCacheActor() : null;
   const authGeneration = attendanceAuthGeneration();
   const before = scoped ? await teacherScope() : null;
@@ -808,12 +811,12 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
 
       // Un 401/403/404/422 ne doit jamais être masqué par une ancienne donnée
       // locale. Le cache n'est toléré que pour une panne serveur temporaire.
-      if (isRetryableStatus(res.status)) {
+      if (isRetryableStatus(res.status) && canUseBulletinCache()) {
         const cached = await fallback();
         if (cached != null) return cached;
       }
 
-      throw new HttpResponseError(msg, res.status, isRetryableStatus(res.status));
+      throw new HttpResponseError(msg, res.status, isRetryableStatus(res.status) && canUseBulletinCache());
     }
 
     await assertCurrent();
@@ -847,6 +850,12 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
   } catch (error) {
     if (error instanceof HttpResponseError && !error.allowCache) {
       throw error;
+    }
+    if (!canUseBulletinCache()) {
+      if (error instanceof Error && error.name === "TimeoutError") {
+        throw new Error("Le chargement du bulletin a dépassé 30 secondes. Réessayez.");
+      }
+      throw error instanceof Error ? error : new Error("Chargement du bulletin impossible.");
     }
     const cached = await fallback();
     if (cached != null) return cached;
