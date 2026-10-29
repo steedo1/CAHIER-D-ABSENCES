@@ -186,6 +186,12 @@ export default function OfficialExportForm({
 
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
+        // Reuse the existing diagnostic only after a registry failure; successful exports
+        // do not add a second database read or change the independent card filters.
+        if (["MISSING_MATRICULE", "DUPLICATE_MATRICULE", "UNKNOWN_GENDER",
+          "MISSING_STUDENT_IDENTITY", "MULTIPLE_ACTIVE_ENROLLMENTS"].includes(payload?.error)) {
+          await handleDiagnostic();
+        }
         const message =
           typeof payload?.message === "string"
             ? payload.message

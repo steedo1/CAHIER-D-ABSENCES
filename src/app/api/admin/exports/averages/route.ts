@@ -1,3 +1,4 @@
+import { DespsSourceError, readDespsEnrollmentPages, normalizeDespsGender, normalizeDespsMatricule, weightedDespsSubjectAverage, type DespsPeriodSubjectValue } from "@/lib/desps-export";
 import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
 import { isBilingualSchool } from "@/lib/school-student-programs";
 // src/app/api/admin/exports/averages/route.ts
@@ -1004,33 +1005,7 @@ function makeSummaryAccumulator(): SummaryAccumulator {
 }
 
 function normalizeGender(value?: string | null): "F" | "M" | "" {
-  const raw = normalizeForMatch(value);
-  if (!raw) return "";
-
-  if (
-    raw === "f" ||
-    raw === "feminin" ||
-    raw === "feminine" ||
-    raw === "female" ||
-    raw === "fille" ||
-    raw === "filles"
-  ) {
-    return "F";
-  }
-
-  if (
-    raw === "m" ||
-    raw === "masculin" ||
-    raw === "masculine" ||
-    raw === "male" ||
-    raw === "garcon" ||
-    raw === "garcons" ||
-    raw === "homme"
-  ) {
-    return "M";
-  }
-
-  return "";
+  return normalizeDespsGender(value);
 }
 
 function addGenderCount(acc: Pick<SummaryAccumulator, "girls" | "boys">, gender: "F" | "M" | "") {
@@ -1394,10 +1369,11 @@ async function loadStudentMeta(params: {
 
   if (!targetClassIds.length) return studentMetaByKey;
 
-  const { data: enrollments } = await supabase
+  const enrollments = await readDespsEnrollmentPages<any>((from, to) => supabase
     .from("class_enrollments")
     .select(
       `
+      id,
       class_id,
       student_id,
       students(
@@ -1418,7 +1394,8 @@ async function loadStudentMeta(params: {
     )
     .in("class_id", targetClassIds)
     .is("end_date", null)
-    .order("student_id", { ascending: true });
+    .order("id", { ascending: true })
+    .range(from, to));
 
   for (const row of (enrollments || []) as any[]) {
     const currentClassId = String(row?.class_id || "");
@@ -1432,6 +1409,8 @@ async function loadStudentMeta(params: {
     const student = row?.students || {};
     const key = `${currentClassId}__${studentId}`;
 
+    if (studentMetaByKey.has(key)) throw new DespsSourceError("MULTIPLE_ACTIVE_ENROLLMENTS",
+      "Export bloqué : plusieurs inscriptions actives pour un même élève. Vérifier les inscriptions.", 422);
     studentMetaByKey.set(key, {
       student_id: studentId,
       class_id: currentClassId,
@@ -1665,7 +1644,11 @@ function validateOfficialStudentRegistry(registry: Map<string, StudentMetaRow>):
   if (!registry.size) return { error: "NO_ACTIVE_STUDENTS", status: 422 };
   const seenMatricules = new Set<string>();
   for (const student of registry.values()) {
-    const matricule = String(student.matricule || "").trim().toUpperCase();
+    const matricule = normalizeDespsMatricule(student.matricule);
+    if (!String(student.full_name || "").trim() &&
+        ![student.first_name, student.last_name].some((value) => String(value || "").trim())) {
+      return { error: "MISSING_STUDENT_IDENTITY", status: 422 };
+    }
     if (!matricule) return { error: "MISSING_MATRICULE", status: 422 };
     if (seenMatricules.has(matricule)) return { error: "DUPLICATE_MATRICULE", status: 422 };
     seenMatricules.add(matricule);
@@ -3762,15 +3745,15 @@ async function prepareDespsOfficialAnnualExport(params: {
     const levelKey = officialLevelKey(cls);
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
-    const subjectValuesByStudent = new Map<string, Map<string, number[]>>();
+    const subjectValuesByStudent = new Map<string, Map<string, DespsPeriodSubjectValue[]>>();
     const cycleKey = officialCycleKey(levelKey);
 
-    const pushAnnualSubjectValue = (studentId: string, title: string, value: number | null) => {
+    const pushAnnualSubjectValue = (studentId: string, title: string, value: number | null, coeff: number | null) => {
       if (value === null || !Number.isFinite(Number(value))) return;
-      if (!subjectValuesByStudent.has(studentId)) subjectValuesByStudent.set(studentId, new Map<string, number[]>());
+      if (!subjectValuesByStudent.has(studentId)) subjectValuesByStudent.set(studentId, new Map<string, DespsPeriodSubjectValue[]>());
       const bySubject = subjectValuesByStudent.get(studentId)!;
       if (!bySubject.has(title)) bySubject.set(title, []);
-      bySubject.get(title)!.push(Number(value));
+      bySubject.get(title)!.push({ value: Number(value), coeff });
     };
 
     for (const period of displayPeriods) {
@@ -3786,7 +3769,7 @@ async function prepareDespsOfficialAnnualExport(params: {
           if (cycleKey === "first" && col.title === "PHILO") continue;
           if (cycleKey === "second" && ["COMPO. FR", "ORTH/GRAM"].includes(col.title)) continue;
           const value = valueForDspsSubjectHeader({ item, subjectNameById, componentById, header: col.header, firstCycle: cycleKey === "first" });
-          pushAnnualSubjectValue(studentId, col.title, value);
+          pushAnnualSubjectValue(studentId, col.title, value, period.coeff);
         }
       }
     }
@@ -3812,7 +3795,7 @@ async function prepareDespsOfficialAnnualExport(params: {
       const bySubject = subjectValuesByStudent.get(studentId);
       for (const col of OFFICIAL_SUBJECT_COLUMNS) {
         const values = bySubject?.get(col.title) || [];
-        const avg = values.length ? cleanNumber(values.reduce((a, b) => a + b, 0) / values.length, 4) : null;
+        const avg = weightedDespsSubjectAverage(values);
         addOfficialSubject(ensureAnnualSubject(levelKey, col.title), avg, gender);
       }
     }
@@ -4533,7 +4516,7 @@ async function sendPreparedWorkbook(prepared: PreparedWorkbook, format: ExportFo
   }
 }
 
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest) {
   const ctx = await getAdminAndInstitution();
 
   if ("error" in ctx) {
@@ -4720,6 +4703,7 @@ export async function GET(req: NextRequest) {
         error: prepared.error,
         message: ({
           NO_ACTIVE_STUDENTS: "Aucun élève actif trouvé pour les classes sélectionnées.",
+          MISSING_STUDENT_IDENTITY: "Export bloqué : identité absente. Vérifier les inscriptions pour voir les élèves concernés.",
           MISSING_MATRICULE: "Export bloqué : au moins un élève actif n'a pas de matricule national.",
           DUPLICATE_MATRICULE: "Export bloqué : un matricule national apparaît plusieurs fois dans les classes sélectionnées.",
           UNKNOWN_GENDER: "Export bloqué : le sexe d'au moins un élève actif est absent ou non reconnu.",
@@ -4743,4 +4727,14 @@ export async function GET(req: NextRequest) {
   }
 
   return sendPreparedWorkbook(prepared, format);
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    return await handleGet(req);
+  } catch (error) {
+    if (!(error instanceof DespsSourceError)) throw error;
+    return NextResponse.json({ ok: false, error: error.code, message: error.message },
+      { status: error.status, headers: { "Cache-Control": "no-store" } });
+  }
 }

@@ -36,6 +36,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:primary-events
+      - run: npm run test:desps
       - run: npm run test:multicycle
       - run: npx playwright install --with-deps chromium
       - run: npm run test:primary-events:browser
