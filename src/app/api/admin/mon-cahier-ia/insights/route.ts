@@ -1,3 +1,4 @@
+import { aiModuleDeniedResponse } from "@/lib/mon-cahier-ai/module";
 // src/app/api/admin/mon-cahier-ia/insights/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -209,7 +210,7 @@ async function requireContext() {
     const role = cleanText(row.role);
     const roleInstitution = cleanText(row.institution_id);
     if (role === "super_admin") return true;
-    if (!roleInstitution) return true;
+    if (!roleInstitution) return false;
     return roleInstitution === institutionId;
   });
 
@@ -796,6 +797,9 @@ export async function POST(req: NextRequest) {
   try {
     const ctx = await requireContext();
     if ("error" in ctx) return ctx.error;
+
+    const denied = await aiModuleDeniedResponse(ctx.srv, ctx.institutionId);
+    if (denied) return denied;
 
     const body = (await req.json().catch(() => ({}))) as Body;
     const action = cleanText(body.action) as InsightAction;

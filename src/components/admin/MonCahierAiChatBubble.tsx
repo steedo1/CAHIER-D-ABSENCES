@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, MessageCircle, Send, Sparkles, X } from "lucide-react";
-import { fetchAiJson, referenceDateForAcademicYear } from "@/lib/mon-cahier-ai/client";
+import AiModuleOffer from "@/components/admin/AiModuleOffer";
+import { AiRequestError, fetchAiJson, referenceDateForAcademicYear } from "@/lib/mon-cahier-ai/client";
 import type { AiDataQuality, MonCahierAiAnswer } from "@/lib/mon-cahier-ai/core";
 
 type AcademicYear = {
@@ -16,6 +17,7 @@ type AcademicYear = {
 type BootstrapResponse = {
   ok: boolean;
   error?: string;
+  module?: { enabled: boolean };
   current_academic_year?: AcademicYear | null;
   academic_years?: AcademicYear[];
 };
@@ -27,7 +29,7 @@ type AssistantResponse = {
   error?: string;
   message?: string;
   answer?: AiAnswer;
-  context_meta?: { data_quality?: AiDataQuality };
+  context_meta?: { data_quality?: AiDataQuality; generated_at?: string };
 };
 
 type ChatMessage =
@@ -182,6 +184,8 @@ function AnswerContent({ answer, quality }: { answer: AiAnswer; quality?: AiData
 export default function MonCahierAiChatBubble() {
   const [open, setOpen] = useState(false);
   const [ready, setReady] = useState(false);
+  const [moduleLocked, setModuleLocked] = useState(false);
+  const [dataAsOf, setDataAsOf] = useState<string | null>(null);
   const [loadingContext, setLoadingContext] = useState(false);
   const [asking, setAsking] = useState(false);
   const [academicYear, setAcademicYear] = useState("");
@@ -201,7 +205,7 @@ export default function MonCahierAiChatBubble() {
   const questionRequestRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!open || ready) return;
+    if (!open || ready || moduleLocked) return;
 
     let cancelled = false;
     const controller = new AbortController();
@@ -215,6 +219,12 @@ export default function MonCahierAiChatBubble() {
         });
 
         if (cancelled) return;
+        if (json.module?.enabled === false) {
+          setModuleLocked(true);
+          setReady(false);
+          return;
+        }
+        setModuleLocked(false);
         const year =
           json.current_academic_year ||
           json.academic_years?.find((item) => item.is_current) ||
@@ -241,7 +251,7 @@ export default function MonCahierAiChatBubble() {
       cancelled = true;
       controller.abort();
     };
-  }, [open, ready, preparationAttempt]);
+  }, [open, ready, moduleLocked, preparationAttempt]);
 
   useEffect(() => () => { questionRequestRef.current?.abort(); }, []);
 
@@ -283,6 +293,7 @@ export default function MonCahierAiChatBubble() {
         }),
       });
 
+      setDataAsOf(json.context_meta?.generated_at || null);
       if (!json.answer || typeof json.answer.title !== "string" || typeof json.answer.summary !== "string") {
         throw new Error("Réponse IA indisponible. Réessaie dans un instant.");
       }
@@ -293,6 +304,9 @@ export default function MonCahierAiChatBubble() {
         { id: makeId("assistant"), role: "assistant", answer: json.answer, quality: json.context_meta?.data_quality },
       ]);
     } catch (error: unknown) {
+      if (error instanceof AiRequestError && error.code === "AI_MODULE_DISABLED") {
+        setModuleLocked(true); setReady(false); return;
+      }
       if (controller.signal.aborted) return;
       setQuestion(q);
       setMessages((current) => [
@@ -339,6 +353,7 @@ export default function MonCahierAiChatBubble() {
             </button>
           </header>
 
+          {moduleLocked ? <div className="min-h-0 flex-1 overflow-y-auto p-4"><AiModuleOffer /></div> : <>
           <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-3">
             {messages.map((message) =>
               message.role === "user" ? (
@@ -445,17 +460,19 @@ export default function MonCahierAiChatBubble() {
                 {asking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </button>
             </div>
+            {dataAsOf ? <p className="mt-2 text-[10px] text-slate-500">Données préparées le {new Date(dataAsOf).toLocaleString("fr-FR", { timeZone: "Africa/Abidjan" })}.</p> : null}
             <div className="mt-2 flex items-center gap-1.5 text-[10px] leading-4 text-slate-400">
               <Sparkles className="h-3 w-3" />
               Aide à la décision : l’administration garde la validation finale.
             </div>
           </div>
+          </>}
         </section>
       ) : null}
 
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => { if (!open && moduleLocked) setModuleLocked(false); setOpen((value) => !value); }}
         className="ml-auto flex h-14 items-center gap-2 rounded-full bg-slate-950 px-4 text-sm font-black text-white shadow-xl ring-1 ring-slate-800 transition hover:-translate-y-0.5 hover:bg-blue-950"
         aria-label={open ? "Fermer Cahier IA" : "Ouvrir Cahier IA"}
         aria-expanded={open}

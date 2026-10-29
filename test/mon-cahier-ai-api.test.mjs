@@ -18,6 +18,7 @@ const classes = [
 function harness(options = {}) {
   const calls = [];
   const tables = {
+    institution_ai_module_settings: options.moduleSettings ?? [{ institution_id: institution, ai_premium_enabled: true, expires_on: null }],
     profiles: [{ id: "admin-a", institution_id: institution }],
     user_roles: (options.roles ?? ["admin"]).map((role) => ({ profile_id: "admin-a", institution_id: institution, role })),
     academic_years: [{ code: year, institution_id: institution, is_current: true, start_date: "2026-09-01", end_date: "2027-07-31" }],
@@ -166,4 +167,53 @@ test("a genuine zero average still generates an alert and the council note and r
     assert.equal(result.answer.students_to_follow[0].risk_level, "high");
     assert.ok(result.answer.council_note || result.answer.remediation_plan?.length);
   }
+});
+
+for (const moduleSettings of [[], [{ institution_id: institution, ai_premium_enabled: false }],
+  [{ institution_id: institution, ai_premium_enabled: true, expires_on: "2020-01-01" }]]) {
+  test("disabled, absent or expired entitlement blocks every analysis before business data", async () => {
+    const app = harness({ moduleSettings });
+    const status = await (await app.bootstrap()).json();
+    assert.equal(status.module.enabled, false);
+    const routes = [
+      ["src/app/api/admin/mon-cahier-ia/assistant/route.ts", "POST"],
+      ["src/app/api/admin/mon-cahier-ia/insights/route.ts", "POST"],
+      ["src/app/api/admin/mon-cahier-ia/history/route.ts", "GET"],
+      ["src/app/api/admin/mon-cahier-ia/training-export/route.ts", "GET"],
+      ["src/app/api/admin/notes/predictions/route.ts", "POST"],
+      ["src/app/api/admin/grades/predict/route.ts", "POST"],
+    ];
+    for (const [path, method] of routes) {
+      const handler = app.load(path)[method];
+      const req = new NextRequest("https://school.invalid/api?academic_year=2026-2027", method === "POST" ? {
+        method, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ academic_year: year, class_id: "a3", exam_date: "2026-10-29", core_completion_percent: 60 }),
+      } : undefined);
+      const response = await handler(req);
+      assert.equal(response.status, 403, path + ": " + await response.clone().text());
+      assert.equal((await response.json()).error, "AI_MODULE_DISABLED");
+    }
+    assert.ok(app.calls.every(call => ["profiles", "user_roles", "institution_ai_module_settings"].includes(call.table)));
+  });
+}
+
+test("help and greetings avoid school data, bulletins, predictions and history writes", async () => {
+  const app = harness();
+  for (const question of ["Bonjour", "Que peux-tu faire ?", "Merci beaucoup"]) {
+    const result = await app.ask(question); assert.equal(result.status, 200);
+    assert.match((await result.json()).answer.summary, /assistant|effectifs|moyennes/);
+  }
+  assert.ok(app.calls.every(call => ["profiles", "user_roles", "institution_ai_module_settings"].includes(call.table)));
+});
+
+test("related questions reuse the same scoped analysis and persist only one student snapshot", async () => {
+  const app = harness();
+  const first = await app.ask("Analyse la 3e3"); assert.equal(first.status, 200);
+  const firstJson = await first.json();
+  const heavy = app.calls.filter(c => c.rpc || c.bulletin).length;
+  const second = await app.ask("Quels élèves de la 3e3 sont à accompagner ?"); assert.equal(second.status, 200);
+  const secondJson = await second.json();
+  assert.equal(secondJson.context_meta.cache_reused, true);
+  assert.equal(secondJson.context_meta.generated_at, firstJson.context_meta.generated_at);
+  assert.equal(app.calls.filter(c => c.rpc || c.bulletin).length, heavy);
 });

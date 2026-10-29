@@ -49,6 +49,7 @@ type FinanceSettings = {
 type PageRow = Institution & {
   channels: ChannelSettings;
   finance: FinanceSettings;
+  ai: { ai_premium_enabled: boolean; expires_on: string | null };
 };
 
 function diffDays(dateISO: string | null | undefined) {
@@ -244,6 +245,25 @@ async function saveFinanceAction(formData: FormData) {
   revalidatePath("/super/abonnements");
 }
 
+async function saveAiAction(formData: FormData) {
+  "use server";
+  const { user } = await assertSuperAdmin();
+  const institutionId = String(formData.get("institution_id") || "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(institutionId)) throw new Error("Établissement invalide.");
+  const enabled = formData.get("ai_premium_enabled") === "on";
+  const expires = String(formData.get("ai_expires_on") || "").trim();
+  if (expires && (!/^\d{4}-\d{2}-\d{2}$/.test(expires) || Number.isNaN(Date.parse(expires)) ||
+      new Date(expires).toISOString().slice(0, 10) !== expires)) throw new Error("Date de fin invalide.");
+  if (enabled && expires && expires < new Date().toISOString().slice(0, 10)) throw new Error("La date de fin est déjà dépassée.");
+  const { error } = await getSupabaseServiceClient().from("institution_ai_module_settings").upsert({
+    institution_id: institutionId, ai_premium_enabled: enabled, expires_on: expires || null,
+    updated_by: user.id, updated_at: new Date().toISOString(),
+  }, { onConflict: "institution_id" });
+  if (error) throw new Error("Impossible d’enregistrer l’activation Mon Cahier IA.");
+  revalidatePath("/super/abonnements");
+  revalidatePath("/admin/notes/predictions");
+}
+
 function StatCard({
   icon,
   label,
@@ -375,6 +395,11 @@ export default async function AbonnementsPage({
 
   if (fErr) throw new Error(fErr.message);
 
+  const aiResult = institutionIds.length ? await admin.from("institution_ai_module_settings")
+    .select("institution_id,ai_premium_enabled,expires_on").in("institution_id", institutionIds) : { data: [], error: null };
+  if (aiResult.error) throw new Error("La configuration Mon Cahier IA est indisponible.");
+  const aiMap = new Map((aiResult.data || []).map(row => [String(row.institution_id), row]));
+
   const settingsMap = new Map<string, ChannelSettings>();
   for (const row of (settings ?? []) as ChannelSettings[]) {
     settingsMap.set(String(row.institution_id), row);
@@ -388,6 +413,7 @@ export default async function AbonnementsPage({
   const rows: PageRow[] = institutionRows
     .map((inst) => ({
       ...inst,
+      ai: aiMap.get(inst.id) || { ai_premium_enabled: false, expires_on: null },
       channels: settingsMap.get(inst.id) ?? {
         institution_id: inst.id,
         push_enabled: true,
@@ -806,6 +832,16 @@ export default async function AbonnementsPage({
                     </div>
 
                     <div className="space-y-5">
+                      <form action={saveAiAction} className="rounded-3xl border border-indigo-200 bg-indigo-50/50 p-4">
+                        <input type="hidden" name="institution_id" value={row.id} />
+                        <h3 className="text-sm font-black text-indigo-950">Mon Cahier IA — module optionnel payant</h3>
+                        <p className="mt-2 text-xs text-slate-600">Activation accordée par le super administrateur après accord avec l’établissement.</p>
+                        <div className="mt-3"><StatusPill ok={row.ai.ai_premium_enabled && (!row.ai.expires_on || row.ai.expires_on >= new Date().toISOString().slice(0, 10))} yesLabel="Module actif" noLabel="Module inactif" /></div>
+                        <label className="mt-4 flex items-center gap-3 text-sm font-bold"><input type="checkbox" name="ai_premium_enabled" defaultChecked={row.ai.ai_premium_enabled} />Autoriser Mon Cahier IA</label>
+                        <label className="mt-3 block text-sm">Date de fin (facultative)<input type="date" name="ai_expires_on" defaultValue={row.ai.expires_on || ""} className="mt-1 block rounded-xl border border-slate-300 bg-white px-3 py-2" /></label>
+                        <button className="mt-4 rounded-xl bg-indigo-700 px-4 py-3 text-sm font-bold text-white hover:bg-indigo-800">Enregistrer l’accès IA</button>
+                      </form>
+
                       <form
                         action={saveChannelsAction}
                         className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white p-4 shadow-sm"

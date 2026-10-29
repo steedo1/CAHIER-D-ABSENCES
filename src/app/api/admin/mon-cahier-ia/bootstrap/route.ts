@@ -1,3 +1,4 @@
+import { getAiModuleState } from "@/lib/mon-cahier-ai/module";
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -80,6 +81,14 @@ export async function GET() {
       return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
     }
 
+    const module = await getAiModuleState(ctx.srv, ctx.institution_id);
+    if (!module.enabled) {
+      return NextResponse.json({ ok: module.reason !== "unavailable", module,
+        error: module.reason === "unavailable" ? "AI_MODULE_UNAVAILABLE" : undefined,
+        message: module.reason === "unavailable" ? "L'autorisation Mon Cahier IA est indisponible." : undefined },
+        { status: module.reason === "unavailable" ? 503 : 200, headers: { "Cache-Control": "private, no-store" } });
+    }
+
     const [{ data: classes, error: classesErr }, { data: years, error: yearsErr }] = await Promise.all([
       ctx.srv
         .from("classes")
@@ -107,6 +116,7 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
+      module,
       model: {
         key: "mon_cahier_ai_pedagogy",
         version: "2.0.0",
