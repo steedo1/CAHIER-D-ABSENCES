@@ -1926,11 +1926,25 @@ async function loadBulletin(
 
     periodsDefined = periodsForYear.length > 0;
 
-    const matchedPeriod = periodsForYear.find(
-      (row) =>
-        String(row.start_date || "") === String(dateFrom || "") &&
-        String(row.end_date || "") === String(dateTo || ""),
-    );
+    // Prefer the explicitly selected trimester; a changed date window must
+    // not silently turn saved direct averages into an apparent NC.
+    const requestedPeriodId = String(searchParams.get("grading_period_id") || "").trim();
+    const matchedPeriod = requestedPeriodId
+      ? periodsForYear.find(row => row.id === requestedPeriodId)
+      : periodsForYear.find(row =>
+          String(row.start_date || "") === String(dateFrom || "") &&
+          String(row.end_date || "") === String(dateTo || ""),
+        );
+    if (requestedPeriodId && !matchedPeriod) {
+      return NextResponse.json({ ok: false, error: "Période de bulletin non applicable à cette classe." }, { status: 400 });
+    }
+    if (requestedPeriodId && matchedPeriod &&
+      (String(matchedPeriod.start_date || "") !== String(dateFrom || "") ||
+       String(matchedPeriod.end_date || "") !== String(dateTo || ""))) {
+      return NextResponse.json({
+        ok: false, error: "Les dates du bulletin ne correspondent pas au trimestre choisi. Rétablissez les dates de cette période.",
+      }, { status: 409 });
+    }
 
     if (matchedPeriod) {
       periodMeta = {

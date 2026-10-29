@@ -2658,6 +2658,7 @@ export default function BulletinsPage() {
         params.set("period_code", effectivePeriodCode);
       }
 
+      if (!usesPrimaryEventBulletins && selectedPeriod?.id) params.set("grading_period_id", selectedPeriod.id);
       const [resBulletin, resConduct] = await Promise.all([
         fetch(`/api/admin/grades/bulletin?${params.toString()}`),
         fetch(`/api/admin/conduite/averages?${params.toString()}`),
@@ -2941,6 +2942,7 @@ export default function BulletinsPage() {
         const year = selectedAcademicYear || selectedPeriod?.academic_year;
         if (year) params.set("academic_year", year);
         if (selectedPeriod?.code) params.set("period_code", selectedPeriod.code);
+        if (!usesPrimaryEventBulletins && selectedPeriod?.id) params.set("grading_period_id", selectedPeriod.id);
         const response = await fetch(`/api/admin/grades/bulletin?${params}`, {
           method: "POST", cache: "no-store",
         });

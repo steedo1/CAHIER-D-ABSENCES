@@ -33,3 +33,12 @@ test("bulletin enrichment and QR preview do not depend on a second cache write",
   assert.match(page, /await prepareBulletinQrPreview\(json, isOnline\)/);
   assert.match(page, /try\s*\{\s*await cacheSet\(adminBulletinDataKey\(params\), json\);\s*\}\s*catch \(cacheError\)/);
 });
+
+test("online bulletin errors cannot be concealed by stale NC cache", () => {
+  const src = read("src/lib/offline.ts");
+  const section = src.slice(src.indexOf("export async function offlineGetJson"),src.indexOf("/* ───────────────────────── Outbox"));
+  assert.match(section,/const canUseBulletinCache/);
+  assert.match(section,/navigator\.onLine === false/);
+  assert.match(section,/if \(!canUseBulletinCache\(\)\)/);
+  assert.match(section,/isRetryableStatus\(res\.status\) && canUseBulletinCache\(\)/);
+});

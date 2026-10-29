@@ -186,6 +186,15 @@ test('Moyennes directes : vraies routes, droits, trimestres, bulletins, conduite
     assert.equal((await routes.direct.POST(request('/direct',body(null,1,id)))).status,200);assert.equal(row.bonus,0.5);assert.equal(row.reason,null);
    }
   });
+  await t.test('bulletin trimestriel : dates incohérentes signalées sans perdre les moyennes',async()=>{
+    const ok=await routes.bulletin.GET(request(`/bulletin?class_id=${classroom}&from=2026-09-14&to=2026-12-04&grading_period_id=${period(1)}&export_light=1`));
+    assert.equal(ok.status,200,await ok.clone().text());
+    const wrong=await routes.bulletin.GET(request(`/bulletin?class_id=${classroom}&from=2026-09-14&to=2026-11-30&grading_period_id=${period(1)}&export_light=1`));
+    assert.equal(wrong.status,409,await wrong.clone().text());
+    assert.match((await wrong.json()).error,/dates.*trimestre/i);
+    const unknown=await routes.bulletin.GET(request(`/bulletin?class_id=${classroom}&from=2026-09-14&to=2026-12-04&grading_period_id=${randomUUID()}&export_light=1`));
+    assert.equal(unknown.status,400,await unknown.clone().text());
+  });
   await t.test('Français collège : sous-matières réelles, moyenne pondérée et bulletin',async()=>{
     const before=structuredClone(s.tables.grade_adjustments);
     const comps=[
