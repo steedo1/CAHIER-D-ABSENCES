@@ -198,11 +198,16 @@
     padding-top: 0.7mm !important;
     font-size: 8px !important;
   }
-  /* Cases réellement inscriptibles : jusqu'à 24 élèves par face.
-     40 élèves sont répartis sur 2 faces de 20, avec 7,2 mm de hauteur.
-     Les colonnes des matières restent suffisamment larges pour écrire une note. */
+  /* Primaire français / arabe exclusivement : A4 paysage.
+     Les 48 élèves sont répartis 24 + 24 sur deux feuilles.
+     L'en-tête complet de la première feuille occupe plus de hauteur ;
+     les lignes de la suivante peuvent être davantage aérées.
+     Les cases demeurent assez grandes pour écrire les notes à la main. */
   body .primary-class-list .roster-table tbody tr {
-    height: 7.2mm !important;
+    height: 6.2mm !important;
+  }
+  body .primary-class-list .class-list-sheet:not(:first-child) .roster-table tbody tr {
+    height: 7.1mm !important;
   }
   body .primary-class-list .roster-table tbody td {
     padding: 0.55mm 0.5mm !important;
@@ -212,8 +217,8 @@
   body .primary-class-list .roster-table .col-name {
     font-size: var(--class-list-name-font-size, 12px) !important;
   }
-  /* Classe exceptionnellement chargée : 25 à 28 élèves par face.
-     Aucune ligne à 3 mm, ni police comprimée pour les cases de notes. */
+  /* Seules les feuilles de plus de 24 élèves gardent la variante dense.
+     Ne jamais comprimer à 5,25 mm une feuille de 24 élèves. */
   body .primary-class-list .class-list-sheet-medium .roster-table tbody tr {
     height: 5.25mm !important;
   }
