@@ -204,9 +204,12 @@
      les lignes de la suivante peuvent être davantage aérées.
      Les cases demeurent assez grandes pour écrire les notes à la main. */
   body .primary-class-list .roster-table tbody tr {
+    height: 7.2mm !important;
+  }
+  body .primary-class-list .class-list-sheet-comfortable .roster-table tbody tr {
     height: 6.2mm !important;
   }
-  body .primary-class-list .class-list-sheet:not(:first-child) .roster-table tbody tr {
+  body .primary-class-list .class-list-sheet-comfortable:not(:first-child) .roster-table tbody tr {
     height: 7.1mm !important;
   }
   body .primary-class-list .roster-table tbody td {
