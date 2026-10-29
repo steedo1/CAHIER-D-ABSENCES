@@ -1590,7 +1590,8 @@ export default function ClassListPrintPage() {
           {printedPages.map(({ students: pageStudents, startIndex }, pageIndex) => (
           <article
             className={`class-list-sheet ${primaryList
-              ? pageStudents.length > 24 ? "class-list-sheet-medium" : ""
+              ? pageStudents.length > 24 ? "class-list-sheet-medium"
+                : pageStudents.length > 20 ? "class-list-sheet-comfortable" : ""
               : pageStudents.length > 36 ? "class-list-sheet-dense" : ""}`}
             key={pageIndex}
           >
