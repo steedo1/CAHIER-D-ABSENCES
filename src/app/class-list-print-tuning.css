@@ -207,10 +207,10 @@
     height: 7.2mm !important;
   }
   body .primary-class-list .class-list-sheet-comfortable .roster-table tbody tr {
-    height: 6.2mm !important;
+    height: 5.9mm !important;
   }
   body .primary-class-list .class-list-sheet-comfortable:not(:first-child) .roster-table tbody tr {
-    height: 7.1mm !important;
+    height: 6.7mm !important;
   }
   body .primary-class-list .roster-table tbody td {
     padding: 0.55mm 0.5mm !important;
