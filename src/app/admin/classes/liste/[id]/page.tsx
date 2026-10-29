@@ -832,9 +832,6 @@ export default function ClassListPrintPage() {
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5 text-slate-950 print:bg-white print:p-0">
       <style jsx global>{`
-        @page primary-class-list-page { size: A4 landscape; margin: 8mm; }
-        .primary-class-list { page: primary-class-list-page; }
-        .primary-class-list .class-list-sheet { page: primary-class-list-page; }
         .primary-class-list .roster-table .col-no { width: 2%; }
         .primary-class-list .roster-table .col-matricule { width: 9%; }
         .primary-class-list .roster-table .col-name { width: 27%; }
@@ -844,8 +841,11 @@ export default function ClassListPrintPage() {
         .primary-class-list .roster-table .col-note { width: auto; }
         .subject-denominator { display: block; font-size: 8px; font-weight: normal; }
         .primary-subject-legend { font-size: 9px; line-height: 1.4; margin-top: 2mm; }
+        /* A4 paysage uniquement pour les listes des classes du primaire.
+           La règle @page sans nom est aussi reconnue par Chrome Android.
+           Secondaire et maternelle conservent strictement A4 portrait. */
         @page {
-          size: A4 portrait;
+          size: ${primaryList ? "A4 landscape" : "A4 portrait"};
           margin: 8mm;
         }
 
@@ -1590,7 +1590,7 @@ export default function ClassListPrintPage() {
           {printedPages.map(({ students: pageStudents, startIndex }, pageIndex) => (
           <article
             className={`class-list-sheet ${primaryList
-              ? pageStudents.length > 20 ? "class-list-sheet-medium" : ""
+              ? pageStudents.length > 24 ? "class-list-sheet-medium" : ""
               : pageStudents.length > 36 ? "class-list-sheet-dense" : ""}`}
             key={pageIndex}
           >
