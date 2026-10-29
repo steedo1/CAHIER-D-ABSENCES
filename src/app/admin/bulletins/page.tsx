@@ -3030,6 +3030,9 @@ function BulletinsPageContent() {
       if (liveDuplicateMode) {
         params.set("active_only", "false");
       }
+      // Read the official bulletin values first; QR PNG is generated locally
+      // for preview, while official printing still uses the full POST.
+      params.set("skip_qr_png", "1");
 
       const [loaded, conductJson] = await Promise.all([
         getAdminBulletin<BulletinResponse>(params),
