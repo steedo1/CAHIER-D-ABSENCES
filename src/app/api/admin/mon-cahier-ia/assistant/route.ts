@@ -1,3 +1,6 @@
+import { reuseAiAnalysis, AiBusyError } from "@/lib/mon-cahier-ai/analysis-cache";
+import { buildAiHelpAnswer } from "@/lib/mon-cahier-ai/help";
+import { aiModuleDeniedResponse } from "@/lib/mon-cahier-ai/module";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -141,7 +144,7 @@ type BulletinSubjectAverage = {
 };
 
 const MODEL_KEY = "mon_cahier_ai_pedagogy";
-const MODEL_VERSION = "2.0.0";
+const MODEL_VERSION = "2.1.0";
 const AI_SERVICE_URL =
   process.env.MON_CAHIER_AI_SERVICE_URL || process.env.ML_PREDICT_URL || "";
 
@@ -661,7 +664,7 @@ async function loadOfficialBulletinAverages(args: {
     }
   };
 
-  for (const batch of chunks(args.classes, 4)) {
+  for (const batch of chunks(args.classes, 2)) {
     await Promise.all(batch.map(loadClassBulletin));
   }
 
@@ -1509,8 +1512,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
     }
 
+    const denied = await aiModuleDeniedResponse(ctx.srv, ctx.institution_id);
+    if (denied) return denied;
+
     const raw = (await req.json().catch(() => ({}))) as Body;
     const question = String(raw.question || "").trim() || "Résume-moi la situation pédagogique de cette école.";
+    if (question.length > 2000) return NextResponse.json({ ok: false, error: "QUESTION_TOO_LONG", message: "Limitez la question à 2 000 caractères." }, { status: 400 });
+    const helpAnswer = buildAiHelpAnswer(question);
+    if (helpAnswer) return NextResponse.json({ ok: true, answer: helpAnswer });
     const academic_year = String(raw.academic_year || "").trim();
     const exam_date = String(raw.exam_date || "").slice(0, 10);
     const class_id = raw.class_id ? String(raw.class_id).trim() : null;
@@ -1639,196 +1648,206 @@ export async function POST(req: NextRequest) {
       } });
     }
 
-    const predictionResult = await loadPredictionRows({
-      srv: ctx.srv,
-      institution_id: ctx.institution_id,
-      classes,
-      academic_year,
-      exam_date,
-      core_completion_percent,
-    });
+    // User + school + scope isolate the cache. A fresh module check always precedes it.
+    const cachedAnalysis = await reuseAiAnalysis(JSON.stringify([
+      ctx.institution_id, ctx.user.id, academic_year, exam_date,
+      classes.map((cls) => cls.id).sort(), core_completion_percent, scopeStats,
+    ]), async () => {
+      const predictionResult = await loadPredictionRows({
+        srv: ctx.srv,
+        institution_id: ctx.institution_id,
+        classes,
+        academic_year,
+        exam_date,
+        core_completion_percent,
+      });
 
-    const officialAverages = await loadOfficialBulletinAverages({
-      req,
-      srv: ctx.srv,
-      institution_id: ctx.institution_id,
-      classes,
-      academic_year,
-      exam_date,
-      warnings: predictionResult.warnings,
-    });
+      const officialAverages = await loadOfficialBulletinAverages({
+        req,
+        srv: ctx.srv,
+        institution_id: ctx.institution_id,
+        classes,
+        academic_year,
+        exam_date,
+        warnings: predictionResult.warnings,
+      });
 
-    const analysisRows = buildAnalysisRowsFromPredictionsAndBulletins({
-      classes,
-      predictionRows: predictionResult.rows,
-      officialAverages,
-    });
+      const analysisRows = buildAnalysisRowsFromPredictionsAndBulletins({
+        classes,
+        predictionRows: predictionResult.rows,
+        officialAverages,
+      });
 
-    const mlRows = buildMlRowsWithOfficialAverages(analysisRows, officialAverages);
+      const mlRows = buildMlRowsWithOfficialAverages(analysisRows, officialAverages);
 
-    const ml = await callMlService({
-      institution_id: ctx.institution_id,
-      academic_year,
-      exam_date,
-      core_completion_percent,
-      rows: mlRows,
-    });
+      const ml = await callMlService({
+        institution_id: ctx.institution_id,
+        academic_year,
+        exam_date,
+        core_completion_percent,
+        rows: mlRows,
+      });
 
-    const students: AiStudentSignal[] = analysisRows.map((row) => {
-      const mlRow = ml.byId.get(row.student_id);
-      const officialAverage = officialAverages.get(row.student_id);
-      const officialGeneralAvg = chooseOfficialAverage(officialAverage);
-      const general_avg_20 = officialGeneralAvg == null
-        ? row.general_avg_20 == null
+      const students: AiStudentSignal[] = analysisRows.map((row) => {
+        const mlRow = ml.byId.get(row.student_id);
+        const officialAverage = officialAverages.get(row.student_id);
+        const officialGeneralAvg = chooseOfficialAverage(officialAverage);
+        const general_avg_20 = officialGeneralAvg == null
+          ? row.general_avg_20 == null
+            ? null
+            : round2(Number(row.general_avg_20))
+          : round2(officialGeneralAvg);
+        const core_avg_20 = row.raw_core_avg_20 == null ? null : round2(Number(row.raw_core_avg_20));
+        const officialConductAvg = getOfficialConductAverage(officialAverage);
+        const conduct_total_20 = officialConductAvg == null
+          ? row.conduct_total_20 == null
+            ? row.conduct_norm == null
+              ? null
+              : round2(Number(row.conduct_norm) * 20)
+            : round2(Number(row.conduct_total_20))
+          : officialConductAvg;
+        const presence_rate = row.presence_rate == null ? null : round2(Number(row.presence_rate));
+        const total_absent_hours = row.total_absent_hours == null ? null : round2(Number(row.total_absent_hours));
+        const nb_lates = row.nb_lates == null ? null : Number(row.nb_lates);
+        const officialBaselineSuccess = general_avg_20 == null
           ? null
-          : round2(Number(row.general_avg_20))
-        : round2(officialGeneralAvg);
-      const core_avg_20 = row.raw_core_avg_20 == null ? null : round2(Number(row.raw_core_avg_20));
-      const officialConductAvg = getOfficialConductAverage(officialAverage);
-      const conduct_total_20 = officialConductAvg == null
-        ? row.conduct_total_20 == null
-          ? row.conduct_norm == null
-            ? null
-            : round2(Number(row.conduct_norm) * 20)
-          : round2(Number(row.conduct_total_20))
-        : officialConductAvg;
-      const presence_rate = row.presence_rate == null ? null : round2(Number(row.presence_rate));
-      const total_absent_hours = row.total_absent_hours == null ? null : round2(Number(row.total_absent_hours));
-      const nb_lates = row.nb_lates == null ? null : Number(row.nb_lates);
-      const officialBaselineSuccess = general_avg_20 == null
-        ? null
-        : computeOfficialBaselineSuccess({
-            official_avg_20: general_avg_20,
-            core_avg_20,
-            presence_rate,
-            conduct_total_20,
-            total_absent_hours,
-            nb_lates,
-            core_completion_percent,
-          });
-      const p_success = mlRow
-        ? mlRow.p_success
-        : officialBaselineSuccess != null
-          ? officialBaselineSuccess
-          : row.p_success == null
-            ? null
-            : clamp(Number(row.p_success), 0, 1);
-      const risk_level = normalizeRisk(mlRow?.risk_level, p_success);
+          : computeOfficialBaselineSuccess({
+              official_avg_20: general_avg_20,
+              core_avg_20,
+              presence_rate,
+              conduct_total_20,
+              total_absent_hours,
+              nb_lates,
+              core_completion_percent,
+            });
+        const p_success = mlRow
+          ? mlRow.p_success
+          : officialBaselineSuccess != null
+            ? officialBaselineSuccess
+            : row.p_success == null
+              ? null
+              : clamp(Number(row.p_success), 0, 1);
+        const risk_level = normalizeRisk(mlRow?.risk_level, p_success);
 
-      const priority_score = computePriorityScore({
-        p_success,
-        general_avg_20,
-        core_avg_20,
-        presence_rate,
-        conduct_total_20,
-        total_absent_hours,
-        nb_lates,
+        const priority_score = computePriorityScore({
+          p_success,
+          general_avg_20,
+          core_avg_20,
+          presence_rate,
+          conduct_total_20,
+          total_absent_hours,
+          nb_lates,
+        });
+
+        const reasons = buildStudentReasons({
+          p_success,
+          general_avg_20,
+          core_avg_20,
+          presence_rate,
+          conduct_total_20,
+          total_absent_hours,
+          nb_lates,
+        });
+
+        return {
+          student_id: String(row.student_id),
+          full_name: fullName(row),
+          matricule: row.matricule || null,
+          class_id: String(row.class_id),
+          class_label: row.class_label || "Classe",
+          class_level: row.class_level || null,
+          general_avg_20,
+          core_avg_20,
+          presence_rate,
+          total_absent_hours,
+          nb_lates,
+          conduct_total_20,
+          p_success,
+          risk_level,
+          priority_score,
+          reasons,
+        };
       });
 
-      const reasons = buildStudentReasons({
-        p_success,
-        general_avg_20,
-        core_avg_20,
-        presence_rate,
-        conduct_total_20,
-        total_absent_hours,
-        nb_lates,
+      const classSignals = buildClassSignals(classes, students);
+      const subjectResult = await loadSubjectSignals({
+        srv: ctx.srv,
+        classSignals,
+        academic_year,
+      }).catch((err: any) => {
+        predictionResult.warnings.push(`Analyse des matières indisponible : ${err?.message || "erreur"}`);
+        return {
+          subjects: [] as AiSubjectSignal[],
+          stats: { published_evaluations_count: 0, notes_count: 0, evaluated_subjects_count: 0 },
+        };
       });
 
-      return {
-        student_id: String(row.student_id),
-        full_name: fullName(row),
-        matricule: row.matricule || null,
-        class_id: String(row.class_id),
-        class_label: row.class_label || "Classe",
-        class_level: row.class_level || null,
-        general_avg_20,
-        core_avg_20,
-        presence_rate,
-        total_absent_hours,
-        nb_lates,
-        conduct_total_20,
-        p_success,
-        risk_level,
-        priority_score,
-        reasons,
+      const bulletinSubjectSignals = buildSubjectSignalsFromBulletins({
+        officialAverages,
+        classSignals,
+      });
+
+      const subjectsByKey = new Map<string, AiSubjectSignal>();
+
+      // Règle métier v16 : quand les moyennes matière officielles du bulletin
+      // existent, elles sont la vérité de référence pour les matières bloquantes.
+      // Les notes brutes publiées peuvent être incomplètes ou porter sur un autre
+      // agrégat ; elles ne doivent donc jamais écraser une moyenne matière bulletin.
+      for (const signal of subjectResult.subjects) {
+        const key = `${signal.class_id}::${signal.subject_id}`;
+        subjectsByKey.set(key, signal);
+      }
+
+      for (const signal of bulletinSubjectSignals) {
+        const key = `${signal.class_id}::${signal.subject_id}`;
+        subjectsByKey.set(key, signal);
+      }
+
+      const subjectSignals = Array.from(subjectsByKey.values()).sort((a, b) => b.blocker_score - a.blocker_score);
+
+      const textbookProgressionResult = await loadTextbookProgressions({
+        srv: ctx.srv,
+        institution_id: ctx.institution_id,
+        classes,
+        academic_year,
+        warnings: predictionResult.warnings,
+      });
+
+      const dataQuality = buildDataQuality({
+        classes,
+        predictionRows: predictionResult.rows,
+        students,
+        officialAverages,
+        subjectStats: subjectResult.stats,
+        core_completion_percent,
+        textbookProgressionStats: textbookProgressionResult.stats,
+        model_source: ml.source,
+        warnings: predictionResult.warnings,
+      });
+
+      const aiContext: MonCahierAiContext = {
+        institution_id: ctx.institution_id,
+        academic_year,
+        exam_date,
+        model_key: MODEL_KEY,
+        model_version: ml.version || MODEL_VERSION,
+        model_source: ml.source,
+        classes: classSignals,
+        students,
+        subjects: subjectSignals,
+        warnings: predictionResult.warnings,
+        data_quality: dataQuality,
+        scope_stats: scopeStats,
+        progressions: textbookProgressionResult.progressions,
       };
+
+      if (req.signal.aborted) throw new DOMException("Analyse annulée", "AbortError");
+      return aiContext;
     });
-
-    const classSignals = buildClassSignals(classes, students);
-    const subjectResult = await loadSubjectSignals({
-      srv: ctx.srv,
-      classSignals,
-      academic_year,
-    }).catch((err: any) => {
-      predictionResult.warnings.push(`Analyse des matières indisponible : ${err?.message || "erreur"}`);
-      return {
-        subjects: [] as AiSubjectSignal[],
-        stats: { published_evaluations_count: 0, notes_count: 0, evaluated_subjects_count: 0 },
-      };
-    });
-
-    const bulletinSubjectSignals = buildSubjectSignalsFromBulletins({
-      officialAverages,
-      classSignals,
-    });
-
-    const subjectsByKey = new Map<string, AiSubjectSignal>();
-
-    // Règle métier v16 : quand les moyennes matière officielles du bulletin
-    // existent, elles sont la vérité de référence pour les matières bloquantes.
-    // Les notes brutes publiées peuvent être incomplètes ou porter sur un autre
-    // agrégat ; elles ne doivent donc jamais écraser une moyenne matière bulletin.
-    for (const signal of subjectResult.subjects) {
-      const key = `${signal.class_id}::${signal.subject_id}`;
-      subjectsByKey.set(key, signal);
-    }
-
-    for (const signal of bulletinSubjectSignals) {
-      const key = `${signal.class_id}::${signal.subject_id}`;
-      subjectsByKey.set(key, signal);
-    }
-
-    const subjectSignals = Array.from(subjectsByKey.values()).sort((a, b) => b.blocker_score - a.blocker_score);
-
-    const textbookProgressionResult = await loadTextbookProgressions({
-      srv: ctx.srv,
-      institution_id: ctx.institution_id,
-      classes,
-      academic_year,
-      warnings: predictionResult.warnings,
-    });
-
-    const dataQuality = buildDataQuality({
-      classes,
-      predictionRows: predictionResult.rows,
-      students,
-      officialAverages,
-      subjectStats: subjectResult.stats,
-      core_completion_percent,
-      textbookProgressionStats: textbookProgressionResult.stats,
-      model_source: ml.source,
-      warnings: predictionResult.warnings,
-    });
-
-    const aiContext: MonCahierAiContext = {
-      institution_id: ctx.institution_id,
-      academic_year,
-      exam_date,
-      model_key: MODEL_KEY,
-      model_version: ml.version || MODEL_VERSION,
-      model_source: ml.source,
-      classes: classSignals,
-      students,
-      subjects: subjectSignals,
-      warnings: predictionResult.warnings,
-      data_quality: dataQuality,
-      scope_stats: scopeStats,
-      progressions: textbookProgressionResult.progressions,
-    };
+    const aiContext = cachedAnalysis.value;
 
     const answer = buildAiAnswer(aiContext, question);
-    await saveRunAndStudents({
+    if (!cachedAnalysis.reused) await saveRunAndStudents({
       srv: ctx.srv,
       institution_id: ctx.institution_id,
       user_id: ctx.user.id,
@@ -1855,6 +1874,8 @@ export async function POST(req: NextRequest) {
       ok: true,
       answer,
       context_meta: {
+        generated_at: cachedAnalysis.generatedAt,
+        cache_reused: cachedAnalysis.reused,
         classes_count: aiContext.classes.length,
         students_count: aiContext.students.length,
         subjects_count: aiContext.subjects.length,
@@ -1866,6 +1887,8 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (e: any) {
+    if (e instanceof AiBusyError) return NextResponse.json({ ok: false, error: "AI_BUSY", message: e.message },
+      { status: 429, headers: { "Retry-After": "10", "Cache-Control": "no-store" } });
     return NextResponse.json(
       { ok: false, error: e?.message || "mon_cahier_ai_assistant_failed" },
       { status: 500 },

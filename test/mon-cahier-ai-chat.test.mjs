@@ -23,7 +23,10 @@ function load(path) {
   } }).outputText;
   const module = { exports: {} };
   new Function("require", "module", "exports", code)((id) => {
-    if (id.startsWith("@/")) return load(`src/${id.slice(2)}.ts`);
+    if (id.startsWith("@/")) {
+      const base = `src/${id.slice(2)}`;
+      return load(fs.existsSync(new URL(`../${base}.tsx`, import.meta.url)) ? `${base}.tsx` : `${base}.ts`);
+    }
     return require(id);
   }, module, module.exports);
   loaded.set(path, module.exports);
@@ -210,3 +213,26 @@ test("a class named in a question selects its own students, subjects and class i
 });
 
 test.after(async () => { await browser.close(); });
+
+test("an inactive module offers activation and never exposes chat inputs or starts an analysis", async () => {
+  const f = await mount(() => Response.json({ ok: true, module: { enabled: false, reason: "disabled" } }));
+  try {
+    await click(button(f.host, "Ouvrir Cahier IA"));
+    assert.match(f.host.textContent, /Module optionnel payant/);
+    assert.equal(f.host.querySelector("textarea"), null);
+    assert.equal(f.requests.length, 1);
+    assert.match(f.host.querySelector('a[target="_blank"]').href, /wa.me/);
+  } finally { await f.close(); }
+});
+
+test("revoking an already open module replaces the chat with its activation offer", async () => {
+  const f = await mount((url) => url.endsWith("bootstrap") ? Response.json(context)
+    : Response.json({ ok: false, error: "AI_MODULE_DISABLED", message: "Module optionnel payant" }, { status: 403 }));
+  try {
+    await click(button(f.host, "Ouvrir Cahier IA"));
+    await change(f.host.querySelector("textarea"), "Analyse la 3e3");
+    await click(button(f.host, "Envoyer la question"));
+    assert.match(f.host.textContent, /Demander l.activation/);
+    assert.equal(f.host.querySelector("textarea"), null);
+  } finally { await f.close(); }
+});

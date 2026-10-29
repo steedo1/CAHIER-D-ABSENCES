@@ -1,3 +1,4 @@
+import { aiModuleDeniedResponse } from "@/lib/mon-cahier-ai/module";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -175,6 +176,9 @@ export async function POST(req: NextRequest) {
         { status: 403 }
       );
     }
+
+    const denied = await aiModuleDeniedResponse(srv, institution_id);
+    if (denied) return denied;
 
     // 4) Lecture du body
     const body = (await req.json().catch(() => ({}))) as PredictBody;

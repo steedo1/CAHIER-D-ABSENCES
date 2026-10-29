@@ -1,3 +1,4 @@
+import { aiModuleDeniedResponse } from "@/lib/mon-cahier-ai/module";
 // src/app/api/admin/notes/predictions/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -539,6 +540,9 @@ export async function POST(req: NextRequest) {
         { status: 403 },
       );
     }
+
+    const denied = await aiModuleDeniedResponse(srv, institution_id);
+    if (denied) return denied;
 
     const { data: cls, error: clsErr } = await srv
       .from("classes")

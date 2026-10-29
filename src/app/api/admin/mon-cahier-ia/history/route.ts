@@ -1,3 +1,4 @@
+import { aiModuleDeniedResponse } from "@/lib/mon-cahier-ai/module";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -60,6 +61,9 @@ export async function GET(req: NextRequest) {
     if ("error" in ctx) {
       return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
     }
+
+    const denied = await aiModuleDeniedResponse(ctx.srv, ctx.institution_id);
+    if (denied) return denied;
 
     const url = new URL(req.url);
     const academicYear = String(url.searchParams.get("academic_year") || "").trim();

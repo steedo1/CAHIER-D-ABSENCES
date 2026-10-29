@@ -25,6 +25,7 @@ function load(path, overrides = {}, cache = new Map(), env = {}) {
 function fixture({ roles = ["educator", "admin"], signedIn = true, failCounts = false, failHistory = false, tables = {} } = {}) {
   const calls = [];
   const rows = {
+    institution_ai_module_settings: [{ institution_id: "school-1", ai_premium_enabled: true, expires_on: null }],
     profiles: [{ id: "admin", institution_id: "school-1" }],
     user_roles: roles.map((role) => ({ profile_id: "admin", institution_id: "school-1", role })),
     academic_years: [{ id: "year-1", institution_id: "school-1", code: "2026-2027", label: "2026–2027", start_date: "2026-09-01", end_date: "2027-07-31", is_current: true }],

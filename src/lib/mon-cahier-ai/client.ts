@@ -1,3 +1,7 @@
+export class AiRequestError extends Error {
+  constructor(message: string, public readonly code: string) { super(message); this.name = "AiRequestError"; }
+}
+
 type AiRequestOptions = RequestInit & {
   timeoutMs?: number;
   timeoutMessage?: string;
@@ -32,6 +36,7 @@ export async function fetchAiJson<T>(url: string, options: AiRequestOptions = {}
         const response = await fetch(url, { ...init, cache: "no-store", signal: controller.signal });
         const data = await response.json().catch(() => null);
         if (!response.ok || !data?.ok) {
+          if (data?.error === "AI_MODULE_DISABLED") throw new AiRequestError(data.message || "Mon Cahier IA est un module optionnel payant.", data.error);
           if (response.status === 401) throw new Error("Ta session a expiré. Reconnecte-toi pour utiliser Cahier IA.");
           if (response.status === 403) throw new Error("Ce compte n’a pas accès à Cahier IA.");
           if (response.status === 429) throw new Error("Le service est très sollicité. Réessaie dans un instant.");
