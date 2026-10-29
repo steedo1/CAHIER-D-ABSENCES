@@ -1,3 +1,4 @@
+import { DespsSourceError, readDespsEnrollmentPages, normalizeDespsGender, normalizeDespsMatricule } from "@/lib/desps-export";
 import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
 import { isBilingualSchool } from "@/lib/school-student-programs";
 import { NextRequest, NextResponse } from "next/server";
@@ -20,12 +21,6 @@ function clean(value: unknown): string {
   return String(value ?? "").trim();
 }
 
-function normalizedGender(value: unknown): "F" | "M" | null {
-  const s = clean(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
-  if (["M", "MASCULIN", "GARCON"].includes(s)) return "M";
-  if (["F", "FEMININ", "FILLE"].includes(s)) return "F";
-  return null;
-}
 
 export async function GET(req: NextRequest) {
   const client = await getSupabaseServerClient();
@@ -87,25 +82,19 @@ export async function GET(req: NextRequest) {
     } | null;
   };
 
-  const enrollments: Enrollment[] = [];
-  const pageSize = 500;
-  for (let offset = 0; ; offset += pageSize) {
-    if (offset >= 20000) {
-      return NextResponse.json({ error: "Trop d'inscriptions : sélectionner des classes séparément." }, { status: 422 });
-    }
-    const { data, error } = await admin.from("class_enrollments")
+  let enrollments: Enrollment[];
+  try {
+    enrollments = await readDespsEnrollmentPages<Enrollment>((from, to) => admin.from("class_enrollments")
       .select("id,class_id,student_id,students(first_name,last_name,full_name,matricule,gender)")
       .in("class_id", [...byClass.keys()])
       .is("end_date", null)
       .order("id", { ascending: true })
-      .range(offset, offset + pageSize - 1);
-
-    if (error) {
-      return NextResponse.json({ error: "Impossible de récupérer la liste complète des inscriptions." }, { status: 503 });
-    }
-    const page = (data || []) as Enrollment[];
-    enrollments.push(...page);
-    if (page.length < pageSize) break;
+      .range(from, to)
+      .returns<Enrollment[]>());
+  } catch (error) {
+    if (!(error instanceof DespsSourceError)) throw error;
+    return NextResponse.json({ error: error.message },
+      { status: error.status, headers: { "Cache-Control": "no-store" } });
   }
 
   const issues: Issue[] = [];
@@ -126,7 +115,7 @@ export async function GET(req: NextRequest) {
       [clean(student.last_name), clean(student.first_name)].filter(Boolean).join(" ");
     const name = fullName || "(identité absente)";
     const mat = clean(student.matricule);
-    const gender = normalizedGender(student.gender);
+    const gender = normalizeDespsGender(student.gender);
     if (!fullName) issue(cls, name, mat, "IDENTITE_ABSENTE", "Nom et prénoms absents");
     if (!mat) issue(cls, name, mat, "MATRICULE_ABSENT", "Matricule national non renseigné");
     if (!gender) {
@@ -136,7 +125,7 @@ export async function GET(req: NextRequest) {
     else boys += 1;
 
     if (mat) {
-      const key = mat.toUpperCase().replace(/\s/g, "");
+      const key = normalizeDespsMatricule(mat);
       groupedMatricules.set(key, [...(groupedMatricules.get(key) || []), { className: cls, studentName: name, matricule: mat }]);
     }
     const studentId = clean(enrollment.student_id);
