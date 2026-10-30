@@ -1,6 +1,8 @@
 // src/app/admin/notes/bulletins/page.tsx
 "use client";
 
+import { frenchComponentPoints } from "@/lib/grades/french-component-points";
+
 import React, {
   useEffect,
   useLayoutEffect,
@@ -106,6 +108,8 @@ type PerSubjectAvg = {
   subject_id: string;
   avg20: number | null;
   subject_rank?: number | null;
+  average_source?: string | null;
+  bonus?: number | null;
   teacher_id?: string | null;
   teacher_name?: string | null;
 
@@ -1527,18 +1531,35 @@ function StudentBulletinCard({
     return map;
   }, [subjectGroups, subjectsForTable, conductSubject]);
 
+  // Source unique pour les points : la moyenne française reste visible, mais
+  // les points utilisent les notes des sous-matières si elles sont complètes.
+  const pointsOfSubject = (s: BulletinSubject, value: number, coeff: number, cell?: PerSubjectAvg) => {
+    const comps = subjectCompsBySubject.get(s.subject_id) || [];
+    const precise = frenchComponentPoints({
+      subjectName: s.subject_name,
+      subjectId: s.subject_id,
+      officialCoeff: coeff,
+      components: comps,
+      grades: comps.map(comp => ({
+        subject_id: s.subject_id,
+        component_id: comp.id,
+        avg20: perSubjectComponentMap.get(`${s.subject_id}__${comp.id}`)?.avg20 ?? null,
+      })),
+      bonus: cell?.bonus ?? 0,
+      averageSource: cell?.average_source ?? null,
+    });
+    return precise ?? value * coeff;
+  };
+
   const coeffTotal = useMemo(
-    () =>
-      subjectsForTable.reduce((acc, s) => {
-        if (
-          s.include_in_average === false &&
-          s.subject_id !== conductSubject?.subject_id
-        ) {
-          return acc;
-        }
-        return acc + (effectiveCoeffBySubjectId.get(s.subject_id) ?? 0);
-      }, 0),
-    [subjectsForTable, conductSubject, effectiveCoeffBySubjectId]
+    () => subjectsForTable.reduce((acc, s) => {
+      if (s.include_in_average === false && s.subject_id !== conductSubject?.subject_id) return acc;
+      const avg = perSubject.find(cell => cell.subject_id === s.subject_id)?.avg20;
+      if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return acc;
+      const coeff = effectiveCoeffBySubjectId.get(s.subject_id) ?? 0;
+      return Number.isFinite(coeff) && coeff > 0 ? acc + coeff : acc;
+    }, 0),
+    [subjectsForTable, conductSubject, perSubject, effectiveCoeffBySubjectId]
   );
 
   const moyCoeffTotal = useMemo(() => {
@@ -1567,12 +1588,12 @@ function StudentBulletinCard({
 
       if (!Number.isFinite(coeff) || coeff <= 0) return;
 
-      sum += Number(avg) * coeff;
+      sum += pointsOfSubject(subject, Number(avg), coeff, cell);
       hasAtLeastOneValue = true;
     });
 
     return hasAtLeastOneValue ? round2(sum) : null;
-  }, [subjectsForTable, conductSubject, effectiveCoeffBySubjectId, perSubject]);
+  }, [subjectsForTable, conductSubject, effectiveCoeffBySubjectId, perSubject, perSubjectComponentMap, subjectCompsBySubject]);
 
   const computeDisplayedGroupStats = (
     groupSubjects: BulletinSubject[]
@@ -1606,7 +1627,7 @@ function StudentBulletinCard({
 
       if (!Number.isFinite(coeff) || coeff <= 0) return;
 
-      sum += Number(val) * coeff;
+      sum += pointsOfSubject(s, Number(val), coeff, cell);
       sumCoeff += coeff;
     });
 
@@ -1786,7 +1807,7 @@ function StudentBulletinCard({
 
     const moyCoeff =
       hasAvg && Number.isFinite(effectiveCoeff)
-        ? round2(Number(avg) * effectiveCoeff)
+        ? round2(pointsOfSubject(s, Number(avg), effectiveCoeff, cell))
         : null;
 
     const subjectRankLabel =

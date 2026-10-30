@@ -1,5 +1,6 @@
 import { isTrustedAppOrigin } from "@/lib/request-origin";
 import { directAverageMap, directComponentAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
+import { frenchComponentPoints } from "@/lib/grades/french-component-points";
 // src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -197,6 +198,8 @@ type BulletinNcOverrideRow = {
 // ✅ IMPORTANT: on garde plus de précision (4 décimales) pour éviter
 // les écarts Total vs somme/pondération (ex: Français = sous-matières).
 function cleanNumber(x: any, precision: number = 2): number | null {
+  // Un bulletin NC ou une conduite indisponible ne doit jamais devenir 0/20.
+  if (x === null || x === undefined || x === "") return null;
   const n = Number(x);
   if (!Number.isFinite(n)) return null;
   return Number(n.toFixed(precision));
@@ -2243,6 +2246,7 @@ async function loadBulletin(
         const raw =
           it?.total ?? it?.avg ?? it?.value ?? it?.score ?? it?.note ?? null;
 
+        if (raw === null || raw === undefined || raw === "") continue;
         const total = Number(raw);
         if (!Number.isFinite(total)) continue;
 
@@ -3341,7 +3345,43 @@ async function loadBulletin(
   /* 9) Construire la réponse (par élève) */
 
   // ✅ Conduite (coef 1) : on la récupère une seule fois pour la période demandée
-  const conductAvgByStudent = await pendingConductMap;
+  let conductAvgByStudent = await pendingConductMap;
+
+  // Les moyennes de conduite saisies directement sont la source officielle.
+  // L'appel HTTP interne peut échouer (session/cookie sur Render) : récupérer
+  // leurs corrections depuis la base évite les faux 0 et garantit les bulletins.
+  // Une seule lecture bornée par établissement/classe/période/élèves.
+  const conductYear = String(periodMeta.academic_year || classRow.academic_year || "").trim();
+  const conductPeriodCode = String(periodMeta.code || "").trim();
+  // Ne rien ajouter aux bulletins classiques et historiques : la lecture
+  // supplémentaire est requise uniquement pour les moyennes saisies directement.
+  if (!options.reuseHistoricalFrenchSecondary && currentBonusMaps.directSubjectByStudent.size > 0 &&
+      dateFrom && dateTo && conductYear && conductPeriodCode && studentIds.length) {
+    const { data: storedConduct, error: conductError } = await srvClient
+      .from("conduct_average_overrides")
+      .select("student_id, override_total, reason")
+      .eq("institution_id", institutionId)
+      .eq("class_id", classRow.id)
+      .eq("academic_year", conductYear)
+      .eq("period_code", conductPeriodCode)
+      .in("student_id", studentIds);
+    if (!conductError && Array.isArray(storedConduct)) {
+      if (!conductAvgByStudent) conductAvgByStudent = new Map<string, number | null>();
+      for (const row of storedConduct) {
+        const sid = String(row.student_id || "");
+        const grade = row.override_total === null || row.override_total === undefined
+          ? null : Number(row.override_total);
+        // Respecter la règle de la conduite manuelle (les anciennes entrées de
+        // pénalités d'absences ne remplacent pas nécessairement la note finale).
+        const direct = typeof row.reason === "string" && row.reason.startsWith("MC_DIRECT_CONDUCT_V1:");
+        if (sid && direct && grade !== null && Number.isFinite(grade)) {
+          conductAvgByStudent.set(sid, clamp20(grade));
+        }
+      }
+    } else if (conductError) {
+      console.warn("[bulletin] corrections directes de conduite indisponibles", conductError.code);
+    }
+  }
 
   const items = classStudents.map((cs) => {
     const stu = cs.students || {};
@@ -3492,7 +3532,16 @@ async function loadBulletin(
 
           if (!w || w <= 0) continue;
 
-          sum += Number(subAvg) * w;
+          const componentPoints = frenchComponentPoints({
+            subjectName: String(subjectsForReport.find(subject => subject.subject_id === sid)?.subject_name || ""),
+            subjectId: sid,
+            officialCoeff: w,
+            components: compsBySubject.get(sid) || [],
+            grades: per_subject_components,
+            averageSource: ps?.average_source ?? null,
+            bonus: ps?.bonus ?? 0,
+          });
+          sum += componentPoints ?? Number(subAvg) * w;
           sumCoeffLocal += w;
         }
 
@@ -3536,7 +3585,18 @@ async function loadBulletin(
 
         hasAcademicContribution = true;
         hasAcademicContributionForGeneral = true;
-        academicSumGen += Number(subAvg) * coeffSub;
+        // Français : calculer les points avec les sous-matières renseignées,
+        // jamais ajouter la moyenne « Français » une deuxième fois.
+        const preciseFrenchPoints = frenchComponentPoints({
+          subjectName: String(s.subject_name || ""),
+          subjectId: String(s.subject_id),
+          officialCoeff: coeffSub,
+          components: compsBySubject.get(s.subject_id) || [],
+          grades: per_subject_components,
+          averageSource: ps?.average_source ?? null,
+          bonus: ps?.bonus ?? 0,
+        });
+        academicSumGen += preciseFrenchPoints ?? Number(subAvg) * coeffSub;
         academicSumCoeffGen += coeffSub;
       }
 
@@ -3631,7 +3691,7 @@ async function loadBulletin(
       per_group,
       general_avg,
       conduct_avg:
-        conductAvgByStudent && conductAvgByStudent.has(cs.student_id)
+        conductAvgByStudent && conductAvgByStudent.get(cs.student_id) != null
           ? cleanNumber(conductAvgByStudent.get(cs.student_id), 4)
           : null,
       general_bonus: Number(generalBonus.toFixed(2)),

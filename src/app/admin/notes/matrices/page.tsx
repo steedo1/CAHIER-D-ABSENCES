@@ -502,10 +502,10 @@ function LegacyMatricesTrimestriellesPage() {
           };
         })
         .sort((a, b) => {
-          const ar = a.rank ?? 999999;
-          const br = b.rank ?? 999999;
-          if (ar !== br) return ar - br;
-          return a.full_name.localeCompare(b.full_name, "fr", { numeric: true, sensitivity: "base" });
+          // Les élèves sont ordonnés alphabétiquement ; le rang reste informatif.
+          const name = a.full_name.localeCompare(b.full_name, "fr", { numeric: true, sensitivity: "base" });
+          return name || String(a.matricule || "").localeCompare(String(b.matricule || ""), "fr") ||
+            a.student_id.localeCompare(b.student_id);
         });
 
       setSubjects(matrixColumns);
@@ -571,7 +571,10 @@ function LegacyMatricesTrimestriellesPage() {
       .map(escapeHtml)
       .join(" • ");
 
-    const subjectHeaders = subjects.map((s) => `<th>${escapeHtml(s.subject_name || "Matière")}</th>`).join("");
+    const subjectHeaders = subjects.map((s) => {
+      const isComponent = s.subject_id.startsWith("__matrice_component__:");
+      return `<th class="${isComponent ? "component" : ""}">${escapeHtml(s.subject_name || "Matière")}</th>`;
+    }).join("");
     const bodyRows = rows
       .map(
         (row, idx) => `<tr>
@@ -588,34 +591,45 @@ function LegacyMatricesTrimestriellesPage() {
     const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8" />
 <title>Matrice trimestrielle - ${escapeHtml(clsLabel(selectedClass))}</title>
 <style>
-@page { size: ${subjects.length > 13 ? "A3" : "A4"} landscape; margin: 9mm; }
+@page { size: ${subjects.length > 13 ? "A3" : "A4"} landscape; margin: 6mm; }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; color: #0f172a; background: #f8fafc; font-family: Inter, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-body { padding: 12px; }
-.sheet { min-height: calc(210mm - 18mm); background: #fff; border: 1px solid #dbe3ee; border-radius: 18px; padding: 12px; position: relative; }
-.header { display: grid; grid-template-columns: 80px 1fr 230px; gap: 12px; align-items: center; border: 1px solid #cbd5e1; border-radius: 16px; padding: 10px; background: linear-gradient(135deg, rgba(16,185,129,.10), rgba(15,23,42,.02)), white; }
-.logo { width: 68px; height: 68px; border: 1px solid #cbd5e1; border-radius: 14px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: #94a3b8; font-size: 10px; font-weight: 900; }
+body { padding: 8px; }
+.sheet { background: #fff; border: 1px solid #dbe3ee; border-radius: 8px; padding: 8px; position: static; width: 100%; }
+.header { display: grid; grid-template-columns: 58px 1fr 190px; gap: 7px; align-items: center; border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px; background: linear-gradient(135deg, rgba(16,185,129,.10), rgba(15,23,42,.02)), white; break-inside: avoid; }
+.logo { width: 52px; height: 52px; border: 1px solid #cbd5e1; border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: #94a3b8; font-size: 9px; font-weight: 900; }
 .logo img { width: 100%; height: 100%; object-fit: contain; padding: 5px; }
-h1 { margin: 0; font-size: 16px; text-transform: uppercase; }
-.meta { margin-top: 4px; color: #475569; font-size: 9px; line-height: 1.35; }
-.side { border-left: 1px solid #cbd5e1; padding-left: 10px; font-size: 9.5px; color: #334155; }
+h1 { margin: 0; font-size: 13px; text-transform: uppercase; }
+.meta { margin-top: 3px; color: #475569; font-size: 8px; line-height: 1.2; }
+.side { border-left: 1px solid #cbd5e1; padding-left: 7px; font-size: 8.5px; color: #334155; }
 .side strong { color: #0f172a; }
-.title { margin: 10px 0; padding: 8px 10px; border-radius: 12px; background: #0f172a; color: white; font-weight: 950; text-transform: uppercase; letter-spacing: .04em; font-size: 12px; }
+.title { margin: 6px 0; padding: 5px 7px; border-radius: 4px; background: #0f172a; color: white; font-weight: 900; text-transform: uppercase; letter-spacing: .035em; font-size: 10px; break-after: avoid; }
 .table-wrap { overflow: visible; }
-table { width: 100%; border-collapse: collapse; font-size: 8.5px; }
-th { background: #e2e8f0; color: #0f172a; font-size: 7.5px; text-transform: uppercase; }
-th, td { border: 1px solid #cbd5e1; padding: 4px 5px; vertical-align: middle; }
+table { width: 100%; border-collapse: collapse; font-size: 8px; }
+thead { display: table-header-group; }
+tr { break-inside: avoid; page-break-inside: avoid; }
+th { background: #e2e8f0; color: #0f172a; font-size: 7px; text-transform: uppercase; line-height: 1.12; }
+th.component { background: #d9f3e8; }
+th, td { border: 1px solid #cbd5e1; padding: 2px 3px; vertical-align: middle; line-height: 1.14; }
 tr:nth-child(even) td { background: #f8fafc; }
 .num { text-align: right; white-space: nowrap; }
-.student { min-width: 150px; font-weight: 800; }
+.student { min-width: 165px; font-weight: 800; white-space: nowrap; font-size: 7.7px; }
 .strong { font-weight: 950; color: #064e3b; }
-.footer { position: absolute; left: 12px; right: 12px; bottom: 6px; border-top: 1px solid #cbd5e1; padding-top: 5px; text-align: center; font-size: 8.5px; color: #475569; }
+.footer { position: static; margin-top: 7px; border-top: 1px solid #cbd5e1; padding-top: 4px; text-align: center; font-size: 8px; color: #475569; break-inside: avoid; }
 .footer strong { color: #047857; }
-@media print { body { padding: 0; background: white; } .sheet { border: 0; border-radius: 0; min-height: 190mm; } }
+@media print {
+  html, body { margin: 0 !important; padding: 0 !important; background: white !important; }
+  .sheet { border: 0; border-radius: 0; padding: 0; margin: 0; min-height: 0; }
+  .header { padding: 5px; }
+  .title { margin: 4px 0; }
+  th, td { padding: 1.5px 2px; }
+  .student { min-width: 135px; }
+  .footer { margin-top: 5px; }
+}
 </style></head><body>
 <div class="sheet">
   <div class="header"><div class="logo">${logoHtml}</div><div><h1>${escapeHtml(instName)}</h1><div class="meta">${meta || "Document généré par Mon Cahier"}</div></div><div class="side"><div><strong>Classe :</strong> ${escapeHtml(clsLabel(selectedClass))}</div><div><strong>Trimestre :</strong> ${escapeHtml(periodLabel(selectedPeriod))}</div><div><strong>Dates :</strong> ${escapeHtml(formatDateFr(selectedPeriod?.start_date))} - ${escapeHtml(formatDateFr(selectedPeriod?.end_date))}</div></div></div>
-  <div class="title">Matrice des moyennes par matière</div>
+  <div class="title">Matrice des moyennes par matière — liste alphabétique</div>
   <div class="table-wrap"><table><thead><tr><th>N°</th><th>Matricule</th><th>Nom et prénoms</th>${subjectHeaders}<th>Moy. générale</th><th>Rang</th></tr></thead><tbody>${bodyRows}</tbody></table></div>
   <div class="footer"><strong>${BRAND_SITE}</strong> - ${escapeHtml(BRAND_SLOGAN)}</div>
 </div>
@@ -683,7 +697,7 @@ tr:nth-child(even) td { background: #f8fafc; }
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-lg font-black text-slate-950">{clsLabel(selectedClass)} — {periodLabel(selectedPeriod)}</h2>
-            <p className="text-sm text-slate-500">{rows.length} élève(s) • {subjects.length} colonne(s)</p>
+            <p className="text-sm text-slate-500">{rows.length} élève(s) • {subjects.length} colonne(s) • ordre alphabétique (rang conservé)</p>
           </div>
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
             <div className="relative">
