@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { frenchComponentContribution, frenchComponentPoints } from "../src/lib/grades/french-component-points";
 import { computeSubjectAppreciation } from "../src/lib/grades/subject-appreciation";
+import { calculateBulletinVisibleTotals } from "../src/lib/grades/bulletin-visible-totals";
 
 const comps = [
   { id: "composition", subject_id: "fr", coeff_in_subject: 1 },
@@ -80,4 +81,40 @@ test("Chaque sous-matière a la même appréciation officielle qu'une matière",
   assert.equal(computeSubjectAppreciation(7), "Faible");
   assert.equal(computeSubjectAppreciation(0), "Blâme");
   assert.equal(computeSubjectAppreciation(null), ""); // NC => affichage « Non classé » dans le bulletin
+});
+
+test("Bulletin 5e1 : 193 points et coefficient 16 malgré EPS NC", () => {
+  const rows = [
+    { subjectId: "anglais", average: 13, coefficient: 2, points: 26, includeInAverage: true },
+    { subjectId: "francais", average: 28 / 3, coefficient: 3, points: 28, includeInAverage: true },
+    { subjectId: "histoire", average: 12, coefficient: 2, points: 24, includeInAverage: true },
+    { subjectId: "maths", average: 12, coefficient: 3, points: 36, includeInAverage: true },
+    { subjectId: "physique", average: 12, coefficient: 2, points: 24, includeInAverage: true },
+    { subjectId: "svt", average: 12, coefficient: 2, points: 24, includeInAverage: true },
+    { subjectId: "edhc", average: 16, coefficient: 1, points: 16, includeInAverage: true },
+    { subjectId: "eps", average: null, coefficient: 1, points: null, includeInAverage: true },
+    { subjectId: "conduite", average: 15, coefficient: 1, points: 15, includeInAverage: true },
+    { subjectId: "conduite", average: 15, coefficient: 1, points: 15, includeInAverage: true },
+  ];
+  assert.deepEqual(calculateBulletinVisibleTotals(rows), { coefficient: 16, points: 193 });
+});
+
+test("Les sous-matières NC et les vraies notes de zéro sont distinguées", () => {
+  const rows = [
+    { subjectId: "francais", average: 10.5, coefficient: 2, points: 21, includeInAverage: true },
+    { subjectId: "eps", average: null, coefficient: 1, points: null, includeInAverage: true },
+    { subjectId: "test-zero", average: 0, coefficient: 1, points: 0, includeInAverage: true },
+    { subjectId: "matiere-exclue", average: 18, coefficient: 2, points: 36, includeInAverage: false },
+  ];
+  assert.deepEqual(calculateBulletinVisibleTotals(rows), { coefficient: 3, points: 21 });
+  assert.deepEqual(calculateBulletinVisibleTotals(rows.map(r => ({ ...r, average: null }))), { coefficient: 0, points: null });
+});
+
+test("Appréciations automatiques : les moyennes numériques et JSON restent visibles", () => {
+  assert.equal(computeSubjectAppreciation(14), "Bien");
+  assert.equal(computeSubjectAppreciation("14.00"), "Bien");
+  assert.equal(computeSubjectAppreciation("7.00"), "Faible");
+  assert.equal(computeSubjectAppreciation("0.00"), "Blâme");
+  assert.equal(computeSubjectAppreciation(null), "");
+  assert.equal(computeSubjectAppreciation("NC"), "");
 });

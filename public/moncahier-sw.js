@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-10-27-bandwidth-v2";
+const VERSION = "2026-10-30-bulletins-v1";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -153,6 +153,25 @@ self.addEventListener("activate", (event) => {
       // caches. Un déploiement ne peut donc pas retirer l'écran /class hors ligne.
       await migrateLegacyCaches();
       await self.clients.claim();
+
+      // Sur un écran de bulletin, une ancienne interface ne doit pas survivre
+      // au nouveau calcul du serveur. Ne rafraîchir aucun écran d'appel.
+      if (self.navigator?.onLine !== false) {
+        const pages = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        await Promise.allSettled(pages.map(async (page) => {
+          try {
+            const url = new URL(page.url);
+            if (url.origin === self.location.origin &&
+                url.pathname === "/admin/notes/bulletins" &&
+                typeof page.navigate === "function") {
+              await page.navigate(page.url);
+            }
+          } catch {
+            // Une fenêtre fermée ou un téléphone hors réseau ne bloque pas
+            // l'activation du worker.
+          }
+        }));
+      }
 
       // Les appareils qui possèdent déjà une ancienne outbox bénéficient du
       // nouveau rejeu sans devoir créer une nouvelle mutation après la mise à jour.

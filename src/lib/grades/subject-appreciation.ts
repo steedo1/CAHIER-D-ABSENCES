@@ -1,10 +1,12 @@
 /** Appréciation officielle commune aux matières et à leurs sous-matières.
  * Une note manquante ne doit jamais être interprétée comme zéro.
  */
-export function computeSubjectAppreciation(avg: number | null | undefined): string {
-  if (avg === null || avg === undefined) return "";
-  if (!Number.isFinite(avg)) return "";
+export function computeSubjectAppreciation(avg: number | string | null | undefined): string {
+  if (avg === null || avg === undefined || avg === "") return "";
+  // Les moyennes directes peuvent arriver sous forme de chaînes numériques
+  // depuis Postgres/JSON. Une vraie note zéro est bien prise en compte.
   const a = Number(avg);
+  if (!Number.isFinite(a)) return "";
   if (a >= 18) return "Excellent";
   if (a >= 16) return "TRÈS bien";
   if (a >= 14) return "Bien";
