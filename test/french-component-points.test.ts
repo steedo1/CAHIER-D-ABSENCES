@@ -12,7 +12,8 @@ const filled = [
   { subject_id: "fr", component_id: "oral", avg20: 7 },
   { subject_id: "fr", component_id: "orthographe", avg20: 7 },
 ];
-const run = (grades = filled, other: Record<string, unknown> = {}) =>
+const run = (grades: { subject_id: string; component_id: string; avg20: number | null }[] = filled,
+  other: Record<string, unknown> = {}) =>
   frenchComponentPoints({
     subjectName: "Français",
     subjectId: "fr",
