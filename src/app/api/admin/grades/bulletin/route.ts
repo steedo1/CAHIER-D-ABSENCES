@@ -3353,7 +3353,10 @@ async function loadBulletin(
   // Une seule lecture bornée par établissement/classe/période/élèves.
   const conductYear = String(periodMeta.academic_year || classRow.academic_year || "").trim();
   const conductPeriodCode = String(periodMeta.code || "").trim();
-  if (!options.reuseHistoricalFrenchSecondary && dateFrom && dateTo && conductYear && conductPeriodCode && studentIds.length) {
+  // Ne rien ajouter aux bulletins classiques et historiques : la lecture
+  // supplémentaire est requise uniquement pour les moyennes saisies directement.
+  if (!options.reuseHistoricalFrenchSecondary && currentBonusMaps.directSubjectByStudent.size > 0 &&
+      dateFrom && dateTo && conductYear && conductPeriodCode && studentIds.length) {
     const { data: storedConduct, error: conductError } = await srvClient
       .from("conduct_average_overrides")
       .select("student_id, override_total, reason")
