@@ -433,6 +433,7 @@ function LegacyMatricesTrimestriellesPage() {
         from: selectedPeriod.start_date,
         to: selectedPeriod.end_date,
         published: "true",
+        export_light: "1", // Matrice uniquement : aucune génération QR/PNG côté API.
       });
 
       const res = await fetch(`/api/admin/grades/bulletin?${params.toString()}`, { cache: "no-store" });
