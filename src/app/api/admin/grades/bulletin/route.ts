@@ -3353,7 +3353,7 @@ async function loadBulletin(
   // Une seule lecture bornée par établissement/classe/période/élèves.
   const conductYear = String(periodMeta.academic_year || classRow.academic_year || "").trim();
   const conductPeriodCode = String(periodMeta.code || "").trim();
-  if (dateFrom && dateTo && conductYear && conductPeriodCode && studentIds.length) {
+  if (!options.reuseHistoricalFrenchSecondary && dateFrom && dateTo && conductYear && conductPeriodCode && studentIds.length) {
     const { data: storedConduct, error: conductError } = await srvClient
       .from("conduct_average_overrides")
       .select("student_id, override_total, reason")
