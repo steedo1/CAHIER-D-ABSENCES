@@ -14,6 +14,7 @@ import { Printer, RefreshCw, X } from "lucide-react";
 import { createPortal, flushSync } from "react-dom";
 import { bulletinDocumentTitle } from "@/lib/education-bulletins";
 import { computeSubjectAppreciation } from "@/lib/grades/subject-appreciation";
+import { calculateBulletinVisibleTotals } from "@/lib/grades/bulletin-visible-totals";
 import { createBulletinQrDataUrl } from "@/lib/bulletin-qr-image";
 import { prepareBulletinQrPreview } from "@/lib/bulletin-qr-preview-client";
 import {
@@ -1554,49 +1555,27 @@ function StudentBulletinCard({
   const coeffOfSubject = (s: BulletinSubject, coeff: number, cell?: PerSubjectAvg) =>
     frenchOfSubject(s, coeff, cell)?.coefficient ?? coeff;
 
-  const coeffTotal = useMemo(
-    () => subjectsForTable.reduce((acc, s) => {
-      if (s.include_in_average === false && s.subject_id !== conductSubject?.subject_id) return acc;
-      const cell = perSubject.find(x => x.subject_id === s.subject_id);
-      const avg = cell?.avg20;
-      if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return acc;
-      const coeff = coeffOfSubject(s, effectiveCoeffBySubjectId.get(s.subject_id) ?? 0, cell);
-      return Number.isFinite(coeff) && coeff > 0 ? acc + coeff : acc;
-    }, 0),
-    [subjectsForTable, conductSubject, perSubject, effectiveCoeffBySubjectId, subjectCompsBySubject, perSubjectComponentMap]
-  );
-
-  const moyCoeffTotal = useMemo(() => {
-    let sum = 0;
-    let hasAtLeastOneValue = false;
-
-    subjectsForTable.forEach((subject) => {
-      if (
-        subject.include_in_average === false &&
-        subject.subject_id !== conductSubject?.subject_id
-      ) {
-        return;
-      }
-
+  // Une seule source pour le total des coefficients et des points.
+  // Le pied de bulletin doit toujours correspondre aux lignes effectivement
+  // classées (et au total des bilans), même pour la conduite et le français NC.
+  const { coefficient: coeffTotal, points: moyCoeffTotal } = useMemo(() => {
+    const rows = subjectsForTable.map((subject) => {
       const cell = perSubject.find((ps) => ps.subject_id === subject.subject_id);
-      const avg = cell?.avg20;
-      if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) {
-        return;
-      }
-
-      const coeff =
-        effectiveCoeffBySubjectId.get(subject.subject_id) ??
-        (subject.subject_id === conductSubject?.subject_id
-          ? 1
-          : Number(subject.coeff_bulletin ?? 0));
-
-      if (!Number.isFinite(coeff) || coeff <= 0) return;
-
-      sum += pointsOfSubject(subject, Number(avg), coeff, cell);
-      hasAtLeastOneValue = true;
+      const avg = cell?.avg20 ?? null;
+      const coeff = effectiveCoeffBySubjectId.get(subject.subject_id) ??
+        (subject.subject_id === conductSubject?.subject_id ? 1 : Number(subject.coeff_bulletin ?? 0));
+      const available = avg !== null && avg !== undefined && avg !== "" &&
+        Number.isFinite(Number(avg));
+      return {
+        subjectId: subject.subject_id,
+        average: avg,
+        coefficient: coeffOfSubject(subject, coeff, cell),
+        points: available ? pointsOfSubject(subject, Number(avg), coeff, cell) : null,
+        includeInAverage: subject.include_in_average !== false ||
+          subject.subject_id === conductSubject?.subject_id,
+      };
     });
-
-    return hasAtLeastOneValue ? round2(sum) : null;
+    return calculateBulletinVisibleTotals(rows);
   }, [subjectsForTable, conductSubject, effectiveCoeffBySubjectId, perSubject, perSubjectComponentMap, subjectCompsBySubject]);
 
   const computeDisplayedGroupStats = (
@@ -1887,8 +1866,10 @@ function StudentBulletinCard({
               <td className="bdr px-1 py-[1px] text-center">
                 {cHasAvg && cRank != null ? `${cRank}e` : "NC"}
               </td>
-              <td className="bdr px-1 py-[1px]">
-                {cHasAvg ? computeSubjectAppreciation(cAvg) : "Non classé"}
+              <td className="bdr px-1 py-[1px] submatter-appreciation">
+                <span className="font-medium text-slate-900">
+                  {cHasAvg ? computeSubjectAppreciation(Number(cAvg)) : "Non classé"}
+                </span>
               </td>
               <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
               <td className="bdr p-0 align-middle sig-cell">
@@ -3147,6 +3128,13 @@ export default function BulletinsPage() {
           color: var(--bulletin-navy);
           border-top: 1.5px solid var(--bulletin-navy-2);
           border-bottom: 1.5px solid var(--bulletin-navy-2);
+        }
+
+        .discipline-table .submatter-appreciation,
+        .discipline-table .submatter-appreciation > span {
+          color: #0f172a !important;
+          opacity: 1 !important;
+          visibility: visible !important;
         }
 
         .discipline-table tbody tr.totals-row {
