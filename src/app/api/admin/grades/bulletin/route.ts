@@ -3529,7 +3529,16 @@ async function loadBulletin(
 
           if (!w || w <= 0) continue;
 
-          sum += Number(subAvg) * w;
+          const componentPoints = frenchComponentPoints({
+            subjectName: String(subjectsForReport.find(subject => subject.subject_id === sid)?.subject_name || ""),
+            subjectId: sid,
+            officialCoeff: w,
+            components: compsBySubject.get(sid) || [],
+            grades: per_subject_components,
+            averageSource: ps?.average_source ?? null,
+            bonus: ps?.bonus ?? 0,
+          });
+          sum += componentPoints ?? Number(subAvg) * w;
           sumCoeffLocal += w;
         }
 
