@@ -1564,8 +1564,7 @@ function StudentBulletinCard({
       const avg = cell?.avg20 ?? null;
       const coeff = effectiveCoeffBySubjectId.get(subject.subject_id) ??
         (subject.subject_id === conductSubject?.subject_id ? 1 : Number(subject.coeff_bulletin ?? 0));
-      const available = avg !== null && avg !== undefined && avg !== "" &&
-        Number.isFinite(Number(avg));
+      const available = avg !== null && avg !== undefined && Number.isFinite(Number(avg));
       return {
         subjectId: subject.subject_id,
         average: avg,
