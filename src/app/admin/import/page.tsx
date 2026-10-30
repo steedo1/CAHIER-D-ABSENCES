@@ -1,6 +1,7 @@
 "use client";
 
 import type React from "react";
+import { compressStudentPhoto } from "@/lib/student-photo-compression";
 import readXlsxFile from "read-excel-file/browser";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EDUCATION_TYPE_OPTIONS, type EducationType } from "@/lib/education-organization";
@@ -806,39 +807,40 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
     setPhotoMsg(null);
     setPhotoLoading(true);
 
+    let updated = 0;
+    let failed = 0;
+    const results: any[] = [];
     try {
-      const fd = new FormData();
-      fd.set("action", "commit");
-      fd.set("match_mode", matchMode);
-      for (const f of photoFiles) fd.append("files", f);
-
-      const r = await fetch("/api/admin/students/photos/import", {
-        method: "POST",
-        body: fd,
-      });
-
-      if (r.status === 401) {
-        setAuthErr(true);
-        setPhotoLoading(false);
-        return;
+      // Ten photos per request bounds multipart memory on the small Render
+      // instance. Decode/compress sequentially to protect mobile browser RAM.
+      for (let offset = 0; offset < photoFiles.length; offset += 10) {
+        const fd = new FormData();
+        fd.set("action", "commit");
+        fd.set("match_mode", matchMode);
+        for (const file of photoFiles.slice(offset, offset + 10)) {
+          try {
+            fd.append("files", await compressStudentPhoto(file));
+          } catch (error: any) {
+            failed++;
+            results.push({ file_name: file.name, ok: false, error: error?.message || "Photo illisible" });
+          }
+        }
+        if (fd.has("files")) {
+          const r = await fetch("/api/admin/students/photos/import", { method: "POST", body: fd });
+          if (r.status === 401) { setAuthErr(true); throw new Error("Session expirée"); }
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+          updated += j?.updated ?? 0;
+          failed += j?.failed ?? 0;
+          results.push(...(j?.results || []));
+        }
+        setPhotoPreview([...results]);
+        setPhotoMsg(`Import : ${Math.min(offset + 10, photoFiles.length)}/${photoFiles.length} photos traitées`);
       }
-
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        setPhotoMsg(j?.error || `HTTP ${r.status}`);
-        setPhotoLoading(false);
-        return;
-      }
-
-      const updated = j?.updated ?? 0;
-      const failed = j?.failed ?? 0;
-      setPhotoMsg(
-        `Upload terminé : ${updated} photo(s) associée(s) ✅ | ${failed} échec(s)`,
-      );
-
-      setPhotoPreview(j?.results || null);
+      setPhotoMsg(`Upload terminé : ${updated} photo(s) associée(s) ✅ | ${failed} échec(s)`);
     } catch (e: any) {
-      setPhotoMsg(e?.message || "Erreur réseau");
+      setPhotoPreview(results);
+      setPhotoMsg(`${updated} photo(s) déjà associée(s). Import interrompu : ${e?.message || "Erreur réseau"}`);
     } finally {
       setPhotoLoading(false);
     }

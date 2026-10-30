@@ -117,6 +117,9 @@ export default function RelayCapabilityProvider({ children }: { children: ReactN
   }, [loading, refresh, session?.user?.id]);
 
   useEffect(() => {
+    // Keep the initial institution lookup; a disabled relay has no capability
+    // to refresh on every focus/online event. Authorization remains in APIs.
+    if (RELAY_LOCAL_DISABLED) return;
     const onOnline = () => void refresh();
     const onFocus = () => {
       if (document.visibilityState === "visible") void refresh();

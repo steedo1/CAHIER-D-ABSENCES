@@ -34,6 +34,34 @@ test("20 contrôles du même client partagent une vérification sans setSession"
   } finally { if(saved===undefined)delete process.env.SUPABASE_URL;else process.env.SUPABASE_URL=saved; if(savedKey===undefined)delete process.env.SUPABASE_ANON_KEY;else process.env.SUPABASE_ANON_KEY=savedKey; }
 });
 
+test("route handlers reuse a request client but never another request cookie store", async () => {
+  let store = jar([]), clients = 0, checks = 0;
+  const savedUrl = process.env.SUPABASE_URL, savedKey = process.env.SUPABASE_ANON_KEY;
+  process.env.SUPABASE_URL = "https://project.supabase.co"; process.env.SUPABASE_ANON_KEY = "test";
+  try {
+    const server = load("src/lib/supabase-server.ts", {
+      react: { cache: f => f }, // React.cache does not cache in Route Handlers.
+      "next/headers": { cookies: async () => store },
+      "./auth/session-cookies": cookieHelpers,
+      "@supabase/ssr": { createServerClient: () => {
+        clients++;
+        return { auth: { getUser: async () => { checks++; return { data: { user }, error: null }; }, onAuthStateChange() {} } };
+      } },
+    });
+    const first = await Promise.all(Array.from({ length: 20 }, () => server.getSupabaseServerClient()));
+    assert.equal(clients, 1); assert.ok(first.every(client => client === first[0]));
+    await Promise.all(first.map(client => server.getVerifiedServerUser(client))); assert.equal(checks, 1);
+    store = jar([]);
+    const other = await server.getSupabaseServerClient();
+    assert.notEqual(other, first[0]); assert.equal(clients, 2);
+    await server.getVerifiedServerUser(other); assert.equal(checks, 2);
+    assert.notEqual(await server.getSupabaseActionClient(), other, "writable cookie mode remains separate");
+  } finally {
+    if (savedUrl === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = savedUrl;
+    if (savedKey === undefined) delete process.env.SUPABASE_ANON_KEY; else process.env.SUPABASE_ANON_KEY = savedKey;
+  }
+});
+
 test("le SDK réel renouvelle une session expirée, persiste les cookies et ne renouvelle plus à la navigation suivante", async () => {
   const savedFetch=globalThis.fetch, savedUrl=process.env.SUPABASE_URL, savedKey=process.env.SUPABASE_ANON_KEY;
   const counts={token:0,user:0}; const nextSession=session(Math.floor(Date.now()/1000)+3600);
