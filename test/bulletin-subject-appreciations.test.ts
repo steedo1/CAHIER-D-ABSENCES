@@ -22,7 +22,7 @@ test("no average is not converted to a failing appreciation", () => {
 test("bulletin uses the same appreciation helper for disciplines and sub-subjects", () => {
   const source = readFileSync("src/app/admin/notes/bulletins/page.tsx", "utf8");
   assert.match(source, /hasAvg \? computeSubjectAppreciation\(avg\) : "Non classé"/);
-  assert.match(source, /cHasAvg \? computeSubjectAppreciation\(cAvg\) : "Non classé"/);
+  assert.match(source, /cHasAvg \? computeSubjectAppreciation\(Number\(cAvg\)\) : "Non classé"/);
   assert.match(source, /\{cHasAvg \? formatNumber\(cAvg\) : "NC"\}/);
   assert.match(source, /\{cHasAvg && cRank != null \? \x60\$\{cRank\}e\x60 : "NC"\}/);
 });
