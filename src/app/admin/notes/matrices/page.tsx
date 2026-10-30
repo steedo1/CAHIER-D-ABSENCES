@@ -65,6 +65,20 @@ type BulletinPerSubject = {
   is_nc?: boolean | null;
 };
 
+type BulletinSubjectComponent = {
+  id: string;
+  subject_id: string;
+  label: string;
+  short_label?: string | null;
+  order_index?: number | null;
+};
+
+type BulletinPerSubjectComponent = {
+  subject_id: string;
+  component_id: string;
+  avg20: number | null;
+};
+
 type BulletinItem = {
   student_id: string;
   full_name: string;
@@ -75,6 +89,8 @@ type BulletinItem = {
   general_avg_status?: string | null;
   admin_forced_nc?: boolean | null;
   per_subject?: BulletinPerSubject[];
+  per_subject_components?: BulletinPerSubjectComponent[];
+  conduct_avg?: number | null;
 };
 
 type BulletinResponse = {
@@ -82,6 +98,7 @@ type BulletinResponse = {
   class?: { id: string; label?: string | null; academic_year?: string | null; level?: string | null };
   period?: { from?: string | null; to?: string | null; label?: string | null; short_label?: string | null; code?: string | null };
   subjects?: BulletinSubject[];
+  subject_components?: BulletinSubjectComponent[];
   items?: BulletinItem[];
 };
 
@@ -93,6 +110,11 @@ type MatrixRow = {
   general_avg: number | null;
   rank: number | null;
 };
+
+const CONDUCT_COLUMN_KEY = "__matrice_conduite__";
+const componentColumnKey = (id: string) => `__matrice_component__:${id}`;
+const isConductSubject = (label: string | null | undefined) =>
+  /\b(conduite|conduct)\b/i.test(String(label || ""));
 
 const BRAND_SITE = "www.mon-cahier.com";
 const BRAND_SLOGAN = "La plateforme idéale pour une école connectée, l’école du futur.";
@@ -411,6 +433,7 @@ function LegacyMatricesTrimestriellesPage() {
         from: selectedPeriod.start_date,
         to: selectedPeriod.end_date,
         published: "true",
+        export_light: "1", // Matrice uniquement : aucune génération QR/PNG côté API.
       });
 
       const res = await fetch(`/api/admin/grades/bulletin?${params.toString()}`, { cache: "no-store" });
@@ -418,14 +441,55 @@ function LegacyMatricesTrimestriellesPage() {
       if (!res.ok || !json?.ok) throw new Error((json as any)?.error || `Erreur ${res.status}`);
 
       const subjectList = (json.subjects || []).filter((s) => s.subject_id);
+      const componentsBySubject = new Map<string, BulletinSubjectComponent[]>();
+      for (const component of json.subject_components || []) {
+        if (!component.id || !subjectList.some((subject) => subject.subject_id === component.subject_id)) continue;
+        const list = componentsBySubject.get(component.subject_id) || [];
+        list.push(component);
+        componentsBySubject.set(component.subject_id, list);
+      }
+      for (const list of componentsBySubject.values()) {
+        list.sort((a, b) => Number(a.order_index ?? 0) - Number(b.order_index ?? 0));
+      }
+
+      // Conserver la colonne Français et insérer immédiatement après ses sous-matières.
+      // Les clés préfixées sont purement visuelles et ne créent aucune matière en base.
+      const matrixColumns: BulletinSubject[] = subjectList.flatMap((subject) => [
+        subject,
+        ...(componentsBySubject.get(subject.subject_id) || []).map((component) => ({
+          subject_id: componentColumnKey(component.id),
+          subject_name: `↳ ${component.label || component.short_label || "Sous-matière"}`,
+          include_in_average: false,
+        })),
+      ]);
+      const existingConductSubject = subjectList.find((subject) => isConductSubject(subject.subject_name));
+      const classLevel = String(selectedClass?.level || json.class?.level || "");
+      const isSecondary = /6[eè]|5[eè]|4[eè]|3[eè]|6eme|5eme|4eme|3eme|seconde|2nde|premi[eè]re|1[eè]re|terminale|tle/i.test(classLevel);
+      const showSeparateConduct = !existingConductSubject &&
+        (isSecondary || (json.items || []).some((item) => item.conduct_avg !== null && item.conduct_avg !== undefined));
+      if (showSeparateConduct) {
+        matrixColumns.push({ subject_id: CONDUCT_COLUMN_KEY, subject_name: "Conduite", coeff_bulletin: 1 });
+      }
+
       const nextRows = (json.items || [])
         .map((item) => {
           const averages: Record<string, number | null> = {};
-          for (const subject of subjectList) averages[subject.subject_id] = null;
+          for (const column of matrixColumns) averages[column.subject_id] = null;
 
           for (const cell of item.per_subject || []) {
             if (!cell.subject_id) continue;
-            averages[cell.subject_id] = cell.is_nc === true || cell.has_grade === false ? null : cleanNumber(cell.avg20);
+            averages[cell.subject_id] = cell.is_nc === true || cell.has_grade === false || cell.avg20 == null
+              ? null : cleanNumber(cell.avg20);
+          }
+          for (const cell of item.per_subject_components || []) {
+            if (!cell.component_id) continue;
+            const key = componentColumnKey(cell.component_id);
+            if (!(key in averages)) continue;
+            averages[key] = cell.avg20 == null ? null : cleanNumber(cell.avg20);
+          }
+          if (item.conduct_avg !== null && item.conduct_avg !== undefined) {
+            const conductColumn = existingConductSubject?.subject_id || (showSeparateConduct ? CONDUCT_COLUMN_KEY : null);
+            if (conductColumn) averages[conductColumn] = cleanNumber(item.conduct_avg);
           }
 
           return {
@@ -444,7 +508,7 @@ function LegacyMatricesTrimestriellesPage() {
           return a.full_name.localeCompare(b.full_name, "fr", { numeric: true, sensitivity: "base" });
         });
 
-      setSubjects(subjectList);
+      setSubjects(matrixColumns);
       setRows(nextRows);
     } catch (e: any) {
       setErrorMsg(e?.message || "Impossible de charger la matrice.");
@@ -524,7 +588,7 @@ function LegacyMatricesTrimestriellesPage() {
     const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8" />
 <title>Matrice trimestrielle - ${escapeHtml(clsLabel(selectedClass))}</title>
 <style>
-@page { size: A4 landscape; margin: 9mm; }
+@page { size: ${subjects.length > 13 ? "A3" : "A4"} landscape; margin: 9mm; }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; color: #0f172a; background: #f8fafc; font-family: Inter, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 body { padding: 12px; }
@@ -619,7 +683,7 @@ tr:nth-child(even) td { background: #f8fafc; }
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-lg font-black text-slate-950">{clsLabel(selectedClass)} — {periodLabel(selectedPeriod)}</h2>
-            <p className="text-sm text-slate-500">{rows.length} élève(s) • {subjects.length} matière(s)</p>
+            <p className="text-sm text-slate-500">{rows.length} élève(s) • {subjects.length} colonne(s)</p>
           </div>
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
             <div className="relative">
