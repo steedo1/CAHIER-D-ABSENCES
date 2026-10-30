@@ -150,6 +150,7 @@ test("relay retains normal heartbeat, pauses outage retries and permits explicit
 });
 test("class institution metadata queries match the real schema and keep relay disabled without provisioning", async () => {
   const api = load("src/lib/class-device-access-server.ts", {
+    "@/lib/relay-capability": { RELAY_LOCAL_DISABLED: true },
     "@/lib/education-attendance": { resolveAttendanceEducationContext: () => ({}) },
     "@/lib/attendance-presence-server": { createRelayAttendanceAccessToken: () => { throw new Error("must not issue token"); } },
     "@/lib/relay-endpoints": { relayEndpointCandidates: () => [] },

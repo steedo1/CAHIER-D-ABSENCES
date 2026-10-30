@@ -1,6 +1,7 @@
 import { resolveAttendanceEducationContext } from "@/lib/education-attendance";
 import { createRelayAttendanceAccessToken } from "@/lib/attendance-presence-server";
 import { relayEndpointCandidates } from "@/lib/relay-endpoints";
+import { RELAY_LOCAL_DISABLED } from "@/lib/relay-capability";
 
 export type ClassDeviceSourceRow = {
   id?: string | null;
@@ -206,7 +207,7 @@ export async function enrichClassDeviceAccess(input: {
         )
         .in("institution_id", institutionIds),
     ),
-    readOptionalQuery<RelayDeviceRow>(() =>
+    RELAY_LOCAL_DISABLED ? { data: [] as RelayDeviceRow[], error: null } : readOptionalQuery<RelayDeviceRow>(() =>
       input.service
         .from("relay_sync_devices")
         .select("institution_id,observed_lan_urls,last_seen_at,is_active,revoked_at")

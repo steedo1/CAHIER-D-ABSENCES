@@ -11,7 +11,7 @@ const settle = async () => {
   await new Promise(resolve => setImmediate(resolve));
 };
 
-async function preparationFixture(role, visibility = "visible") {
+async function preparationFixture(role, visibility = "visible", pathname = "/class") {
   const effects = [], calls = [], storage = new Map(), prepared = [];
   const documentListeners = new Map(), windowListeners = new Map();
   let clock = 1_000_000, interval;
@@ -34,7 +34,7 @@ async function preparationFixture(role, visibility = "visible") {
   const context = vm.createContext({
     module, exports: module.exports,
     require: name => { assert.ok(name in mocks, `unexpected dependency ${name}`); return mocks[name]; },
-    window: { setTimeout, clearTimeout, setInterval: callback => { interval = callback; return 1; }, clearInterval() {}, addEventListener: (name, callback) => windowListeners.set(name, callback), removeEventListener() {}, localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) } },
+    window: { location: { pathname }, setTimeout, clearTimeout, setInterval: callback => { interval = callback; return 1; }, clearInterval() {}, addEventListener: (name, callback) => windowListeners.set(name, callback), removeEventListener() {}, localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) } },
     navigator: {}, document,
     Date: class extends Date { static now() { return clock; } },
     AbortController, queueMicrotask,
@@ -170,3 +170,13 @@ test("updating the worker preserves verified immutable icons but refreshes unver
   await f.precache();
   assert.equal(f.calls.filter(path => path === "/icons/icon-192.v2.png").length, 2, "an invalid cached response must be fetched again");
 });
+
+for (const pathname of ["/admin/dashboard", "/admin/absences/appels", "/parent", "/super", "/founder"]) {
+  test(`cloud-only ${pathname}: eight visible hours do not query roles or prepare attendance`, async () => {
+    const f = await preparationFixture("admin", "visible", pathname);
+    for (let minute = 0; minute < 480; minute++) await f.tick();
+    await f.event("focus"); await f.event("online");
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.prepared.length, 0);
+  });
+}

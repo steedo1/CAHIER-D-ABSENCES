@@ -35,10 +35,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Resource usage and authorization isolation
+        run: node --import tsx --test test/production-consumption.test.mjs test/supabase-consumption-regression.test.mjs test/supabase-server-auth-dedupe.test.mjs test/supabase-reference-fetch.test.mjs test/background-attendance-bandwidth.test.mjs test/class-device-my-classes.test.ts test/class-device-preparation-revision.test.mjs
       - run: npm run test:primary-events
       - run: npm run test:desps
       - run: npm run test:mon-cahier-ai
       - run: npm run test:multicycle
       - run: npx playwright install --with-deps chromium
+      - run: node --test test/student-photo-compression-browser.test.mjs
       - run: npm run test:primary-events:browser
       - run: npm run build

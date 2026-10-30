@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
+import { startVisiblePoll } from "@/lib/visible-poll";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import { isFileCorrespondentPathAllowed } from "@/lib/auth/file-correspondent";
 import { isBilingualSchool } from "@/lib/school-student-programs";
@@ -888,104 +889,36 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
     if (role !== "admin" && role !== "super_admin") return;
     let cancelled = false;
 
-    async function loadPendingAbsenceCount() {
-      try {
-        const res = await fetch(
-          "/api/admin/absence-requests?status=pending&count_only=1",
-          { cache: "no-store" },
-        );
-
-        if (!res.ok) {
-          if (!cancelled) setPendingAbsenceCount(0);
-          return;
-        }
-
-        const json = (await res
-          .json()
-          .catch(() => null)) as PendingAbsenceCountResponse | null;
-
-        if (!json || !json.ok) {
-          if (!cancelled) setPendingAbsenceCount(0);
-          return;
-        }
-
-        const count =
-          typeof json.meta?.count === "number"
-            ? json.meta.count
-            : Array.isArray(json.items)
-              ? json.items.length
-              : 0;
-
-        if (!cancelled) {
-          setPendingAbsenceCount(count);
-        }
-      } catch {
-        if (!cancelled) setPendingAbsenceCount(0);
-      }
+    async function loadPendingAbsenceCount(signal: AbortSignal) {
+      const res = await fetch("/api/admin/absence-requests?status=pending&count_only=1", { cache: "no-store", signal });
+      if (!res.ok) throw new Error(`counter_http_${res.status}`);
+      const json = await res.json() as PendingAbsenceCountResponse;
+      if (!json?.ok) throw new Error("counter_invalid_response");
+      const count = typeof json.meta?.count === "number" ? json.meta.count
+        : Array.isArray(json.items) ? json.items.length : 0;
+      if (!cancelled) setPendingAbsenceCount(count);
     }
 
-    void loadPendingAbsenceCount();
-
-    const timer = window.setInterval(() => {
-      void loadPendingAbsenceCount();
-    }, 120_000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+    const stop = startVisiblePoll(loadPendingAbsenceCount);
+    return () => { cancelled = true; stop(); };
   }, [role]);
 
   React.useEffect(() => {
     if (directSchoolGradePublication || (role !== "admin" && role !== "super_admin" && role !== "educator")) return;
     let cancelled = false;
 
-    async function loadPendingGradePublicationCount() {
-      try {
-        const res = await fetch(
-          "/api/admin/grades/publication-requests?status=submitted&count_only=1",
-          { cache: "no-store" },
-        );
-
-        if (!res.ok) {
-          if (!cancelled) setPendingGradePublicationCount(0);
-          return;
-        }
-
-        const json = (await res
-          .json()
-          .catch(() => null)) as PendingGradePublicationCountResponse | null;
-
-        if (!json || !json.ok) {
-          if (!cancelled) setPendingGradePublicationCount(0);
-          return;
-        }
-
-        const count =
-          typeof json.meta?.count === "number"
-            ? json.meta.count
-            : Array.isArray(json.items)
-              ? json.items.length
-              : 0;
-
-        if (!cancelled) {
-          setPendingGradePublicationCount(count);
-        }
-      } catch {
-        if (!cancelled) setPendingGradePublicationCount(0);
-      }
+    async function loadPendingGradePublicationCount(signal: AbortSignal) {
+      const res = await fetch("/api/admin/grades/publication-requests?status=submitted&count_only=1", { cache: "no-store", signal });
+      if (!res.ok) throw new Error(`counter_http_${res.status}`);
+      const json = await res.json() as PendingGradePublicationCountResponse;
+      if (!json?.ok) throw new Error("counter_invalid_response");
+      const count = typeof json.meta?.count === "number" ? json.meta.count
+        : Array.isArray(json.items) ? json.items.length : 0;
+      if (!cancelled) setPendingGradePublicationCount(count);
     }
 
-    void loadPendingGradePublicationCount();
-
-    const timer = window.setInterval(() => {
-      void loadPendingGradePublicationCount();
-    }, 120_000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+    const stop = startVisiblePoll(loadPendingGradePublicationCount);
+    return () => { cancelled = true; stop(); };
   }, [role, directSchoolGradePublication]);
 
   const isEducator = role === "educator";

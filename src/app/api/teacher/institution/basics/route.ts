@@ -4,6 +4,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { createRelayAttendanceAccessToken } from "@/lib/attendance-presence-server";
 import { relayEndpointCandidates } from "@/lib/relay-endpoints";
+import { RELAY_LOCAL_DISABLED } from "@/lib/relay-capability";
 import { readAttendanceScheduleRevision, readAttendancePreparationSnapshot, attendancePreparationSnapshotsMatch } from "@/lib/attendance-schedule-revision-server";
 
 export const runtime = "nodejs";
@@ -97,7 +98,7 @@ export async function GET(request: Request) {
       .select("role")
       .eq("profile_id", me.user.id)
       .eq("institution_id", instId),
-    service
+    RELAY_LOCAL_DISABLED ? { data: [], error: null } : service
       .from("relay_sync_devices")
       .select("observed_lan_urls,last_seen_at")
       .eq("institution_id", instId)

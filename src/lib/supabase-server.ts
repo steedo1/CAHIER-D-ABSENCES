@@ -9,11 +9,19 @@ export function getVerifiedServerUser(client: SupabaseClient) {
   return client.auth.getUser();
 }
 
+// React.cache only deduplicates Server Component renders, not Route Handlers.
+// Next's cookie store belongs to one request; a WeakMap cannot retain sessions
+// after that request or share an authenticated client with another request.
+const requestClients = new WeakMap<object, Map<boolean, SupabaseClient>>();
 const createRequestClient = cache(async (writable: boolean) => {
   const url = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
   const key = (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
   if (!url || !key) throw new Error("Config Supabase serveur manquante.");
   const jar = await cookies();
+  let clients = requestClients.get(jar);
+  if (!clients) { clients = new Map(); requestClients.set(jar, clients); }
+  const existing = clients.get(writable);
+  if (existing) return existing;
   const client = createServerClient(url, key, {
     auth: { storageKey: SESSION_STORAGE_KEY },
     cookies: {
@@ -35,6 +43,7 @@ const createRequestClient = cache(async (writable: boolean) => {
   client.auth.onAuthStateChange((event) => {
     if (event === "SIGNED_OUT" || event === "USER_UPDATED" || event === "SIGNED_IN") verified = undefined;
   });
+  clients.set(writable, client);
   return client;
 });
 

@@ -298,6 +298,7 @@ for (const [name, preparing, changed, status] of [
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => service },
     "@/lib/attendance-presence-server": { createRelayAttendanceAccessToken: () => null },
     "@/lib/relay-endpoints": { relayEndpointCandidates: () => [] },
+    "@/lib/relay-capability": { RELAY_LOCAL_DISABLED: true },
     "@/lib/attendance-schedule-revision-server": serverRevisions,
   });
   const response = await api.GET(new Request(`https://fixture.invalid/api/teacher/institution/basics${preparing ? "?offline_preparation=v1" : ""}`));

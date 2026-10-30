@@ -141,6 +141,10 @@ export default function BackgroundAttendancePreparation() {
 
     const run = (force = false) => {
       if (disposed || loadingRef.current) return;
+      // These screens use the Cloud only. Do not even fetch their role every
+      // minute to discover that there is no attendance package to prepare.
+      // The independent durable delivery worker must still flush pending work.
+      if (/^\/(admin|super|founder|parent)(\/|$)/.test(window.location.pathname)) return;
       // Une préparation préventive peut attendre que l'utilisateur revienne.
       // Ne pas consommer le throttle pendant cette pause : visibilitychange
       // doit pouvoir vérifier immédiatement la révision au retour à l'écran.

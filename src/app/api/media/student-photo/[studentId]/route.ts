@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { readStudentPhoto } from "@/lib/student-photo-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -154,11 +155,16 @@ export async function GET(
     return jsonNoStore({ error: "forbidden" }, 403);
   }
 
-  const { data: file, error: downloadError } = await srv.storage
-    .from(BUCKET)
-    .download(photoPath);
+  const version = String(student.photo_updated_at || "");
+  const file = await readStudentPhoto(
+    version ? JSON.stringify([institutionId, studentId, photoPath, version]) : null,
+    async () => {
+      const { data, error } = await srv.storage.from(BUCKET).download(photoPath);
+      return error ? null : data;
+    },
+  );
 
-  if (downloadError || !file) {
+  if (!file) {
     return jsonNoStore({ error: "photo_not_found" }, 404);
   }
 

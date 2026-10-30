@@ -3,12 +3,28 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   ClassDeviceAccessError,
-  enrichClassDeviceAccess,
+  enrichClassDeviceAccess as cloudOnlyClassAccess,
   type ClassDeviceMetadataReader,
 } from "../src/lib/class-device-access-server";
 import {
   resolveClassDevicePreparationAccess,
 } from "../src/lib/offline-readiness";
+
+// Exercise the retained legacy branch with its capability flag enabled, while
+// separately asserting the real product flag makes zero relay queries.
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import ts from "typescript";
+const testRequire = createRequire(import.meta.url);
+const legacy = { exports: {} as any };
+new Function("module", "exports", "require", ts.transpileModule(
+  readFileSync(new URL("../src/lib/class-device-access-server.ts", import.meta.url), "utf8"),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
+).outputText)(legacy, legacy.exports, (name: string) => name === "@/lib/relay-capability"
+  ? { RELAY_LOCAL_DISABLED: false }
+  : testRequire(name.startsWith("@/") ? `../src/${name.slice(2)}.ts` : name));
+const enrichClassDeviceAccess: typeof cloudOnlyClassAccess = legacy.exports.enrichClassDeviceAccess;
+const LegacyAccessError = legacy.exports.ClassDeviceAccessError;
 
 const SECRET = "s".repeat(64);
 
@@ -299,9 +315,9 @@ test("erreur de lecture de politique devient une erreur explicite", async () => 
       }),
     }),
     (error: unknown) =>
-      error instanceof ClassDeviceAccessError &&
-      error.status === 503 &&
-      error.code === "class_relay_policy_unavailable",
+      error instanceof LegacyAccessError &&
+      (error as ClassDeviceAccessError).status === 503 &&
+      (error as ClassDeviceAccessError).code === "class_relay_policy_unavailable",
   );
 });
 
@@ -350,9 +366,9 @@ test("échec de création du jeton est explicite sans secret ni signature", asyn
       },
     }),
     (error: unknown) => {
-      assert.ok(error instanceof ClassDeviceAccessError);
-      assert.equal(error.code, "class_relay_token_creation_failed");
-      assert.doesNotMatch(error.message, /do-not-expose|s{32,}/);
+      assert.ok(error instanceof LegacyAccessError);
+      assert.equal((error as ClassDeviceAccessError).code, "class_relay_token_creation_failed");
+      assert.doesNotMatch((error as ClassDeviceAccessError).message, /do-not-expose|s{32,}/);
       return true;
     },
   );
@@ -507,4 +523,15 @@ test("la préparation actualise selectedClass avec la réponse fraîche", async 
   assert.match(page, /setClasses\(fresh\.classes\)/);
   assert.match(readiness, /relayPolicy\.relay_access_token/);
   assert.match(readiness, /version:\s*5/);
+});
+
+test("production cloud-only ignores even provisioned relays without a database read", async () => {
+  const service = fakeService({ policies: [policy("school-a")] });
+  const from = service.from.bind(service);
+  service.from = (table) => { assert.notEqual(table, "relay_sync_devices"); return from(table); };
+  const result = await cloudOnlyClassAccess({ items: [classRow("class-a", "school-a")], actorProfileId: "device", service });
+  const presence = (result.items[0] as any).attendance_presence;
+  assert.equal(presence.allow_local_relay, false);
+  assert.equal(presence.relay_access_token, null);
+  assert.equal(result.items[0].institution_id, "school-a");
 });
