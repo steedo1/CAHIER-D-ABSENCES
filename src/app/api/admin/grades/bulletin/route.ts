@@ -4102,7 +4102,9 @@ async function loadBulletin(
           // sous-matière NC. Les corrections directes de composantes sont lues
           // depuis les données déjà chargées pour cette période.
           const french = frenchComponentContribution({
-            subjectName: String(s.subject_name || ""),
+            // Le type allégé de l'annuel ne porte que l'ID ; reprendre le
+            // libellé depuis le référentiel du bulletin, déjà chargé.
+            subjectName: String(subjectsForReport.find(sub => sub.subject_id === s.subject_id)?.subject_name || ""),
             subjectId: String(s.subject_id),
             officialCoeff: coeffSub,
             components: comps,
