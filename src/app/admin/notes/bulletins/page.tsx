@@ -1,7 +1,7 @@
 // src/app/admin/notes/bulletins/page.tsx
 "use client";
 
-import { frenchComponentPoints } from "@/lib/grades/french-component-points";
+import { frenchComponentContribution } from "@/lib/grades/french-component-points";
 
 import React, {
   useEffect,
@@ -1531,11 +1531,11 @@ function StudentBulletinCard({
     return map;
   }, [subjectGroups, subjectsForTable, conductSubject]);
 
-  // Source unique pour les points : la moyenne française reste visible, mais
-  // les points utilisent les notes des sous-matières si elles sont complètes.
-  const pointsOfSubject = (s: BulletinSubject, value: number, coeff: number, cell?: PerSubjectAvg) => {
+  // Chaque sous-matière de français a son coefficient propre ; une rubrique NC
+  // ne contribue ni aux points ni au coefficient, mais un vrai 0/20 reste noté.
+  const frenchOfSubject = (s: BulletinSubject, coeff: number, cell?: PerSubjectAvg) => {
     const comps = subjectCompsBySubject.get(s.subject_id) || [];
-    const precise = frenchComponentPoints({
+    return frenchComponentContribution({
       subjectName: s.subject_name,
       subjectId: s.subject_id,
       officialCoeff: coeff,
@@ -1548,18 +1548,22 @@ function StudentBulletinCard({
       bonus: cell?.bonus ?? 0,
       averageSource: cell?.average_source ?? null,
     });
-    return precise ?? value * coeff;
   };
+  const pointsOfSubject = (s: BulletinSubject, value: number, coeff: number, cell?: PerSubjectAvg) =>
+    frenchOfSubject(s, coeff, cell)?.points ?? value * coeff;
+  const coeffOfSubject = (s: BulletinSubject, coeff: number, cell?: PerSubjectAvg) =>
+    frenchOfSubject(s, coeff, cell)?.coefficient ?? coeff;
 
   const coeffTotal = useMemo(
     () => subjectsForTable.reduce((acc, s) => {
       if (s.include_in_average === false && s.subject_id !== conductSubject?.subject_id) return acc;
-      const avg = perSubject.find(cell => cell.subject_id === s.subject_id)?.avg20;
+      const cell = perSubject.find(x => x.subject_id === s.subject_id);
+      const avg = cell?.avg20;
       if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return acc;
-      const coeff = effectiveCoeffBySubjectId.get(s.subject_id) ?? 0;
+      const coeff = coeffOfSubject(s, effectiveCoeffBySubjectId.get(s.subject_id) ?? 0, cell);
       return Number.isFinite(coeff) && coeff > 0 ? acc + coeff : acc;
     }, 0),
-    [subjectsForTable, conductSubject, perSubject, effectiveCoeffBySubjectId]
+    [subjectsForTable, conductSubject, perSubject, effectiveCoeffBySubjectId, subjectCompsBySubject, perSubjectComponentMap]
   );
 
   const moyCoeffTotal = useMemo(() => {
@@ -1628,7 +1632,7 @@ function StudentBulletinCard({
       if (!Number.isFinite(coeff) || coeff <= 0) return;
 
       sum += pointsOfSubject(s, Number(val), coeff, cell);
-      sumCoeff += coeff;
+      sumCoeff += coeffOfSubject(s, coeff, cell);
     });
 
     const groupAvgRaw = sumCoeff > 0 ? sum / sumCoeff : null;
@@ -1799,11 +1803,12 @@ function StudentBulletinCard({
 
     const excludedFromTermAverage = s.is_conduct_component_only === true;
 
-    const effectiveCoeff =
+    const officialCoeff =
       effectiveCoeffBySubjectId.get(s.subject_id) ??
       (s.subject_id === conductSubject?.subject_id
         ? 1
         : Number(s.coeff_bulletin ?? 0));
+    const effectiveCoeff = coeffOfSubject(s, officialCoeff, cell);
 
     const moyCoeff =
       hasAvg && Number.isFinite(effectiveCoeff)
@@ -1838,7 +1843,7 @@ function StudentBulletinCard({
             {hasAvg ? formatNumber(avg) : "NC"}
           </td>
           <td className="bdr px-1 py-[1px] text-center">
-            {excludedFromTermAverage ? "—" : formatNumber(effectiveCoeff, 0)}
+            {excludedFromTermAverage || !hasAvg ? "—" : formatNumber(effectiveCoeff, 0)}
           </td>
           <td className="bdr px-1 py-[1px] text-center">
             {excludedFromTermAverage ? "—" : hasAvg ? formatNumber(moyCoeff) : "—"}
@@ -1874,7 +1879,7 @@ function StudentBulletinCard({
                 {cHasAvg ? formatNumber(cAvg) : "NC"}
               </td>
               <td className="bdr px-1 py-[1px] text-center">
-                {formatNumber(comp.coeff_in_subject, 0)}
+                {cHasAvg ? formatNumber(comp.coeff_in_subject, 0) : "—"}
               </td>
               <td className="bdr px-1 py-[1px] text-center">
                 {cHasAvg ? formatNumber(cMoyCoeff) : "—"}
