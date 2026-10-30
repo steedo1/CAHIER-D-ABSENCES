@@ -1,6 +1,6 @@
 import { isTrustedAppOrigin } from "@/lib/request-origin";
 import { directAverageMap, directComponentAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
-import { frenchComponentPoints } from "@/lib/grades/french-component-points";
+import { frenchComponentContribution } from "@/lib/grades/french-component-points";
 // src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -3468,6 +3468,20 @@ async function loadBulletin(
 
       const direct = currentBonusMaps.directSubjectByStudent.get(cs.student_id)?.get(String(s.subject_id));
       avg20 = finalSubjectAverage(rawAvg20, subjectBonus, direct);
+      // Français détaillé : la moyenne affichée provient des seules rubriques
+      // classées. Si elles sont toutes NC, Français est NC également.
+      const frenchContribution = frenchComponentContribution({
+        subjectName: String(s.subject_name || ""),
+        subjectId: String(s.subject_id),
+        officialCoeff: Number(s.coeff_bulletin ?? 0),
+        components: comps,
+        grades: per_subject_components,
+        bonus: subjectBonus,
+        averageSource: direct === undefined ? null : "direct",
+      });
+      if (frenchContribution) {
+        avg20 = frenchContribution.average === null ? null : cleanNumber(frenchContribution.average, 4);
+      }
 
       const hasGrade = avg20 !== null && avg20 !== undefined && Number.isFinite(Number(avg20));
 
@@ -3479,7 +3493,7 @@ async function loadBulletin(
         // avg20 = moyenne finale matière ; avg20_before_bonus garde la trace brute.
         bonus: direct === undefined ? Number(subjectBonus.toFixed(2)) : 0,
         ...(direct === undefined ? {} : { average_source: "direct" }),
-        avg20_before_bonus: rawAvg20,
+        avg20_before_bonus: frenchContribution ? frenchContribution.rawAverage : rawAvg20,
 
         // ✅ Métadonnées NC : ne cassent pas le front existant, mais permettent
         // aux bulletins/matrices d'afficher clairement NC / — sans confondre avec 0.
@@ -3532,7 +3546,7 @@ async function loadBulletin(
 
           if (!w || w <= 0) continue;
 
-          const componentPoints = frenchComponentPoints({
+          const french = frenchComponentContribution({
             subjectName: String(subjectsForReport.find(subject => subject.subject_id === sid)?.subject_name || ""),
             subjectId: sid,
             officialCoeff: w,
@@ -3541,8 +3555,9 @@ async function loadBulletin(
             averageSource: ps?.average_source ?? null,
             bonus: ps?.bonus ?? 0,
           });
-          sum += componentPoints ?? Number(subAvg) * w;
-          sumCoeffLocal += w;
+          // Le bilan du groupe et la moyenne générale utilisent les mêmes coefficients effectifs.
+          sum += french ? french.points : Number(subAvg) * w;
+          sumCoeffLocal += french ? french.coefficient : w;
         }
 
         const groupAvg = sumCoeffLocal > 0 ? cleanNumber(sum / sumCoeffLocal, 4) : null;
@@ -3583,11 +3598,7 @@ async function loadBulletin(
           continue;
         }
 
-        hasAcademicContribution = true;
-        hasAcademicContributionForGeneral = true;
-        // Français : calculer les points avec les sous-matières renseignées,
-        // jamais ajouter la moyenne « Français » une deuxième fois.
-        const preciseFrenchPoints = frenchComponentPoints({
+        const french = frenchComponentContribution({
           subjectName: String(s.subject_name || ""),
           subjectId: String(s.subject_id),
           officialCoeff: coeffSub,
@@ -3596,8 +3607,12 @@ async function loadBulletin(
           averageSource: ps?.average_source ?? null,
           bonus: ps?.bonus ?? 0,
         });
-        academicSumGen += preciseFrenchPoints ?? Number(subAvg) * coeffSub;
-        academicSumCoeffGen += coeffSub;
+        const effectiveCoeff = french ? french.coefficient : coeffSub;
+        if (effectiveCoeff <= 0) continue; // Français entièrement NC.
+        hasAcademicContribution = true;
+        hasAcademicContributionForGeneral = true;
+        academicSumGen += french ? french.points : Number(subAvg) * coeffSub;
+        academicSumCoeffGen += effectiveCoeff;
       }
 
       // ✅ Pas de vraie note disciplinaire publiée => pas de moyenne trimestrielle
@@ -4083,6 +4098,38 @@ async function loadBulletin(
             rangeBonusMaps.subjectBonusByStudent.get(sid)?.get(String(s.subject_id)) ?? 0;
           const direct = rangeBonusMaps.directSubjectByStudent.get(sid)?.get(String(s.subject_id));
           const adjustedSubjectAvg = finalSubjectAverage(subAvg, subjectBonus, direct);
+          // Pour l'annuel aussi, ne pas réintroduire le coefficient d'une
+          // sous-matière NC. Les corrections directes de composantes sont lues
+          // depuis les données déjà chargées pour cette période.
+          const french = frenchComponentContribution({
+            // Le type allégé de l'annuel ne porte que l'ID ; reprendre le
+            // libellé depuis le référentiel du bulletin, déjà chargé.
+            subjectName: String(subjectsForReport.find(sub => sub.subject_id === s.subject_id)?.subject_name || ""),
+            subjectId: String(s.subject_id),
+            officialCoeff: coeffSub,
+            components: comps,
+            grades: comps.map(comp => {
+              const cell = cm.get(comp.id);
+              const directComponent = rangeBonusMaps.directComponentByStudent.get(sid)?.get(comp.id);
+              return {
+                subject_id: String(s.subject_id),
+                component_id: comp.id,
+                avg20: directComponent !== undefined
+                  ? directComponent
+                  : cell && cell.sumCoeff > 0 ? cell.sumWeighted / cell.sumCoeff : null,
+              };
+            }),
+            bonus: subjectBonus,
+            averageSource: direct === undefined ? null : "direct",
+          });
+          if (french) {
+            if (french.coefficient > 0) {
+              hasAcademicContribution = true;
+              academicSumGen += french.points;
+              academicSumCoeffGen += french.coefficient;
+            }
+            continue;
+          }
           if (adjustedSubjectAvg === null) continue;
           subAvg = adjustedSubjectAvg;
 
