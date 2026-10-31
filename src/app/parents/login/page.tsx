@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import { Award } from "lucide-react";
 
 /** Icône Famille (inline, pas de dépendance) */
 function FamilyIcon(props: React.SVGProps<SVGSVGElement>) {
@@ -125,6 +126,28 @@ export default function ParentsLoginPage() {
                   <div className="text-xs text-slate-500">
                     Espace Parents · Accès par matricule élève
                   </div>
+                </div>
+              </div>
+
+              {/* Distinction visible sur la connexion parent, sans appel réseau. */}
+              <div
+                role="note"
+                aria-label="Distinction nationale Mon Cahier"
+                className="flex items-center gap-3 rounded-2xl border border-orange-200 bg-orange-50/90 px-4 py-3 text-slate-900"
+              >
+                <span
+                  aria-hidden="true"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-700"
+                >
+                  <Award className="h-5 w-5" strokeWidth={2.3} />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-extrabold uppercase tracking-wide text-orange-700">
+                    Distinction nationale · 2026
+                  </p>
+                  <p className="text-sm font-bold leading-snug text-slate-900 sm:text-[15px]">
+                    Finaliste national du Prix Orange de l’entrepreneuriat social — édition 2026
+                  </p>
                 </div>
               </div>
 
