@@ -9,6 +9,11 @@ on:
       - 'src/components/admin/DirectSubjectAverages.tsx'
       - 'src/app/api/admin/grades/bulletin/**'
       - 'src/app/admin/notes/bulletins/page.tsx'
+      - 'src/app/admin/bulletins/page.tsx'
+      - 'src/lib/grades/french-component-points.ts'
+      - 'src/lib/grades/bulletin-visible-totals.ts'
+      - 'test/bulletin-active-routes*.test.mjs'
+      - 'test/helpers/bulletin-page-fixture.mjs'
       - 'src/lib/grades/subject-appreciation.ts'
       - 'test/bulletin-subject-appreciations.test.ts'
       - 'test/direct-averages.test.mjs'
@@ -23,6 +28,11 @@ on:
       - 'src/components/admin/DirectSubjectAverages.tsx'
       - 'src/app/api/admin/grades/bulletin/**'
       - 'src/app/admin/notes/bulletins/page.tsx'
+      - 'src/app/admin/bulletins/page.tsx'
+      - 'src/lib/grades/french-component-points.ts'
+      - 'src/lib/grades/bulletin-visible-totals.ts'
+      - 'test/bulletin-active-routes*.test.mjs'
+      - 'test/helpers/bulletin-page-fixture.mjs'
       - 'src/lib/grades/subject-appreciation.ts'
       - 'test/bulletin-subject-appreciations.test.ts'
       - 'test/direct-averages.test.mjs'
@@ -60,5 +70,18 @@ jobs:
         run: node --test test/direct-averages-ui.test.mjs
       - name: Vérifier les appréciations des sous-matières
         run: node --import tsx --test test/bulletin-subject-appreciations.test.ts
+      - name: Rendu des deux pages réellement accessibles
+        run: node --import tsx --test test/bulletin-active-routes.test.mjs test/french-component-points.test.ts
+      - run: npx playwright install --with-deps chromium
+      - name: Aperçu bureau, mobile et PDF des deux pages
+        run: node --import tsx --test test/bulletin-active-routes-browser.test.mjs
+        env:
+          BULLETIN_PRINT_OUTPUT: artifacts/bulletins
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bulletin-active-routes-preview
+          path: artifacts/bulletins
+          retention-days: 7
       - name: Compilation Next
         run: npm run build
