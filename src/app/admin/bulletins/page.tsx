@@ -1,6 +1,10 @@
 // src/app/admin/bulletins/page.tsx
 "use client";
 
+import { frenchComponentContribution } from "@/lib/grades/french-component-points";
+import { computeSubjectAppreciation } from "@/lib/grades/subject-appreciation";
+import { calculateBulletinVisibleTotals } from "@/lib/grades/bulletin-visible-totals";
+
 import React, {
   Suspense,
   useCallback,
@@ -122,6 +126,9 @@ type PerSubjectAvg = {
   subject_rank?: number | null;
   teacher_id?: string | null;
   teacher_name?: string | null;
+
+  bonus?: number | null;
+  average_source?: string | null;
 
   // ✅ Métadonnées renvoyées par l’API bulletin NC
   // 0 reste une vraie note ; null = non classé / pas de moyenne publiée.
@@ -649,20 +656,6 @@ function formatYesNo(value: boolean | null | undefined): string {
   if (value === true) return "Oui";
   if (value === false) return "Non";
   return "—";
-}
-
-function computeSubjectAppreciation(avg: number | null | undefined): string {
-  if (avg === null || avg === undefined) return "";
-  if (!Number.isFinite(avg)) return "";
-  const a = Number(avg);
-  if (a >= 18) return "Excellent";
-  if (a >= 16) return "TRÈS bien";
-  if (a >= 14) return "Bien";
-  if (a >= 12) return "Assez bien";
-  if (a >= 10) return "Passable";
-  if (a >= 8) return "Insuffisant";
-  if (a >= 6) return "Faible";
-  return "Blâme";
 }
 
 /* ───────── QR Code (généré côté client) ───────── */
@@ -1618,7 +1611,7 @@ function StudentBulletinCard({
   const perSubjectBase = item.per_subject ?? [];
 
   const perSubject: PerSubjectAvg[] = useMemo(() => {
-    const base: PerSubjectAvg[] = [...perSubjectBase];
+    const base: PerSubjectAvg[] = perSubjectBase.map((cell) => ({ ...cell }));
     if (conductSubject && conductNoteOn20 !== null) {
       const existing = base.find(
         (ps) => ps.subject_id === conductSubject.subject_id
@@ -1688,7 +1681,10 @@ function StudentBulletinCard({
   }, [item.per_group]);
 
   const allSubjects = useMemo(() => {
-    if (conductSubject) return [...subjects, conductSubject];
+    if (conductSubject) return [
+      ...subjects.filter((s) => s.subject_id !== conductSubject.subject_id),
+      conductSubject,
+    ];
     return [...subjects];
   }, [subjects, conductSubject]);
 
@@ -1743,52 +1739,50 @@ function StudentBulletinCard({
     return map;
   }, [subjectGroups, subjectsForTable, conductSubject]);
 
-  const coeffTotal = useMemo(
-    () =>
-      subjectsForTable.reduce((acc, s) => {
-        if (
-          s.include_in_average === false &&
-          s.subject_id !== conductSubject?.subject_id
-        ) {
-          return acc;
-        }
-        return acc + (effectiveCoeffBySubjectId.get(s.subject_id) ?? 0);
-      }, 0),
-    [subjectsForTable, conductSubject, effectiveCoeffBySubjectId]
-  );
-
-  const moyCoeffTotal = useMemo(() => {
-    let sum = 0;
-    let hasAtLeastOneValue = false;
-
-    subjectsForTable.forEach((subject) => {
-      if (
-        subject.include_in_average === false &&
-        subject.subject_id !== conductSubject?.subject_id
-      ) {
-        return;
-      }
-
-      const cell = perSubject.find((ps) => ps.subject_id === subject.subject_id);
-      const avg = cell?.avg20;
-      if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) {
-        return;
-      }
-
-      const coeff =
-        effectiveCoeffBySubjectId.get(subject.subject_id) ??
-        (subject.subject_id === conductSubject?.subject_id
-          ? 1
-          : Number(subject.coeff_bulletin ?? 0));
-
-      if (!Number.isFinite(coeff) || coeff <= 0) return;
-
-      sum += Number(avg) * coeff;
-      hasAtLeastOneValue = true;
+  // Chaque sous-matière de français a son coefficient propre ; une rubrique NC
+  // ne contribue ni aux points ni au coefficient, mais un vrai 0/20 reste noté.
+  const frenchOfSubject = (s: BulletinSubject, coeff: number, cell?: PerSubjectAvg) => {
+    const comps = subjectCompsBySubject.get(s.subject_id) || [];
+    return frenchComponentContribution({
+      subjectName: s.subject_name,
+      subjectId: s.subject_id,
+      officialCoeff: coeff,
+      components: comps,
+      grades: comps.map(comp => ({
+        subject_id: s.subject_id,
+        component_id: comp.id,
+        avg20: perSubjectComponentMap.get(`${s.subject_id}__${comp.id}`)?.avg20 ?? null,
+      })),
+      bonus: cell?.bonus ?? 0,
+      averageSource: cell?.average_source ?? null,
     });
+  };
+  const pointsOfSubject = (s: BulletinSubject, value: number, coeff: number, cell?: PerSubjectAvg) =>
+    frenchOfSubject(s, coeff, cell)?.points ?? value * coeff;
+  const coeffOfSubject = (s: BulletinSubject, coeff: number, cell?: PerSubjectAvg) =>
+    frenchOfSubject(s, coeff, cell)?.coefficient ?? coeff;
 
-    return hasAtLeastOneValue ? round2(sum) : null;
-  }, [subjectsForTable, conductSubject, effectiveCoeffBySubjectId, perSubject]);
+  // Une seule source pour le total des coefficients et des points.
+  // Le pied de bulletin doit toujours correspondre aux lignes effectivement
+  // classées (et au total des bilans), même pour la conduite et le français NC.
+  const { coefficient: coeffTotal, points: moyCoeffTotal } = useMemo(() => {
+    const rows = subjectsForTable.map((subject) => {
+      const cell = perSubject.find((ps) => ps.subject_id === subject.subject_id);
+      const avg = cell?.avg20 ?? null;
+      const coeff = effectiveCoeffBySubjectId.get(subject.subject_id) ??
+        (subject.subject_id === conductSubject?.subject_id ? 1 : Number(subject.coeff_bulletin ?? 0));
+      const available = avg !== null && avg !== undefined && Number.isFinite(Number(avg));
+      return {
+        subjectId: subject.subject_id,
+        average: avg,
+        coefficient: coeffOfSubject(subject, coeff, cell),
+        points: available ? pointsOfSubject(subject, Number(avg), coeff, cell) : null,
+        includeInAverage: subject.include_in_average !== false ||
+          subject.subject_id === conductSubject?.subject_id,
+      };
+    });
+    return calculateBulletinVisibleTotals(rows);
+  }, [subjectsForTable, conductSubject, effectiveCoeffBySubjectId, perSubject, perSubjectComponentMap, subjectCompsBySubject]);
 
   const computeDisplayedGroupStats = (
     groupSubjects: BulletinSubject[]
@@ -1822,8 +1816,8 @@ function StudentBulletinCard({
 
       if (!Number.isFinite(coeff) || coeff <= 0) return;
 
-      sum += Number(val) * coeff;
-      sumCoeff += coeff;
+      sum += pointsOfSubject(s, Number(val), coeff, cell);
+      sumCoeff += coeffOfSubject(s, coeff, cell);
     });
 
     const groupAvgRaw = sumCoeff > 0 ? sum / sumCoeff : null;
@@ -1996,15 +1990,16 @@ function StudentBulletinCard({
 
     const excludedFromTermAverage = s.is_conduct_component_only === true;
 
-    const effectiveCoeff =
+    const officialCoeff =
       effectiveCoeffBySubjectId.get(s.subject_id) ??
       (s.subject_id === conductSubject?.subject_id
         ? 1
         : Number(s.coeff_bulletin ?? 0));
+    const effectiveCoeff = coeffOfSubject(s, officialCoeff, cell);
 
     const moyCoeff =
       hasAvg && Number.isFinite(effectiveCoeff)
-        ? round2(Number(avg) * effectiveCoeff)
+        ? round2(pointsOfSubject(s, Number(avg), effectiveCoeff, cell))
         : null;
 
     const subjectRankLabel =
@@ -2079,7 +2074,9 @@ function StudentBulletinCard({
               <td className="bdr px-1 py-[1px] text-center">
                 {cHasAvg && cRank != null ? `${cRank}e` : "NC"}
               </td>
-              <td className="bdr px-1 py-[1px]" />
+              <td className="bdr px-1 py-[1px] submatter-appreciation">
+                {cHasAvg ? computeSubjectAppreciation(cAvg) : "Non classé"}
+              </td>
               <td className="bdr px-1 py-[1px]">{subjectTeacher}</td>
               <td className="bdr p-0 align-middle sig-cell">
                 {renderSignatureLine(signaturePng)}

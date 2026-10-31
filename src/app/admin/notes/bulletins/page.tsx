@@ -1407,7 +1407,7 @@ function StudentBulletinCard({
   const perSubjectBase = item.per_subject ?? [];
 
   const perSubject: PerSubjectAvg[] = useMemo(() => {
-    const base: PerSubjectAvg[] = [...perSubjectBase];
+    const base: PerSubjectAvg[] = perSubjectBase.map((cell) => ({ ...cell }));
     if (conductSubject && conductNoteOn20 !== null) {
       const existing = base.find(
         (ps) => ps.subject_id === conductSubject.subject_id
@@ -1477,7 +1477,10 @@ function StudentBulletinCard({
   }, [item.per_group]);
 
   const allSubjects = useMemo(() => {
-    if (conductSubject) return [...subjects, conductSubject];
+    if (conductSubject) return [
+      ...subjects.filter((s) => s.subject_id !== conductSubject.subject_id),
+      conductSubject,
+    ];
     return [...subjects];
   }, [subjects, conductSubject]);
 
