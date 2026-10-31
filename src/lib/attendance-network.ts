@@ -63,6 +63,11 @@ export function attendanceInteractiveReadRequest(
   init?: RequestInit,
 ) {
   if (requestMethod(input, init) !== "GET") return false;
+  // Preparation has its own bounded deadline through the JSON body. Do not
+  // replace it with the 1.8-second interactive/cache fallback budget.
+  const headers = new Headers(init?.headers ||
+    (typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined));
+  if (headers.get("X-Mon-Cahier-Preparation") === "1") return false;
   const path = requestPath(input);
   return ATTENDANCE_INTERACTIVE_READ_PATHS.some((pattern) => pattern.test(path));
 }

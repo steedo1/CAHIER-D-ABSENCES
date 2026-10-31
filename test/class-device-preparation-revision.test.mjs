@@ -159,21 +159,20 @@ function cloudPreparation(finalOverrides = {}, initialOverrides = {}, rosterOver
   const fixture = preparationFixture(); const downloaded = [], confirmations = [];
   const finalStatus = { ...cloud(), institution_id: fixture.institution_id, actor_profile_id: fixture.actor_profile_id, ...finalOverrides };
   const build = isolatedFunction("buildClassDeviceScheduleFromCloud", {
-    fetchFirstAndCache: async (options) => {
-      assert.ok(options.every((option) => option.url.endsWith("?offline_preparation=v1")));
-      return { periods: fixture.periods };
-    },
     fetchClassPreparationAndCache: async (url) => {
       downloaded.push(url);
       if (url.startsWith("/api/class/roster")) return rosterOverride ?? { items: Array.from({ length: fixture.student_count }, (_, i) => ({ id: `student-${i}` })) };
-      assert.equal(new URL(url, "https://fixture.invalid").searchParams.get("offline_preparation"), "v1");
-      const periodId = new URL(url, "https://fixture.invalid").searchParams.get("period_id");
-      return { items: fixture.subject_refs.filter((item) => item.period === periodId).map((item) => ({ id: item.subject, label: "Matière" })) };
+      const meta = { ...cloud(100), institution_id: fixture.institution_id, actor_profile_id: fixture.actor_profile_id };
+      if (url.startsWith("/api/teacher/institution/basics")) return { ...meta, periods: fixture.periods };
+      assert.ok(url.startsWith("/api/class/offline/bootstrap?class_id="));
+      return { ...meta, class_id: fixture.class_id, snapshot_completeness: "complete",
+        slots: fixture.periods.map((period) => ({ key: `${period.weekday}|${period.start_time.slice(0,5)}|${period.end_time.slice(0,5)}`,
+          items: fixture.subject_refs.filter((item) => item.period === period.id).map((item) => ({ id: item.subject, label: "Matière" })) })) };
     },
     fetchFreshJson: async () => finalStatus,
     observeScheduleRevision: () => {}, rememberCloudScheduleStatus: async (value) => { confirmations.push(value); },
     classDeviceReadinessMessage: (value) => value,
-  }, ["safeRevision", "classDevicePeriodTime", "classDevicePeriodKey", "mapLimit"]);
+  }, ["safeRevision", "classDevicePeriodTime", "classDevicePeriodKey", "teacherPreparationSnapshotsMatch"]);
   return { fixture, downloaded, confirmations, run: () => build({ institutionId: fixture.institution_id, classId: fixture.class_id,
     actorProfileId: fixture.actor_profile_id, selectedClass: { label: "TA", level: "TA" }, scheduleRevision: 100,
     preparationRevision: 100, generatedAt: null, onProgress: () => {}, ...initialOverrides }) };
@@ -182,7 +181,7 @@ test("établissement sans emploi du temps : attente explicite, sans faux crénea
   const f = cloudPreparation();
   f.fixture.periods.length = 0;
   await assert.rejects(f.run(), /institution_schedule_not_configured/);
-  assert.equal(f.downloaded.length, 0);
+  assert.equal(f.downloaded.length, 3);
   assert.equal(f.confirmations.length, 0);
   const cause = new Error("institution_schedule_not_configured");
   assert.equal(failures.retryableOfflinePreparationFailure(cause), false);
@@ -198,7 +197,7 @@ test("l'identité de l'établissement accompagne les paramètres même sans cré
 test("37 créneaux et 66 élèves : la préparation Cloud aboutit pendant des appels d'autres classes, sans relais", async () => {
   const f = cloudPreparation(); const schedule = await f.run();
   assert.equal(f.fixture.periods.length, 37); assert.equal(f.fixture.student_count, 66);
-  assert.equal(f.downloaded.length, 38);
+  assert.equal(f.downloaded.length, 3);
   assert.equal(schedule.schedule_revision, 110); assert.equal(schedule.preparation_revision, 100);
   assert.equal(schedule.rosters[f.fixture.class_id].items.length, 66);
   assert.equal(schedule.slots.length, new Set(f.fixture.subject_refs.map((item) => item.period)).size);
@@ -211,7 +210,7 @@ for (const roster of [{}, { items: [] }, { items: [{ name: "sans identifiant" }]
     const f = cloudPreparation({}, {}, roster);
     await assert.rejects(f.run(), /liste des élèves/);
     assert.equal(f.confirmations.length, 0);
-    assert.equal(f.downloaded.length, 1);
+    assert.equal(f.downloaded.length, 3);
   });
 }
 for (const [name, final, initial] of [

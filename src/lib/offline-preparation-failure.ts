@@ -3,6 +3,9 @@ function messageOf(cause: unknown) {
   return String(error?.message || cause || "");
 }
 export function retryableOfflinePreparationFailure(cause: unknown) {
+  const status = Number((cause as { status?: unknown } | null)?.status);
+  if (status === 401 || status === 403) return false;
+  if (status === 408 || status === 429 || status >= 500) return true;
   return /(?:timeout|délai|serveur[^.]*répon|failed to fetch|fetch failed|network|réseau|indisponible|aborted|http (?:408|429|5\d\d)|schedule_changed_during_(?:read|prepare))/i.test(messageOf(cause));
 }
 export function offlinePreparationFailureMessage(cause: unknown) {
@@ -10,6 +13,10 @@ export function offlinePreparationFailureMessage(cause: unknown) {
   const name = String((cause as { name?: unknown } | null)?.name || "");
   if (message === "teacher_phone_account_conflict")
     return "Ce téléphone est connecté à un ancien compte sans cours. Reconnectez-vous avec votre numéro complet à 10 chiffres, en conservant le zéro initial. Les actions locales restent conservées sur cet appareil.";
+  if (/class_weekly_(?:schedule_incomplete|subject_missing)/.test(message))
+    return "Le planning de la classe est incomplet. Vérifiez les créneaux et les disciplines dans l’établissement, puis réessayez.";
+  if (message === "teacher_roster_incomplete")
+    return "La liste des élèves reçue est incomplète. Relancez la préparation avant de travailler hors connexion.";
   if (message === "institution_schedule_not_configured")
     return "Emplois du temps en attente : aucun créneau d’appel n’a encore été configuré par l’établissement. Les appels automatiques seront disponibles après l’enregistrement des horaires officiels.";
   if (/QuotaExceededError|quota|storage.*full|disk.*full/i.test(name + " " + message))

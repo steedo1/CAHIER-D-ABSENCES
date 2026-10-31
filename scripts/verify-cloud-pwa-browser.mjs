@@ -11,7 +11,12 @@ const read = (file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), "
 const compile = (file) => ts.transpileModule(read(file), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const bundle = `const contract={}; new Function('exports',${JSON.stringify(compile("src/lib/attendance-cache-contract.ts"))})(contract);
+const ast = ts.createSourceFile("readiness.ts", read("src/lib/offline-readiness.ts"), ts.ScriptTarget.Latest, true);
+const freshDownload = ["responseMessage", "fetchFreshJson"].map(name => ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(ast)).join("\n");
+const downloadCode = ts.transpileModule(freshDownload, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const bundle = `const network={}; new Function('exports',${JSON.stringify(compile("src/lib/attendance-network.ts"))})(network);
+window.preparationDownload=new Function(${JSON.stringify(downloadCode + '; return fetchFreshJson;')})();
+const contract={}; new Function('exports',${JSON.stringify(compile("src/lib/attendance-cache-contract.ts"))})(contract);
 const api={}; new Function('exports','require',${JSON.stringify(compile("src/lib/offline.ts"))})(api,name=>({
   '@/lib/attendance-cache-contract':contract,
   '@/lib/attendance-cache-identity':{attendanceCacheActor:async()=>'synthetic-device',attendanceAuthGeneration:()=>1,knownScheduleRevision:()=>1,observeScheduleRevision(){}},
@@ -31,6 +36,11 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/_next/static/audit.js") return send(bundle, "application/javascript");
   if (url.pathname === "/manifest.webmanifest") return send({ name: "Audit isolé", start_url: "/class", display: "standalone" });
   if (url.pathname.startsWith("/icons/")) { res.writeHead(200, { "content-type": "image/png" }); return res.end(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZxkAAAAASUVORK5CYII=", "base64")); }
+  if (url.pathname === "/api/teacher/institution/basics") {
+    assert.equal(req.headers["x-mon-cahier-preparation"], "1");
+    await new Promise(resolve => setTimeout(resolve, 2300));
+    return send({ periods: [{ id: "synthetic-period" }] });
+  }
   if (url.pathname === "/api/class/subjects") return send({ class_id: "synthetic-class", items: [{ id: "info", label: "Informatique" }, { id: "eps", label: "EPS" }] });
   if (url.pathname.startsWith("/api/")) {
     let raw = ""; for await (const chunk of req) raw += chunk;
@@ -84,6 +94,10 @@ try {
   }));
   await page.reload();
   await page.waitForFunction(() => Boolean(window.audit) && Boolean(navigator.serviceWorker.controller));
+  await step("slow preparation survives the interactive guard", () => page.evaluate(async () => {
+    const result = await window.preparationDownload("/api/teacher/institution/basics?offline_preparation=v1");
+    if (result.periods?.length !== 1) throw new Error("preparation_incomplete");
+  }));
   await step("prepare shell and subjects", () => page.evaluate(async () => {
     await window.audit.warmOfflineShell(["/class"]);
     const subjects = await window.audit.offlineGetJson("/api/class/subjects?class_id=synthetic-class&manual_course=1", "classDevice:manual-subjects:synthetic-class");
