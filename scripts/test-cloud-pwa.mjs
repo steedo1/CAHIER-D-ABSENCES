@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-const prefix = /^(class-device|class-session|class-exceptional|attendance-|offline-|pwa-|teacher-attendance|teacher-session|relay-capability|relay-ui|relay-mode|phone-offline|csca-attendance|background-attendance)/;
+const prefix = /^(class-device|class-session|class-exceptional|attendance-|offline-|pwa-|teacher-attendance|teacher-phone|teacher-minimal|teacher-session|relay-capability|relay-ui|relay-mode|phone-offline|csca-attendance|background-attendance)/;
 const files = readdirSync(new URL("../test/", import.meta.url))
   .filter((name) => prefix.test(name) && /\.test\.(?:mjs|mts|ts)$/.test(name))
   .sort().map((name) => `test/${name}`);

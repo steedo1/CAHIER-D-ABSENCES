@@ -218,7 +218,8 @@ async function resolveAutoPeriodIds(
 async function mapSubjectIdsToItems(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
-  rawSubjectIds: string[]
+  rawSubjectIds: string[],
+  aliases?: Map<string, SubjectItem[]>
 ): Promise<SubjectItem[]> {
   const subjectIds = uniq(rawSubjectIds.map((x) => String(x || "").trim()).filter(Boolean));
   if (!subjectIds.length) return [];
@@ -278,7 +279,11 @@ async function mapSubjectIdsToItems(
     const id = String((row as any)?.id || "").trim();
     const label = String((row as any)?.custom_name || (row as any)?.subjects?.name || "—").trim();
     if (id && !itemsMap.has(id)) {
-      itemsMap.set(id, { id, label: label || "—" });
+      const item = { id, label: label || "—" };
+      itemsMap.set(id, item);
+      for (const alias of uniq([id, String(row.subject_id || "")])) {
+        aliases?.set(alias, [...(aliases?.get(alias) || []), item]);
+      }
     }
   }
 
@@ -294,7 +299,9 @@ async function mapSubjectIdsToItems(
       const id = String((row as any)?.id || "").trim();
       const label = String((row as any)?.name || "—").trim();
       if (id && !itemsMap.has(id)) {
-        itemsMap.set(id, { id, label: label || "—" });
+        const item = { id, label: label || "—" };
+        itemsMap.set(id, item);
+        aliases?.set(id, [item]);
       }
     }
   }
@@ -471,6 +478,60 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "schedule_changed_during_read" }, { status: 409 });
       }
       return NextResponse.json({ ...scheduleMeta, items }, {
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
+      });
+    }
+
+    if (preparingOffline && url.searchParams.get("all_slots") === "1") {
+      // A weekly download has a fixed query count, independent of the number
+      // of periods. Reuse the same subject identity mapping as interactive calls.
+      const [periodsResult, timetableResult] = await Promise.all([
+        srv.from("institution_periods")
+          .select("id,weekday,label,start_time,end_time", { count: "exact" })
+          .eq("institution_id", institutionId).order("weekday").order("start_time"),
+        srv.from("teacher_timetables").select("period_id,subject_id", { count: "exact" })
+          .eq("institution_id", institutionId).eq("class_id", class_id),
+      ]);
+      if (periodsResult.error || timetableResult.error) {
+        return NextResponse.json({ error: "class_weekly_schedule_unavailable" }, { status: 503 });
+      }
+      const periods = periodsResult.data || [];
+      const timetable = timetableResult.data || [];
+      if (periodsResult.count !== periods.length || timetableResult.count !== timetable.length) {
+        return NextResponse.json({ error: "class_weekly_schedule_incomplete" }, { status: 503 });
+      }
+      const periodIds = new Set(periods.map((period) => period.id));
+      if (timetable.some((row) => !periodIds.has(row.period_id) || !row.subject_id)) {
+        return NextResponse.json({ error: "class_weekly_schedule_incomplete" }, { status: 409 });
+      }
+      const aliases = new Map<string, SubjectItem[]>();
+      const ids = currentTimetableSubjectIds(timetable);
+      await mapSubjectIdsToItems(srv, institutionId, ids, aliases);
+      if (ids.some((id) => !aliases.has(id))) {
+        return NextResponse.json({ error: "class_weekly_subject_missing" }, { status: 409 });
+      }
+      const byPeriod = new Map<string, SubjectItem[]>();
+      for (const row of timetable) {
+        const id = String(row.period_id || "");
+        byPeriod.set(id, [...(byPeriod.get(id) || []), ...(aliases.get(String(row.subject_id)) || [])]);
+      }
+      const slotsByKey = new Map<string, { key: string; items: SubjectItem[] }>();
+      for (const period of periods) {
+        const weekday = Number(period.weekday) === 0 ? 7 : Number(period.weekday);
+        const key = `${weekday}|${String(period.start_time).slice(0, 5)}|${String(period.end_time).slice(0, 5)}`;
+        const previous = slotsByKey.get(key)?.items || [];
+        const items = Array.from(new Map([...previous, ...(byPeriod.get(period.id) || [])]
+          .map((item) => [item.id, item])).values());
+        slotsByKey.set(key, { key, items });
+      }
+      const final = await readAttendancePreparationSnapshot(srv, institutionId);
+      const initial = { schedule_revision: scheduleRevision,
+        preparation_revision: revisionRow?.preparation_revision == null ? null : Number(revisionRow.preparation_revision) };
+      if (!attendancePreparationSnapshotsMatch(initial, final)) {
+        return NextResponse.json({ error: "schedule_changed_during_read" }, { status: 409 });
+      }
+      return NextResponse.json({ ...scheduleMeta, ...final, snapshot_completeness: "complete",
+        slots: Array.from(slotsByKey.values()) }, {
         headers: { "Cache-Control": "private, no-store, max-age=0" },
       });
     }

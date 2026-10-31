@@ -230,7 +230,7 @@ function responseMessage(payload: any, status: number) {
   return String(payload?.message || payload?.error || `HTTP ${status}`);
 }
 
-async function fetchFreshJson<T = any>(url: string, timeoutMs = 8_000): Promise<T> {
+async function fetchFreshJson<T = any>(url: string, timeoutMs = 20_000): Promise<T> {
   const controller = new AbortController();
   let timeout: number | undefined;
   try {
@@ -240,11 +240,11 @@ async function fetchFreshJson<T = any>(url: string, timeoutMs = 8_000): Promise<
           method: "GET",
           credentials: "include",
           cache: "no-store",
-          headers: { Accept: "application/json" },
+          headers: { Accept: "application/json", "X-Mon-Cahier-Preparation": "1" },
           signal: controller.signal,
         });
         const payload = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(responseMessage(payload, response.status));
+        if (!response.ok) throw Object.assign(new Error(responseMessage(payload, response.status)), { status: response.status });
         return payload as T;
       })(),
       new Promise<never>((_, reject) => {
@@ -256,6 +256,17 @@ async function fetchFreshJson<T = any>(url: string, timeoutMs = 8_000): Promise<
     ]);
   } finally {
     window.clearTimeout(timeout);
+  }
+}
+
+/** Retry only the failed read once; storage failures and authorization are final. */
+async function fetchPreparationJson<T = any>(url: string): Promise<T> {
+  try {
+    return await fetchFreshJson<T>(url, 20_000);
+  } catch (error) {
+    if (!retryableOfflinePreparationFailure(error)) throw error;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
+    return await fetchFreshJson<T>(url, 20_000);
   }
 }
 
@@ -1087,7 +1098,7 @@ type ClassDeviceInstitutionPeriod = {
   end_time?: string | null;
 };
 
-type ClassDeviceInstitutionBasics = {
+type ClassDeviceInstitutionBasics = TeacherBootstrap & {
   periods?: ClassDeviceInstitutionPeriod[];
 };
 
@@ -1250,94 +1261,65 @@ async function buildClassDeviceScheduleFromCloud(input: {
   onProgress: ProgressCallback;
 }): Promise<RelayTeacherOfflineSchedule> {
   input.onProgress("Téléchargement des créneaux d’appel…");
-  const basics = await fetchFirstAndCache<ClassDeviceInstitutionBasics>(
-    [
-      {
-        url: "/api/teacher/institution/basics?offline_preparation=v1",
-        key: "classDevice:inst:basics:teacher",
-      },
-      {
-        url: "/api/institution/basics?offline_preparation=v1",
-        key: "classDevice:inst:basics:institution",
-      },
-    ],
-    (payload) => Array.isArray(payload?.periods),
-  );
+  const [basics, weekly, roster] = await Promise.all([
+    fetchClassPreparationAndCache<ClassDeviceInstitutionBasics>(
+      "/api/teacher/institution/basics?offline_preparation=v1",
+      "classDevice:inst:basics:teacher",
+    ),
+    fetchClassPreparationAndCache<any>(
+      `/api/class/offline/bootstrap?class_id=${encodeURIComponent(input.classId)}`,
+      `classDevice:weekly:${input.classId}`,
+    ),
+    fetchClassPreparationAndCache<{ items?: Array<Record<string, unknown>> }>(
+      `/api/class/roster?class_id=${encodeURIComponent(input.classId)}`,
+      `classDevice:roster:${input.classId}`,
+    ),
+  ]);
   if (!Array.isArray(basics.periods) || basics.periods.length === 0) {
-    // Un établissement peut être enregistré avant la réception de ses emplois du temps.
-    // Ne pas assimiler cette situation à une panne réseau ni préparer des horaires fictifs.
     throw new Error("institution_schedule_not_configured");
   }
-  const periods = (Array.isArray(basics.periods) ? basics.periods : []).filter(
+  const periods = basics.periods.filter(
     (period) => Boolean(String(period?.id || "").trim()) && classDevicePeriodKey(period),
   );
-  if (periods.length === 0) {
-    throw new Error(classDeviceReadinessMessage("class_data_missing"));
+  if (periods.length !== basics.periods.length || !periods.length ||
+      weekly?.institution_id !== input.institutionId ||
+      weekly?.actor_profile_id !== input.actorProfileId ||
+      weekly?.class_id !== input.classId || weekly?.snapshot_completeness !== "complete" ||
+      !Array.isArray(weekly?.slots) ||
+      (!teacherPreparationSnapshotsMatch(weekly, basics) && !teacherPreparationSnapshotsMatch(basics, weekly))) {
+    throw new Error("schedule_changed_during_prepare");
   }
-
-  input.onProgress("Téléchargement de la liste des élèves…");
-  const roster = await fetchClassPreparationAndCache<{ items?: Array<Record<string, unknown>> }>(
-    `/api/class/roster?class_id=${encodeURIComponent(input.classId)}`,
-    `classDevice:roster:${input.classId}`,
-  );
   const rosterItems = Array.isArray(roster?.items) ? roster.items : [];
   if (rosterItems.length === 0 || rosterItems.some((student) => !String(student?.id || "").trim())) {
     throw new Error("La liste des élèves de cette classe est absente ou incomplète. La préparation ne peut pas être confirmée.");
   }
-
-  const slots: Array<RelayTeacherOfflineSchedule["slots"][number] | null> =
-    Array.from({ length: periods.length }, () => null);
-  await mapLimit(periods, 4, async (period, index) => {
-    if (
-      index === 0 ||
-      (index + 1) % 5 === 0 ||
-      index + 1 === periods.length
-    ) {
-      input.onProgress(`Créneaux d’appel ${index + 1}/${periods.length}…`);
-    }
-    const key = classDevicePeriodKey(period);
-    const periodId = String(period.id || "").trim();
-    if (!key || !periodId) return;
-    const params = new URLSearchParams({
+  // Every configured period must be present, including empty slots. Missing
+  // periods cannot silently become a supposedly complete offline timetable.
+  const weeklyByKey = new Map<string, any>(weekly.slots.map((slot: any) => [slot.key, slot]));
+  const preparedSlots: RelayTeacherOfflineSchedule["slots"] = [];
+  for (const period of periods) {
+    const key = classDevicePeriodKey(period)!;
+    const slot = weeklyByKey.get(key);
+    if (!slot || !Array.isArray(slot.items)) throw new Error("class_weekly_schedule_incomplete");
+    const items = slot.items.map((subject: ClassDeviceSubjectItem) => ({
       class_id: input.classId,
-      slot: key,
-      period_id: periodId,
-      offline_preparation: "v1",
-    });
-    const subjects = await fetchClassPreparationAndCache<{ items?: ClassDeviceSubjectItem[] }>(
-      `/api/class/subjects?${params.toString()}`,
-      `classDevice:subjects:${input.classId}:${key}`,
-    );
-    if (!Array.isArray(subjects?.items)) {
-      throw new Error("La liste des disciplines d’un créneau est incomplète. La préparation ne peut pas être confirmée.");
+      class_label: String(input.selectedClass.label || "Classe").trim() || "Classe",
+      level: String(input.selectedClass.level || "").trim(),
+      subject_id: String(subject?.id || "").trim(),
+      subject_name: String(subject?.label || "Matière").trim() || "Matière",
+    }));
+    if (items.some((subject: { subject_id: string }) => !subject.subject_id)) {
+      throw new Error("class_weekly_schedule_incomplete");
     }
-    const items = (Array.isArray(subjects?.items) ? subjects.items : [])
-      .map((subject) => ({
-        class_id: input.classId,
-        class_label: String(input.selectedClass.label || "Classe").trim() || "Classe",
-        level: String(input.selectedClass.level || "").trim(),
-        subject_id: String(subject?.id || "").trim(),
-        subject_name: String(subject?.label || "Matière").trim() || "Matière",
-      }))
-      .filter((subject) => Boolean(subject.subject_id));
-    if (items.length === 0) return;
-    slots[index] = {
-      key,
-      period_id: periodId,
-      weekday: Number(period.weekday),
-      label: String(period.label || "Séance").trim() || "Séance",
+    if (items.length && !preparedSlots.some((prepared) => prepared.key === key)) preparedSlots.push({
+      key, period_id: String(period.id), weekday: Number(period.weekday),
+      label: String(period.label || "Séance"),
       start_time: classDevicePeriodTime(period.start_time),
-      end_time: classDevicePeriodTime(period.end_time),
-      items,
-    };
-  });
-
-  const preparedSlots = slots.filter(
-    (slot): slot is RelayTeacherOfflineSchedule["slots"][number] => Boolean(slot),
-  );
-  if (preparedSlots.length === 0) {
-    throw new Error(classDeviceReadinessMessage("class_data_missing"));
+      end_time: classDevicePeriodTime(period.end_time), items,
+    });
   }
+  if (!preparedSlots.length) throw new Error(classDeviceReadinessMessage("class_data_missing"));
+  input.onProgress("Vérification du planning et des élèves téléchargés…");
 
   const assignments = Array.from(
     new Map(
@@ -1361,6 +1343,8 @@ async function buildClassDeviceScheduleFromCloud(input: {
   if (finalStatus.institution_id !== input.institutionId ||
       finalStatus.actor_profile_id !== input.actorProfileId ||
       !preparationMatches ||
+      !teacherPreparationSnapshotsMatch(weekly, finalStatus) ||
+      !teacherPreparationSnapshotsMatch(basics, finalStatus) ||
       safeRevision(finalStatus.schedule_revision) === null ||
       finalStatus.schedule_revision < input.scheduleRevision) {
     throw new Error("schedule_changed_during_prepare");
@@ -1935,8 +1919,8 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
   try {
     onProgress("Téléchargement de l’emploi du temps et des paramètres d’appel…");
     const [scheduleResult, basicsResult] = await Promise.allSettled([
-      fetchFreshJson<TeacherBootstrap>("/api/teacher/offline/bootstrap?offline_preparation=v1", 20_000),
-      fetchFreshJson<any>("/api/teacher/institution/basics?offline_preparation=v1", 20_000),
+      fetchPreparationJson<TeacherBootstrap>("/api/teacher/offline/bootstrap?offline_preparation=v1"),
+      fetchPreparationJson<any>("/api/teacher/institution/basics?offline_preparation=v1"),
     ]);
     if (basicsResult.status === "fulfilled") basics = basicsResult.value;
     if (scheduleResult.status === "rejected") throw scheduleResult.reason;
@@ -1970,10 +1954,10 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     onProgress(`Téléchargement de ${cloudClassIds.length} liste(s) d’élèves…`);
     await mapLimit(cloudClassIds, 4, async (classId, index) => {
       onProgress(`Liste d’élèves ${index + 1}/${cloudClassIds.length}…`);
-      const roster = await fetchFreshJson<{ items?: Array<Record<string, unknown>> }>(
-        `/api/teacher/roster?class_id=${encodeURIComponent(classId)}`, 20_000,
+      const roster = await fetchPreparationJson<{ items?: Array<Record<string, unknown>> }>(
+        `/api/teacher/roster?class_id=${encodeURIComponent(classId)}`,
       );
-      if (!Array.isArray(roster?.items)) throw new Error("teacher_roster_incomplete");
+      if (!Array.isArray(roster?.items) || roster.items.some((student) => !String(student?.id || "").trim())) throw new Error("teacher_roster_incomplete");
       rosters.set(classId, { items: roster.items });
     });
   } catch (cloudError) {
@@ -2061,7 +2045,7 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
 
   let scheduleRevision = safeRevision(bootstrap.schedule_revision);
   if (preparationSource === "cloud") {
-    const finalStatus = await fetchFreshJson<any>("/api/offline/schedule-status", 20_000);
+    const finalStatus = await fetchPreparationJson<any>("/api/offline/schedule-status");
     if (!teacherPreparationSnapshotsMatch(bootstrap, finalStatus) ||
         !scheduleIsCurrent(finalStatus.schedule_revision, knownScheduleRevision(institutionId))) {
       throw new Error("schedule_changed_during_prepare");
@@ -2672,7 +2656,7 @@ async function prepareOfflineOnce(
     return await prepareTeacher(onProgress);
   }
 
-  const cloud = await probeCloudSchedule(undefined, true);
+  const cloud = await probeCloudSchedule(45_000, true);
   if (!cloud && role !== "class-device") {
     throw new Error("Reconnectez Internet pour actualiser les données hors ligne.");
   }
