@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import LoginCard from "@/components/auth/LoginCard";
+import { Award } from "lucide-react";
 
 /* ───────── Composant interne qui utilise useSearchParams ───────── */
 
@@ -97,6 +98,27 @@ function LoginPageInner() {
         </header>
 
         <section className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-4">
+          {/* Distinction institutionnelle visible avant toute connexion, sans appel réseau. */}
+          <div
+            role="note"
+            aria-label="Distinction nationale Mon Cahier"
+            className="mb-4 flex items-center gap-3 rounded-2xl border border-orange-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur-sm"
+          >
+            <span
+              aria-hidden="true"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-700"
+            >
+              <Award className="h-5 w-5" strokeWidth={2.3} />
+            </span>
+            <div className="min-w-0">
+              <p className="text-[11px] font-extrabold uppercase tracking-wide text-orange-700">
+                Distinction nationale · 2026
+              </p>
+              <p className="text-sm font-bold leading-snug text-slate-900 sm:text-[15px]">
+                Finaliste national du Prix Orange de l’entrepreneuriat social — édition 2026
+              </p>
+            </div>
+          </div>
           {/* On propage le choix du cahier jusqu'à /redirect (si présent). */}
           <LoginCard redirectTo={redirectTo} forcedMode={forcedMode} />
           <footer className="mt-6 text-center text-xs text-white/85 drop-shadow-sm">
