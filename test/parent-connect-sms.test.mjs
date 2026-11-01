@@ -31,6 +31,7 @@ function setup({premium=true,event='absent',eventEnabled=true,active=true,phoneP
  const srv=createClient('https://supabase.test','test-key',{global:{fetch:async(input,init={})=>{
   const u=new URL(String(input)),table=u.pathname.split('/').at(-1),method=init.method||'GET',body=init.body?JSON.parse(init.body):null;calls.push({table,method,body,url:u});
   if(table==='parent_connect_sms_contacts')return lookupFails?Response.json({code:'57014',message:'Unavailable'},{status:500}):Response.json(phonePresent&&active?[{student_id:student,phone_e164:phone}]:[]);
+  if(table==='claim_notification_dispatch_batch')return Response.json([queue]);
   if(method!=='GET'){
    if(smsInsertFails&&table==='notifications_queue'&&method==='POST'&&(Array.isArray(body)?body[0]:body)?.channels?.includes('sms'))return Response.json({code:'23514',message:'SMS rejected'},{status:400});
    return Response.json(table==='notifications_queue'?[queue]:null,{headers:{'content-range':'0-0/1'}});
@@ -58,6 +59,8 @@ const request=()=>new Request('https://example.test/api/sms/dispatch',{headers:{
 process.env.CRON_SECRET='test-only-secret';
 for(const event of ['absent','late','notes_digest'])await test(`dispatcher ${event} : SMS au numéro souscrit, sans profil parent ni connexion`,async()=>{
  const s=setup({event});const response=await s.route.POST(request());assert.equal(response.status,200);assert.equal(s.sends.length,1);assert.equal(s.sends[0].to,phone);assert.match(s.sends[0].message,/KOUADIO ANGE/);if(event==='notes_digest')assert.match(s.sends[0].message,/17\/20/);
+ assert.ok(s.calls.some(c=>c.table==='claim_notification_dispatch_batch'&&c.body.p_channel==='sms'&&c.body.p_limit<=25));
+ assert.ok(s.calls.some(c=>c.table==='notification_sms_attempts'&&c.method==='POST'));
  assert.ok(s.calls.some(c=>c.table==='parent_connect_sms_contacts'&&c.body.p_institution_id===school));
  assert.ok(!s.calls.some(c=>c.table==='parent_notification_contacts'));
  const update=s.calls.find(c=>c.table==='notifications_queue'&&c.method==='PATCH');assert.equal(update.body.status,'sent');assert.equal(update.body.meta.sms_dispatch.success_targets[0].profile_id,null);
