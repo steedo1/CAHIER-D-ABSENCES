@@ -1658,7 +1658,8 @@ export default function AdminStudentsByClassPage() {
           arabic_class_not_configured: "Cette classe n'est pas configurée pour l'enseignement arabe.",
           french_home_not_configured: "Configurez d'abord l'enseignement français dans la classe administrative de l'élève.",
           student_has_no_home_class: "Inscrivez d'abord cet élève dans sa classe administrative française.",
-          student_not_same_level_or_cycle: "L'élève doit être inscrit en français au même niveau et dans le même cycle.",
+          student_not_same_level_or_cycle: "Le niveau arabe peut être différent au primaire. Vérifiez que les deux classes appartiennent au même cycle.",
+          student_not_same_cycle_or_eligible_level: "Le transfert doit rester dans le même cycle scolaire (primaire, maternelle ou secondaire).",
           student_home_ambiguous_for_year: "Plusieurs inscriptions administratives sont actives : vérifiez la fiche de l'élève.",
           prior_arabic_class_requires_review: "L'ancienne affectation arabe doit être vérifiée avant ce transfert.",
           multiple_arabic_links_require_review: "Plusieurs affectations arabes existent : corrigez-les avant de continuer.",
@@ -1677,7 +1678,9 @@ export default function AdminStudentsByClassPage() {
         setMsg(json?.already_present
           ? "Cet élève figure déjà dans cette classe arabe."
           : json?.transferred
-            ? "Élève transféré dans cette classe arabe. L'inscription française et les frais sont conservés."
+            ? json?.cross_level
+              ? `Élève transféré en arabe de ${json.french_level} français vers ${json.arabic_level} arabe. L'inscription française et les frais sont conservés.`
+              : "Élève transféré dans cette classe arabe. L'inscription française et les frais sont conservés."
             : "Élève ajouté à l'enseignement arabe. L'inscription française et les frais sont conservés.");
         return;
       }
@@ -1918,6 +1921,7 @@ export default function AdminStudentsByClassPage() {
                 tone="slate"
                 onClick={() => {
                   setAssignMode(financeTransferOnly || isArabicClassSelection ? "transfer" : "new");
+                  setMsg(null);
                   setAssignOpen(true);
                 }}
                 disabled={!classId || loading || (isArabicClassSelection && arabicRosterLoading)}
@@ -2204,7 +2208,7 @@ export default function AdminStudentsByClassPage() {
               ) : (
                 <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
                   {isArabicClassSelection
-                    ? "Sélectionnez un élève déjà inscrit administrativement en français au même niveau. Seule son affectation pédagogique arabe change : la classe française, la fiche et les frais restent inchangés."
+                    ? "Choisissez un élève déjà inscrit administrativement en français. Au primaire, son niveau arabe peut être différent de son niveau français. Seule sa classe arabe change : l'inscription française, la fiche et les frais sont conservés."
                     : "Selectionnez un eleve existant : sa classe et ses donnees financieres seront transferees vers la classe choisie."}
                 </div>
               )}
@@ -2444,6 +2448,11 @@ export default function AdminStudentsByClassPage() {
                 </div>
               )}
 
+              {msg && (
+                <div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  {msg}
+                </div>
+              )}
               <div className="mt-5 flex items-center gap-2">
                 <Button
                   onClick={submitAssign}
