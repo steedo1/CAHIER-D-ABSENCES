@@ -171,7 +171,7 @@ async function deleteSubscription(
 ) {
   if (sub.source === "student" && sub.student_id) {
     let q = srv
-      .from("push_subscriptions_student")
+      .from("push_subscriptions")
       .delete()
       .eq("student_id", sub.student_id)
       .eq("platform", sub.platform || "");
@@ -229,14 +229,12 @@ async function run(req: Request) {
 
   // 1) Récupérer les items en attente (+ on prend student_id + meta + institution_id + profile_id)
   console.info("[push/dispatch] pick_pending_query", { id });
-  const { data: raw, error: pickErr } = await srv
-    .from("notifications_queue")
-    .select(
-      "id,institution_id,parent_id,student_id,profile_id,channels,payload,title,body,status,attempts,created_at,meta",
-    )
-    .eq("status", WAIT_STATUS)
-    .order("created_at", { ascending: true })
-    .limit(400);
+  // Atomic, indexed claim: other requests cannot process the same pending item.
+  // The lease allows recovery after a Render restart without tight polling.
+  const { data: raw, error: pickErr } = await srv.rpc(
+    "claim_notification_dispatch_batch",
+    { p_channel: "push", p_limit: 25, p_lease_seconds: 900 },
+  );
 
   if (pickErr) {
     console.error("[push/dispatch] select_error", {
@@ -271,8 +269,28 @@ async function run(req: Request) {
   const allowedRowIds = new Set(rows.map((row) => row.id));
   const blockedIds = candidateRows.filter((row) => !allowedRowIds.has(row.id)).map((row) => row.id);
   if (blockedIds.length) {
-    const { error: blockedError } = await srv.from("notifications_queue").update({ status: "error", last_error: "PARENT_CONNECT_REQUIRED" }).in("id", blockedIds);
+    const { error: blockedError } = await srv.from("notifications_queue").update({ status: "skipped", last_error: "PARENT_CONNECT_REQUIRED" }).in("id", blockedIds);
     if (blockedError) console.warn("[parent-connect] blocked notifications retained", { id });
+  }
+
+  // Push is included in the standard school subscription but never sent when explicitly disabled.
+  // Read each school's policy once per batch, not once per notification.
+  const schoolIds = [...new Set(rows.map((row) => row.institution_id).filter((x): x is string => !!x))];
+  if (schoolIds.length) {
+    const { data: policies, error: policyError } = await srv
+      .from("institution_notification_channel_settings")
+      .select("institution_id,push_enabled")
+      .in("institution_id", schoolIds);
+    if (policyError) return NextResponse.json({ ok: false, error: "PUSH_POLICY_UNAVAILABLE", id }, { status: 503 });
+    const disabled = new Set((policies || []).filter((p) => p.push_enabled === false).map((p) => p.institution_id));
+    const denied = rows.filter((row) => row.institution_id && disabled.has(row.institution_id));
+    if (denied.length) {
+      const { error: suppressError } = await srv.from("notifications_queue")
+        .update({ status: "skipped", last_error: "PUSH_DISABLED" })
+        .in("id", denied.map((row) => row.id));
+      if (suppressError) return NextResponse.json({ ok: false, error: "PUSH_POLICY_UPDATE_FAILED", id }, { status: 503 });
+      rows = rows.filter((row) => !row.institution_id || !disabled.has(row.institution_id));
+    }
   }
 
   console.info("[push/dispatch] picked_effective", {
@@ -476,7 +494,7 @@ async function run(req: Request) {
 
   const { data: studentSubs, error: studentSubsErr } = allRowStudentIds.length
     ? await srv
-        .from("push_subscriptions_student")
+        .from("push_subscriptions")
         .select("student_id,platform,device_id,subscription_json,fcm_token")
         .in("student_id", allRowStudentIds)
     : { data: [], error: null as any };
@@ -733,15 +751,17 @@ async function run(req: Request) {
       }
     } else {
       const statusForError =
-        lastError === "no_subscriptions" || attempts >= MAX_ATTEMPTS
-          ? "error"
-          : WAIT_STATUS;
+        lastError === "no_subscriptions"
+          ? "skipped"
+          : attempts >= MAX_ATTEMPTS
+            ? "error"
+            : WAIT_STATUS;
 
       const { error: updErr } = await srv
         .from("notifications_queue")
         .update({
           status: statusForError,
-          attempts,
+          attempts: lastError === "no_subscriptions" ? (Number(n.attempts) || 0) : attempts,
           last_error: (lastError || "").slice(0, 300),
         } as any)
         .eq("id", n.id);

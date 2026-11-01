@@ -29,14 +29,8 @@ function fixture({ rows = [], premium = true, parentAllowed = true } = {}) {
         body: init.body ? JSON.parse(init.body) : null });
       const table = url.pathname.split("/").at(-1);
       let result = [];
-      if (table === "notifications_queue" && method === "GET") {
-        try {
-          const filter = url.searchParams.get("channels");
-          assert.ok(filter?.startsWith("cs."));
-          assert.deepEqual(JSON.parse(filter.slice(3)), ["sms"]);
-        } catch {
-          return Response.json({ message: "invalid input syntax for type json", code: "22P02" }, { status: 400 });
-        }
+      if (table === "claim_notification_dispatch_batch" && method === "POST") {
+        assert.equal(JSON.parse(init.body).p_channel, "sms");
         result = rows;
       } else if (table === "parent_notification_contacts" && method === "GET") {
         result = [{ id: "contact-a", profile_id: "profile-a", institution_id: "school-a",
@@ -82,15 +76,15 @@ function fixture({ rows = [], premium = true, parentAllowed = true } = {}) {
   return { route: loadedModule.exports, request, calls, sends };
 }
 
-test("JSONB SMS: le SDK émet un filtre JSON valide et la file vide réussit sans envoi", async () => {
+test("SMS: le traitement atomique respecte la file vide sans envoi", async () => {
   const s = fixture();
   const response = await s.route.POST(s.request());
   const result = await response.json();
   assert.equal(result.ok, true, result.error);
   assert.equal(result.attempted, 0);
-  assert.equal(s.calls[0].params.get("channels"), 'cs.["sms"]');
-  assert.equal(s.calls[0].params.get("status"), "eq.pending");
-  assert.equal(s.calls[0].params.get("limit"), "400");
+  assert.equal(s.calls[0].table, "claim_notification_dispatch_batch");
+  assert.equal(s.calls[0].body.p_channel, "sms");
+  assert.equal(s.calls[0].body.p_limit, 25);
   assert.equal(s.sends.length, 0);
 });
 
