@@ -46,7 +46,7 @@ test("a stale Arabic CP2 link never hides valid pupils or creates another enroll
   const before = db.tables.class_enrollments.length;
   const rows = await loadLinkedClassEnrollments(db.service, db.legacyId, {
     id: arabic, academic_year: "2026-2027", level: "CP2",
-  }, settings);
+  }, settings, { tolerateStaleLinks: true });
   assert.deepEqual(rows.map(row => row.student_id), [valid]);
   assert.equal(db.tables.class_enrollments.length, before);
   assert.equal(db.calls.every((call: { op: string }) => call.op === "read"), true);
@@ -64,7 +64,7 @@ test("a stale-only Arabic class yields an empty roster without inventing pupils"
   } };
   const roster = await loadLinkedClassEnrollments(db.service, db.legacyId, {
     id: arabic, level: "CP2", academic_year: "2026-2027",
-  }, settings);
+  }, settings, { tolerateStaleLinks: true });
   assert.deepEqual(roster, []);
   assert.equal(db.tables.class_enrollments.length, 0);
 });
