@@ -4,7 +4,7 @@ import SpecializedCorrespondentReports from "@/components/admin/SpecializedCorre
 import { useBilingualCorrespondentMode } from "@/hooks/useBilingualCorrespondentMode";
 
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   CalendarDays,
@@ -527,12 +527,16 @@ function LegacyBilanTrimestrielAnnuelPage() {
   const [academicYear, setAcademicYear] = useState("");
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
   const [loading, setLoading] = useState(false);
+  const [metadataLoading, setMetadataLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [periods, setPeriods] = useState<PeriodRow[]>([]);
+  const reportController = useRef<AbortController | null>(null);
+  const metadataController = useRef<AbortController | null>(null);
+  const loadingRef = useRef(false);
   const [classes, setClasses] = useState<EducationScopedClass[]>([]);
   const [educationScope, setEducationScope] =
     useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
 
-  const periods = data?.periods || [];
   const selectedPeriod = useMemo(
     () =>
       selectedPeriodId === ANNUAL_SELECTOR_VALUE
@@ -541,9 +545,60 @@ function LegacyBilanTrimestrielAnnuelPage() {
     [periods, selectedPeriodId, data?.selected_period],
   );
 
+  function clearReport() {
+    reportController.current?.abort();
+    reportController.current = null;
+    loadingRef.current = false;
+    setLoading(false);
+    setData(null);
+    setErrorMsg(null);
+  }
+
+  async function loadPeriods(nextYear = "") {
+    metadataController.current?.abort();
+    clearReport();
+    const controller = new AbortController();
+    metadataController.current = controller;
+    setMetadataLoading(true);
+    try {
+      const params = new URLSearchParams({ metadata_only: "1" });
+      if (nextYear) params.set("academic_year", nextYear);
+      const res = await fetch(`/api/admin/notes/bilan?${params.toString()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const json = await res.json().catch(() => null) as {
+        ok?: boolean; error?: string; academic_year?: string;
+        periods?: PeriodRow[]; selected_period?: PeriodRow | null;
+      } | null;
+      if (!res.ok || !json?.ok) throw new Error(json?.error || `Erreur ${res.status}`);
+      if (controller.signal.aborted) return;
+      setAcademicYear(json.academic_year || nextYear);
+      setPeriods(json.periods || []);
+      setSelectedPeriodId(json.selected_period?.id || "");
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setPeriods([]);
+        setSelectedPeriodId("");
+        setErrorMsg(error instanceof Error ? error.message : "Impossible de charger les périodes.");
+      }
+    } finally {
+      if (metadataController.current === controller) {
+        metadataController.current = null;
+        setMetadataLoading(false);
+      }
+    }
+  }
+
   async function loadReport(nextYear = academicYear, nextPeriodId = selectedPeriodId) {
+    // Un clic multiple ne doit jamais lancer plusieurs calculs complets.
+    if (loadingRef.current || metadataLoading || !periods.length || !nextPeriodId) return;
+    loadingRef.current = true;
+    const controller = new AbortController();
+    reportController.current = controller;
     setLoading(true);
     setErrorMsg(null);
+    setData(null);
 
     try {
       const params = buildEducationScopeSearchParams(educationScope, {
@@ -551,7 +606,7 @@ function LegacyBilanTrimestrielAnnuelPage() {
       });
       const annualMode = nextPeriodId === ANNUAL_SELECTOR_VALUE;
       const periodIdForRequest = annualMode
-        ? periods[periods.length - 1]?.id || data?.selected_period?.id || ""
+        ? periods[periods.length - 1]?.id || ""
         : nextPeriodId;
 
       if (nextYear) params.set("academic_year", nextYear);
@@ -560,18 +615,25 @@ function LegacyBilanTrimestrielAnnuelPage() {
 
       const res = await fetch(`/api/admin/notes/bilan${params.toString() ? `?${params.toString()}` : ""}`, {
         cache: "no-store",
+        signal: controller.signal,
       });
 
       const json = (await res.json().catch(() => null)) as ReportData | null;
       if (!res.ok || !json?.ok) throw new Error((json as any)?.error || `Erreur ${res.status}`);
-
-      setData(json);
-      setAcademicYear(json.academic_year || nextYear || "");
-      setSelectedPeriodId(json.mode === "annual" ? ANNUAL_SELECTOR_VALUE : json.selected_period?.id || nextPeriodId || "");
-    } catch (e: any) {
-      setErrorMsg(e?.message || "Impossible de charger le bilan.");
+      if (!controller.signal.aborted) {
+        setData(json);
+        setAcademicYear(json.academic_year || nextYear || "");
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setErrorMsg(error instanceof Error ? error.message : "Impossible de charger le bilan.");
+      }
     } finally {
-      setLoading(false);
+      if (reportController.current === controller) {
+        reportController.current = null;
+        loadingRef.current = false;
+        setLoading(false);
+      }
     }
   }
 
@@ -600,14 +662,18 @@ function LegacyBilanTrimestrielAnnuelPage() {
   }, []);
 
   useEffect(() => {
-    void loadReport("", "");
+    // Charger seulement les périodes au montage. Le calcul reste manuel.
+    void loadPeriods("");
+    return () => {
+      metadataController.current?.abort();
+      reportController.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function changeEducationScope(nextScope: EducationScopeValue) {
+    clearReport();
     setEducationScope(nextScope);
-    setData(null);
-    setErrorMsg(null);
   }
 
   function printReport() {
@@ -641,7 +707,15 @@ function LegacyBilanTrimestrielAnnuelPage() {
               <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Année</label>
               <input
                 value={academicYear}
-                onChange={(e) => setAcademicYear(e.target.value)}
+                onChange={(e) => {
+                  setAcademicYear(e.target.value);
+                  setPeriods([]);
+                  setSelectedPeriodId("");
+                  clearReport();
+                }}
+                onBlur={() => {
+                  if (academicYear.trim()) void loadPeriods(academicYear.trim());
+                }}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20"
                 placeholder="2025-2026"
               />
@@ -650,8 +724,11 @@ function LegacyBilanTrimestrielAnnuelPage() {
               <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Période</label>
               <Select
                 value={selectedPeriodId}
-                onChange={(e) => setSelectedPeriodId(e.target.value)}
-                disabled={!periods.length}
+                onChange={(e) => {
+                  clearReport();
+                  setSelectedPeriodId(e.target.value);
+                }}
+                disabled={metadataLoading || !periods.length}
               >
                 {periods.length ? (
                   <>
@@ -668,7 +745,7 @@ function LegacyBilanTrimestrielAnnuelPage() {
               </Select>
             </div>
             <div className="flex items-end gap-2">
-              <Button onClick={() => loadReport()} disabled={loading} className="min-w-[112px]">
+              <Button onClick={() => loadReport()} disabled={loading || metadataLoading || !periods.length || !selectedPeriodId} className="min-w-[112px]">
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Charger
               </Button>
