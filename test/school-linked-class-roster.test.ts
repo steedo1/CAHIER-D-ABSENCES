@@ -29,7 +29,7 @@ test("a stale Arabic CP2 link never hides valid pupils or creates another enroll
   } };
   for (const [id, label, level] of [
     [french, "CP2 — Français", "CP2"], [arabic, "CP2 — Arabe", "CP2"],
-    [wrong, "CE1 — Français", "CE1"],
+    [wrong, "6ème — Français", "6ème"],
   ]) db.tables.classes.push({ id, label, level,
     academic_year: "2026-2027", institution_id: db.legacyId });
   db.tables.students ||= [];

@@ -93,7 +93,9 @@ export function programsForStudent(
 
 /**
  * A pupil retains ONE class_enrollments record. An explicitly authorized
- * pedagogical class in the same academic level may display that pupil too.
+ * pedagogical class in the same school cycle may display that pupil too.
+ * Within the primary Arabic teaching track, grades can differ from the
+ * administrative French grade (e.g. French CP2 / Arabic CP1).
  * Stale, ambiguous or cross-cycle links are silently excluded from counts.
  * Caller supplies classes and actual active enrollments of ONE institution/year.
  */
@@ -122,8 +124,9 @@ export function expandPedagogicalEnrollments(
       const home = homeByStudent.get(id);
       if (!home || home.class_id === target.id) continue;
       const source = byClass.get(home.class_id);
+      const primaryArabicCrossGrade = target.cycle === "primary" && teaching === "arabic";
       if (!source?.level || source.cycle !== target.cycle ||
-        !sameSchoolLevel(source.level, target.level, target.cycle)) continue;
+        (!primaryArabicCrossGrade && !sameSchoolLevel(source.level, target.level, target.cycle))) continue;
       const sourceTracks = programsForStudent(
         yearPolicy?.classes[source.id], id, school.teachingTracksByCycle[source.cycle] || []);
       if (sourceTracks.length !== 1 || sourceTracks[0] === teaching) continue;

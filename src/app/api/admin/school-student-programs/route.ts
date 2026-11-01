@@ -86,16 +86,17 @@ async function activeClassStudentIds(
 
 
 type SchoolChoice = { id: string; label: string; level: string | null; cycle: "preschool" | "primary" | "secondary" | null };
-async function sameLevelHomeStudents(
+async function eligibleHomeStudents(
   service: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
   selected: SchoolChoice,
   choices: SchoolChoice[],
+  primaryArabicCrossGrade: boolean,
 ) {
   if (!selected.level?.trim()) return { candidates: [] };
   const siblingIds = choices.filter(row =>
     row.id !== selected.id && !!row.level?.trim() && !!row.cycle && row.cycle === selected.cycle &&
-    sameSchoolLevel(row.level, selected.level, selected.cycle || undefined))
+    (primaryArabicCrossGrade || sameSchoolLevel(row.level, selected.level, selected.cycle || undefined)))
     .map(row => row.id);
   const candidates: Array<{ student_id: string; class_id: string }> = [];
   if (!siblingIds.length) return { candidates };
@@ -145,8 +146,16 @@ export async function GET(request: NextRequest) {
     const enroll = await activeClassStudentIds(service, institutionId, selected.id);
     if ("error" in enroll) return json({ error: enroll.error }, 503);
     const studentIds = enroll.studentIds;
-    const nearby = selected.cycle ? await sameLevelHomeStudents(service, institutionId, selected, choices) :
-      { candidates: [] as Array<{ class_id: string; student_id: string }> };
+    // An unconfigured primary class must offer all same-cycle French homes;
+    // the chosen track is only known at save time, where eligibility is
+    // rechecked strictly for the Arabic teaching track.
+    const selectedTracks = stored.years[year]?.classes[selected.id]?.tracks;
+    const targetIsArabicPrimary = selected.cycle === "primary" &&
+      settings.teachingTracksByCycle.primary?.includes("arabic") === true &&
+      (!selectedTracks?.length || selectedTracks.length === 1 && selectedTracks[0] === "arabic");
+    const nearby = selected.cycle ? await eligibleHomeStudents(
+      service, institutionId, selected, choices, targetIsArabicPrimary,
+    ) : { candidates: [] as Array<{ class_id: string; student_id: string }> };
     if ("error" in nearby) return json({ error: nearby.error }, 503);
     const nearbyStudents = nearby.candidates.filter(row => !studentIds.includes(row.student_id));
     const idsToLoad = [...new Set([...studentIds, ...nearbyStudents.map(row => row.student_id)])];
@@ -270,7 +279,9 @@ export async function PUT(request: NextRequest) {
     }
     const target = choices.find(row => row.id === classId);
     if (!target) return json({ error: "class_not_found" }, 404);
-    const eligibleHome = await sameLevelHomeStudents(service, institutionId, target, choices);
+    const eligibleHome = await eligibleHomeStudents(
+      service, institutionId, target, choices, cycle === "primary" && defaultTracks[0] === "arabic",
+    );
     if ("error" in eligibleHome) return json({ error: eligibleHome.error }, 503);
     const homeByStudent = new Map(eligibleHome.candidates.map(row => [row.student_id, row.class_id]));
     for (const id of linkedStudentIds) {
@@ -286,7 +297,9 @@ export async function PUT(request: NextRequest) {
         if (otherId === classId || !policy.linkedStudentIds?.includes(id) ||
           !policy.tracks.includes(defaultTracks[0])) continue;
         const otherClass = choices.find(row => row.id === otherId);
-        if (otherClass?.cycle === cycle && sameSchoolLevel(otherClass.level, target.level, cycle)) {
+        if (otherClass?.cycle === cycle &&
+          (cycle === "primary" && defaultTracks[0] === "arabic" ||
+            sameSchoolLevel(otherClass.level, target.level, cycle))) {
           return json({ error: "duplicate_teaching_class" }, 409);
         }
       }
