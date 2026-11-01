@@ -105,7 +105,7 @@ test("une matière arabe sans exception conserve /10 au lieu de devenir indispon
   assert.equal(primarySubjectScale(settings, { ...common, level: "CE1", subjectId: french }), null);
 });
 
-test("22 matières EPC ont un intitulé arabe sans modifier les noms enregistrés", () => {
+test("25 matières EPC ont un intitulé arabe sans modifier les noms enregistrés", () => {
   const names = [
     "Apprentissage des lettres", "Lecture", "Écriture et dictée", "Expression orale",
     "Grammaire arabe", "Conjugaison arabe", "Poème", "Coran (poème) et écriture",
@@ -114,9 +114,9 @@ test("22 matières EPC ont un intitulé arabe sans modifier les noms enregistré
     "Traduction du Coran", "Hadith (tradition prophétique)",
     "Jurisprudence et croyance (Al-Muslim As-Saghîr)", "Leçons élémentaires",
     "Biographie du Prophète (SAW)", "Jurisprudence islamique (Fiqh)",
-    "Unicité divine (Tawhîd)", "Mathématiques", "Chants et dessin", "Dessin et chants",
+    "Unicité divine (Tawhîd)", "Mathématiques", "Chant", "Dessin", "Écriture", "Chants et dessin", "Dessin et chants",
   ];
-  assert.equal(EPC_PRIMARY_ARABIC_SUBJECT_COUNT, 22);
+  assert.equal(EPC_PRIMARY_ARABIC_SUBJECT_COUNT, 25);
   for (const name of names) {
     assert.ok(primaryArabicSubjectLabel(name), name);
     assert.equal(name, name.normalize("NFKC"));
