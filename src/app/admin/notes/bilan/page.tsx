@@ -771,6 +771,11 @@ function LegacyBilanTrimestrielAnnuelPage() {
           {errorMsg}
         </div>
       )}
+      {data?.meta?.generated_at && (
+        <p className="mt-3 text-xs text-slate-600">
+          Bilan calculé le {generatedAtLabel(data.meta.generated_at)}. Cliquez sur « Charger » après une modification des notes pour retrouver les résultats publiés les plus récents.
+        </p>
+      )}
 
       <section className="mt-5 grid gap-4 md:grid-cols-4">
         <StatCard label="Mode" value={data?.mode === "annual" ? "Annuel" : "Trimestriel"} icon={<CalendarDays className="h-5 w-5" />} />
