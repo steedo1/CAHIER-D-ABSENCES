@@ -99,9 +99,14 @@ export async function POST(request: NextRequest) {
   const source = homes.find(home => home.id === relevant[0].class_id)!;
   if (source.id === classId) return reply({ ok: true, already_present: true, student: pupil });
   const sourceCycle = school.classCycleById[source.id] || inferSchoolCycleFromLevel(source.level);
+  // The two teaching programs can place the same primary-school pupil in
+  // different grades (e.g. CP2 French / CP1 Arabic). Never alter the French
+  // administrative enrollment; keep same-grade constraints for other cycles.
+  const primaryArabicCrossGrade = cycle === "primary" &&
+    school.teachingTracksByCycle.primary?.includes("arabic");
   if (!sourceCycle || sourceCycle !== cycle || !source.level || !target.level ||
-    !sameSchoolLevel(source.level, target.level, cycle)) {
-    return reply({ error: "student_not_same_level_or_cycle" }, 409);
+    (!primaryArabicCrossGrade && !sameSchoolLevel(source.level, target.level, cycle))) {
+    return reply({ error: "student_not_same_cycle_or_eligible_level" }, 409);
   }
   const homeTracks = programsForStudent(
     yearPolicy?.classes[source.id], pupil.id, school.teachingTracksByCycle[cycle] || [],
@@ -126,7 +131,8 @@ export async function POST(request: NextRequest) {
     if (error || !previous || previous.length !== oldIds.length ||
       previous.some(row => {
         const previousCycle = school.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level);
-        return previousCycle !== cycle || !sameSchoolLevel(row.level, target.level, cycle);
+        return previousCycle !== cycle || !row.level ||
+          (!primaryArabicCrossGrade && !sameSchoolLevel(row.level, target.level, cycle));
       })) {
       return reply({ error: "prior_arabic_class_requires_review" }, 409);
     }
@@ -154,5 +160,9 @@ export async function POST(request: NextRequest) {
   });
   if (saveError) return reply({ error: "save_failed" }, 503);
   if (saved !== true) return reply({ error: "settings_changed_reload_required" }, 409);
-  return reply({ ok: true, student: pupil, transferred: oldIds.length > 0 });
+  return reply({
+    ok: true, student: pupil, transferred: oldIds.length > 0,
+    french_level: source.level, arabic_level: target.level,
+    cross_level: !sameSchoolLevel(source.level, target.level, cycle),
+  });
 }
