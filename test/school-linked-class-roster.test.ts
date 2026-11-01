@@ -48,6 +48,13 @@ test("a stale Arabic CP2 link never hides valid pupils or creates another enroll
     id: arabic, academic_year: "2026-2027", level: "CP2",
   }, settings, { tolerateStaleLinks: true });
   assert.deepEqual(rows.map(row => row.student_id), [valid]);
+  // The exact same stale links must remain forbidden for teachers and graders.
+  await assert.rejects(
+    loadLinkedClassEnrollments(db.service, db.legacyId, {
+      id: arabic, academic_year: "2026-2027", level: "CP2",
+    }, settings),
+    /STUDENT_PROGRAM_LINK_STALE/,
+  );
   assert.equal(db.tables.class_enrollments.length, before);
   assert.equal(db.calls.every((call: { op: string }) => call.op === "read"), true);
 });
