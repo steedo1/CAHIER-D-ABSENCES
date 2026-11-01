@@ -1,5 +1,6 @@
 import { primarySubjectScale } from "../src/lib/grades/primary-subject-scale";
 import { EPC_PRIMARY_ARABIC_SUBJECT_COUNT, primaryArabicSubjectLabel } from "../src/lib/primary-arabic-bulletin-labels";
+import { EPC_PRIMARY_ARABIC_REFERENCE_2026 } from "../src/lib/epc-primary-arabic-reference";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -126,8 +127,7 @@ test("32 matières EPC ont un intitulé arabe sans modifier les noms enregistré
 
 
 test("référentiel EPC 2026–2027 : six niveaux sans matières artificiellement regroupées", async () => {
-  const { EPC_PRIMARY_ARABIC_REFERENCE_2026: reference } =
-    await import("../src/lib/epc-primary-arabic-reference");
+  const reference = EPC_PRIMARY_ARABIC_REFERENCE_2026;
   assert.deepEqual(Object.fromEntries(
     Object.entries(reference).map(([level, names]) => [level, names.length])),
   { CP1: 9, CP2: 9, CE1: 8, CE2: 8, CM1: 8, CM2: 13 });
