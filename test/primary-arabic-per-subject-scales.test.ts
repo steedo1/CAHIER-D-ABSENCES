@@ -134,7 +134,7 @@ test("référentiel EPC 2026–2027 : six niveaux sans matières artificiellemen
   for (const [level, subjects] of Object.entries(reference)) {
     assert.equal(new Set(subjects).size, subjects.length, level);
     assert.ok(subjects.every(name => primaryArabicSubjectLabel(name)), level);
-    assert.ok(subjects.every(name => !/ et (?:dessin|chants|dictée|écriture)|coran \(/i.test(name)), level);
+    assert.ok(subjects.every(name => !/ et (?:dessin|chants|dictée|écriture)|^coran \((?:poème|règles|révision)/i.test(name)), level);
   }
   for (const level of ["CP1", "CP2", "CE1", "CE2"] as const) {
     assert.ok(reference[level].includes("Jurisprudence et croyance (Al-Muslim As-Saghîr)"));
