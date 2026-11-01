@@ -563,6 +563,29 @@ export async function GET(req: NextRequest) {
 
     const academicYear = requestedAcademicYear || (await getCurrentAcademicYear(srv, institutionId));
 
+    // Le simple affichage de la page ne doit pas générer tous les bulletins.
+    // Cette réponse légère contient uniquement les périodes, sans calcul de résultats.
+    if (url.searchParams.get("metadata_only") === "1") {
+      const { data: rows, error: periodError } = await srv
+        .from("grade_periods")
+        .select("id,academic_year,code,label,short_label,start_date,end_date,order_index,is_active,coeff")
+        .eq("institution_id", institutionId)
+        .eq("academic_year", academicYear)
+        .order("order_index", { ascending: true });
+      if (periodError) throw periodError;
+      const available = ((rows || []) as GradePeriodRow[])
+        .filter((p) => p.is_active !== false && p.start_date && p.end_date)
+        .sort((a, b) =>
+          Number(a.order_index ?? 999) - Number(b.order_index ?? 999) ||
+          String(a.start_date || "").localeCompare(String(b.start_date || "")));
+      return NextResponse.json({
+        ok: true,
+        academic_year: academicYear,
+        periods: available,
+        selected_period: available[available.length - 1] || null,
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
+
     const [{ data: institution }, { data: classesRaw }, { data: periodsRaw }] = await Promise.all([
       srv
         .from("institutions")
