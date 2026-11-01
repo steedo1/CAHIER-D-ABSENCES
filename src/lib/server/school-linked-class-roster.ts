@@ -54,7 +54,7 @@ export async function loadLinkedClassEnrollments(service: SupabaseClient, instit
     });
   }
   return students.map(student => ({
-    student_id: student.id, start_date: homes.find(home => home.student_id === student.id)?.start_date,
+    student_id: student.id, start_date: unambiguousHomes.find(home => home.student_id === student.id)?.start_date,
     students: student,
   }));
 }
