@@ -31,6 +31,7 @@ test("a stale Arabic CP2 link never hides valid pupils or creates another enroll
     [wrong, "CE1 — Français", "CE1"],
   ]) db.tables.classes.push({ id, label, level,
     academic_year: "2026-2027", institution_id: db.legacyId });
+  db.tables.students ||= [];
   for (const id of [valid, different]) db.tables.students.push({
     id, institution_id: db.legacyId, first_name: "Pupil", last_name: "Test",
     full_name: "Pupil Test", matricule: id,
