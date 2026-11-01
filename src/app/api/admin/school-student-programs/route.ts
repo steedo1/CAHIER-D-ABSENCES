@@ -146,9 +146,13 @@ export async function GET(request: NextRequest) {
     const enroll = await activeClassStudentIds(service, institutionId, selected.id);
     if ("error" in enroll) return json({ error: enroll.error }, 503);
     const studentIds = enroll.studentIds;
+    // An unconfigured primary class must offer all same-cycle French homes;
+    // the chosen track is only known at save time, where eligibility is
+    // rechecked strictly for the Arabic teaching track.
+    const selectedTracks = stored.years[year]?.classes[selected.id]?.tracks;
     const targetIsArabicPrimary = selected.cycle === "primary" &&
-      stored.years[year]?.classes[selected.id]?.tracks?.length === 1 &&
-      stored.years[year]?.classes[selected.id]?.tracks[0] === "arabic";
+      settings.teachingTracksByCycle.primary?.includes("arabic") &&
+      (!selectedTracks?.length || selectedTracks.length === 1 && selectedTracks[0] === "arabic");
     const nearby = selected.cycle ? await eligibleHomeStudents(
       service, institutionId, selected, choices, targetIsArabicPrimary,
     ) : { candidates: [] as Array<{ class_id: string; student_id: string }> };
