@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const classes = { ...yearPolicy.classes };
+  const classes = { ...(yearPolicy?.classes || {}) };
   for (const id of oldIds) {
     const old = classes[id];
     classes[id] = { ...old, linkedStudentIds: (old.linkedStudentIds || []).filter(id => id !== pupil.id) };
