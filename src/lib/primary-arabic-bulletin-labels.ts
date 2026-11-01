@@ -24,6 +24,9 @@ const SUBJECT_ARABIC: Record<string, string> = {
   "jurisprudence islamique (fiqh)": "الفقه الإسلامي",
   "unicité divine (tawhîd)": "التوحيد",
   "mathématiques": "الرياضيات",
+  "chant": "الأناشيد",
+  "dessin": "الرسم",
+  "écriture": "الكتابة",
   "chants et dessin": "الأناشيد والرسم",
   "dessin et chants": "الرسم والأناشيد",
 };
