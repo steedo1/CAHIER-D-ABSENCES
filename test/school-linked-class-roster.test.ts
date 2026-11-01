@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+// @ts-expect-error Fixture utility is deliberately JavaScript-only.
 import { createMulticycleFixture } from "./helpers/multicycle-fixture.mjs";
 import { loadLinkedClassEnrollments } from "../src/lib/server/school-linked-class-roster";
 
@@ -48,7 +49,7 @@ test("a stale Arabic CP2 link never hides valid pupils or creates another enroll
   }, settings);
   assert.deepEqual(rows.map(row => row.student_id), [valid]);
   assert.equal(db.tables.class_enrollments.length, before);
-  assert.equal(db.calls.every(call => call.op === "read"), true);
+  assert.equal(db.calls.every((call: { op: string }) => call.op === "read"), true);
 });
 
 test("a stale-only Arabic class yields an empty roster without inventing pupils", async () => {
