@@ -151,7 +151,7 @@ export async function GET(request: NextRequest) {
     // rechecked strictly for the Arabic teaching track.
     const selectedTracks = stored.years[year]?.classes[selected.id]?.tracks;
     const targetIsArabicPrimary = selected.cycle === "primary" &&
-      settings.teachingTracksByCycle.primary?.includes("arabic") &&
+      settings.teachingTracksByCycle.primary?.includes("arabic") === true &&
       (!selectedTracks?.length || selectedTracks.length === 1 && selectedTracks[0] === "arabic");
     const nearby = selected.cycle ? await eligibleHomeStudents(
       service, institutionId, selected, choices, targetIsArabicPrimary,
