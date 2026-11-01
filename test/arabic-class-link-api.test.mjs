@@ -97,19 +97,48 @@ test("Transferring between Arabic classes only relocates the pedagogical link", 
   assert.equal(db.tables.class_enrollments[0].class_id, homeId);
 });
 
-test("Reject out-of-level, unconfigured, foreign and unauthorized links without writes", async () => {
+test("Reject cross-cycle, unconfigured, foreign and unauthorized links without writes", async () => {
   const db = setup();
   const route = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
   const before = () => db.calls.filter(row => row.op !== "read").length;
   const original = before();
   const absent = await route.POST(request(arabicId, foreignId));
   assert.equal(absent.status, 404);
-  db.tables.classes.find(item => item.id === homeId).level = "CE1";
-  const badLevel = await route.POST(request(arabicId));
-  assert.equal(badLevel.status, 409);
+  db.tables.classes.find(item => item.id === homeId).level = "6ème";
+  const badCycle = await route.POST(request(arabicId));
+  assert.equal(badCycle.status, 409);
+  assert.equal((await badCycle.json()).error, "student_not_same_cycle_or_eligible_level");
   db.tables.classes.find(item => item.id === homeId).level = "CP1";
   db.tables.institutions[0].settings_json.school_student_programs_v1.years["2026-2027"].classes[arabicId].tracks = ["french"];
   assert.equal((await route.POST(request(arabicId))).status, 409);
   assert.equal(before(), original);
   assert.equal((await createFixtureRouteLoader(db, null)(routePath).POST(request(arabicId))).status, 401);
+});
+
+test("EPC: CP2 Arabic to CP1 Arabic preserves CP2 French and does not duplicate fees", async () => {
+  const db = setup();
+  db.tables.classes.find(row => row.id === homeId).level = "CP2";
+  db.tables.classes.find(row => row.id === homeId).label = "CP2 — Français";
+  db.tables.classes.find(row => row.id === arabicId).level = "CP2";
+  db.tables.classes.find(row => row.id === arabicId).label = "CP2 — Arabe";
+  db.tables.classes.find(row => row.id === arabicNextId).level = "CP1";
+  db.tables.classes.find(row => row.id === arabicNextId).label = "CP1 — Arabe";
+  const feeSnapshot = structuredClone(db.tables.school_fees || []);
+  const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+  const placed = await handler.POST(request(arabicId));
+  assert.equal(placed.status, 200, JSON.stringify(await placed.clone().json()));
+  const moved = await handler.POST(request(arabicNextId, "", "EPC260001"));
+  assert.equal(moved.status, 200, JSON.stringify(await moved.clone().json()));
+  const result = await moved.json();
+  assert.equal(result.transferred, true);
+  assert.equal(result.cross_level, true);
+  assert.equal(result.french_level, "CP2");
+  assert.equal(result.arabic_level, "CP1");
+  const policies = db.tables.institutions[0].settings_json.school_student_programs_v1.years["2026-2027"].classes;
+  assert.deepEqual(policies[arabicId].linkedStudentIds, []);
+  assert.deepEqual(policies[arabicNextId].linkedStudentIds, [studentId]);
+  assert.equal(db.tables.class_enrollments.length, 1);
+  assert.equal(db.tables.class_enrollments[0].class_id, homeId);
+  assert.deepEqual(db.tables.school_fees || [], feeSnapshot);
+  assert.equal(db.calls.some(call => call.op !== "read" && call.table !== "institutions"), false);
 });
