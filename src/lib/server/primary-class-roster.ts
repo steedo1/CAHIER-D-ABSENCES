@@ -8,7 +8,7 @@ import { classListSubjectShortName, type ClassListMarkSubject } from "@/lib/clas
 /** Read-only extension of the authorized roster. Linked pupils retain ONE
  * administrative enrollment and are reverified against the same school/year. */
 export async function loadPrimaryClassRoster(service: SupabaseClient, institutionId: string,
-  classroom: { id: string; level?: string | null; academic_year?: string | null }, settings: unknown) {
+  classroom: { id: string; level?: string | null; academic_year?: string | null }, settings: unknown, options?: { tolerateStaleLinks?: boolean }) {
   const school = parseSchoolCyclesSettings(settings);
   const cycle = resolveSchoolCycleForClass(classroom, school);
   if (cycle !== "primary") return null;
@@ -35,5 +35,5 @@ export async function loadPrimaryClassRoster(service: SupabaseClient, institutio
     used.set(subject.shortName, count);
     if (count > 1) subject.shortName += String(count);
   }
-  return { subjects, linkedEnrollments: await loadLinkedClassEnrollments(service, institutionId, classroom, settings) };
+  return { subjects, linkedEnrollments: await loadLinkedClassEnrollments(service, institutionId, classroom, settings, options) };
 }

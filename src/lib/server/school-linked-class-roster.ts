@@ -6,32 +6,58 @@ import { expandPedagogicalEnrollments, readStudentProgramSettings, programsForSt
 export type SchoolRosterClass = { id: string; level?: string | null; academic_year?: string | null };
 /** Reverify the persisted teaching links without creating duplicate enrollments. */
 export async function loadLinkedClassEnrollments(service: SupabaseClient, institutionId: string,
-  classroom: SchoolRosterClass, settings: unknown) {
+  classroom: SchoolRosterClass, settings: unknown, options?: { tolerateStaleLinks?: boolean }) {
   const school = parseSchoolCyclesSettings(settings);
   if (!school.enabled) return [];
   const year = classroom.academic_year || "";
   const policy = readStudentProgramSettings(settings).years[year];
   const links = policy?.classes[classroom.id]?.linkedStudentIds || [];
   if (!links.length) return [];
+  // Scope every home to this academic year; historical active memberships or
+  // deleted pupils must not blank the entire Arabic list. A database error
+  // still fails closed: never guess or expose unverified membership.
   const { data: homes, error: homeError } = await service.from("class_enrollments")
     .select("student_id,class_id,start_date").eq("institution_id", institutionId)
-    .in("student_id", links).is("end_date", null).limit(701);
-  if (homeError || !homes || homes.length !== links.length) throw Error("STUDENT_PROGRAM_LINK_STALE");
+    .in("student_id", links).is("end_date", null).limit(3501);
+  if (homeError || !homes || homes.length >= 3501) throw Error("STUDENT_PROGRAM_LINK_STALE");
+  if (!homes.length) {
+    if (!options?.tolerateStaleLinks) throw Error("STUDENT_PROGRAM_LINK_STALE");
+    console.warn("[arabic-roster] ignored historical links without active enrollment", { count: links.length });
+    return [];
+  }
   const { data: sources, error: classError } = await service.from("classes")
     .select("id,level,academic_year,institution_id").eq("institution_id", institutionId)
-    .eq("academic_year", year).in("id", [...new Set(homes.map(row => row.class_id))]).limit(701);
-  if (classError || !sources) throw Error("STUDENT_PROGRAM_LINK_STALE");
+    .eq("academic_year", year).in("id", [...new Set(homes.map(row => row.class_id))]).limit(3501);
+  if (classError || !sources || sources.length >= 3501) throw Error("STUDENT_PROGRAM_LINK_STALE");
+  const classIds = new Set(sources.map(source => source.id));
+  const yearHomes = homes.filter(row => classIds.has(row.class_id));
+  const counts = new Map<string, number>();
+  for (const row of yearHomes) counts.set(row.student_id, (counts.get(row.student_id) || 0) + 1);
+  // Ambiguous administrative membership must never authorize an Arabic link.
+  const unambiguousHomes = yearHomes.filter(row => counts.get(row.student_id) === 1);
   const classes = [...sources.filter(row => row.id !== classroom.id), classroom]
     .map(row => ({ id: row.id, level: row.level, cycle: resolveSchoolCycleForClass(row, school) }));
-  const allowed = expandPedagogicalEnrollments(school, policy, classes, homes)
-    .filter(row => row.class_id === classroom.id).map(row => row.student_id);
-  if (links.some(id => !allowed.includes(id))) throw Error("STUDENT_PROGRAM_LINK_STALE");
+  const allowed = [...new Set(expandPedagogicalEnrollments(school, policy, classes, unambiguousHomes)
+    .filter(row => row.class_id === classroom.id).map(row => row.student_id))];
+  if (allowed.length !== links.length) {
+    if (!options?.tolerateStaleLinks) throw Error("STUDENT_PROGRAM_LINK_STALE");
+    console.warn("[arabic-roster] excluded outdated or invalid pedagogical links", {
+      excludedCount: links.length - allowed.length,
+    });
+  }
+  if (!allowed.length) return [];
   const { data: students, error: studentError } = await service.from("students")
     .select("id,first_name,last_name,full_name,full_name_ar,matricule,gender,birthdate,birth_place,parent_names,parent_contact,nationality,is_repeater,lv2,is_affecte,is_boarder")
     .eq("institution_id", institutionId).in("id", allowed).limit(701);
-  if (studentError || !students || students.length !== links.length) throw Error("STUDENT_SCOPE_INVALID");
+  if (studentError || !students) throw Error("STUDENT_SCOPE_INVALID");
+  if (students.length !== allowed.length) {
+    if (!options?.tolerateStaleLinks) throw Error("STUDENT_SCOPE_INVALID");
+    console.warn("[arabic-roster] excluded links to missing student records", {
+      excludedCount: allowed.length - students.length,
+    });
+  }
   return students.map(student => ({
-    student_id: student.id, start_date: homes.find(home => home.student_id === student.id)?.start_date,
+    student_id: student.id, start_date: unambiguousHomes.find(home => home.student_id === student.id)?.start_date,
     students: student,
   }));
 }

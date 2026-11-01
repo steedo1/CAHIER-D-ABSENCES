@@ -582,7 +582,8 @@ export async function GET(
   let primaryRoster;
   try {
     primaryRoster = await loadPrimaryClassRoster(srv, institutionId, cls as any,
-      (institutionRes.data as unknown as { settings_json?: unknown } | null)?.settings_json);
+      (institutionRes.data as unknown as { settings_json?: unknown } | null)?.settings_json,
+      { tolerateStaleLinks: true });
   } catch (error) {
     return respond({ error: error instanceof Error ? error.message : "primary_roster_unavailable" }, { status: 409 });
   }
@@ -600,6 +601,7 @@ export async function GET(
       linkedEnrollments = await loadLinkedClassEnrollments(
         srv, institutionId, cls as any,
         (institutionRes.data as any)?.settings_json,
+        { tolerateStaleLinks: true },
       );
     } catch (error) {
       return respond({ error: error instanceof Error ? error.message : "STUDENT_PROGRAM_LINK_STALE" }, { status: 409 });

@@ -8,7 +8,7 @@ import {
   programsForStudent,
   readStudentProgramSettings,
 } from "@/lib/school-student-programs";
-import { asSettingsObject, writeSchoolSettings } from "@/lib/school-settings-write";
+import { asSettingsObject } from "@/lib/school-settings-write";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -144,7 +144,15 @@ export async function POST(request: NextRequest) {
       ...policy, years: { ...policy.years, [year]: { classes } },
     },
   };
-  const saved = await writeSchoolSettings(srv, institutionId, rawSettings, next);
-  if ("error" in saved) return reply({ error: saved.error }, saved.status);
+  // A large whole-document PostgREST CAS generated an overlong URL on EPC.
+  // Compare only the program policy, and update only that JSONB key atomically.
+  // The database function is invoker-security and service_role-only.
+  const { data: saved, error: saveError } = await srv.rpc("cas_school_student_programs_v1", {
+    p_institution_id: institutionId,
+    p_previous: asSettingsObject(rawSettings)[SCHOOL_STUDENT_PROGRAMS_KEY] ?? null,
+    p_next: next[SCHOOL_STUDENT_PROGRAMS_KEY],
+  });
+  if (saveError) return reply({ error: "save_failed" }, 503);
+  if (saved !== true) return reply({ error: "settings_changed_reload_required" }, 409);
   return reply({ ok: true, student: pupil, transferred: oldIds.length > 0 });
 }
