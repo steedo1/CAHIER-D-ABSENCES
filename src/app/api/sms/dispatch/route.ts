@@ -308,6 +308,9 @@ function isTerminalErrorCode(msg: string) {
     "unsupported_sms_provider",
     "no_target_profiles",
     "no_sms_contact",
+    "sms_delivery_uncertain",
+    "sms_already_reserved",
+    "sms_reservation_failed",
   ].includes(code);
 }
 
@@ -535,17 +538,11 @@ async function run(req: Request) {
 
   const srv = getSupabaseServiceClient();
 
-  const { data: raw, error: pickErr } = await srv
-    .from("notifications_queue")
-    .select(
-      "id,institution_id,parent_id,student_id,profile_id,channels,payload,title,body,status,attempts,created_at,meta"
-    )
-    .eq("status", WAIT_STATUS)
-    // channels est JSONB : un tableau JS devient un littéral PostgreSQL
-    // {sms} dans le SDK, qui n'est pas du JSON. Fournir le JSON explicitement.
-    .contains("channels", JSON.stringify(["sms"]))
-    .order("created_at", { ascending: true })
-    .limit(400);
+  // Lock only due SMS rows. A second Render request cannot claim them concurrently.
+  const { data: raw, error: pickErr } = await srv.rpc(
+    "claim_notification_dispatch_batch",
+    { p_channel: "sms", p_limit: 25, p_lease_seconds: 900 }
+  );
 
   if (pickErr) {
     console.error("[sms/dispatch] select_error", {
@@ -566,7 +563,7 @@ async function run(req: Request) {
   const allowedRowIds = new Set(rows.map((row) => row.id));
   const blockedIds = candidateRows.filter((row) => !allowedRowIds.has(row.id)).map((row) => row.id);
   if (blockedIds.length) {
-    const { error: blockedError } = await srv.from("notifications_queue").update({ status: "error", last_error: "PARENT_CONNECT_REQUIRED" }).in("id", blockedIds);
+    const { error: blockedError } = await srv.from("notifications_queue").update({ status: "skipped", last_error: "PARENT_CONNECT_REQUIRED" }).in("id", blockedIds);
     if (blockedError) console.warn("[parent-connect] blocked notifications retained", { id });
   }
 
@@ -787,6 +784,26 @@ async function run(req: Request) {
               continue;
             }
 
+            // Reserve the recipient BEFORE contacting Orange. A timed-out request may
+            // already have been billed, so we must never blindly resend it.
+            const { error: reservationError } = await srv
+              .from("notification_sms_attempts")
+              .insert({ queue_id: n.id, phone_e164: best.phone_e164, state: "attempting" });
+            if (reservationError) {
+              const collision = (reservationError as any).code === "23505";
+              lastError = collision ? "sms_already_reserved" : "sms_reservation_failed";
+              failedTargets.push({
+                profile_id: profileId,
+                contact_id: best.id,
+                error: lastError,
+                at: new Date().toISOString(),
+              });
+              console.warn("[sms/dispatch] sms_not_sent_reservation", {
+                id, qid: n.id, collision, code: (reservationError as any).code,
+              });
+              continue;
+            }
+
             try {
               const orangeResult = await sendOrangeSms({
                 to: best.phone_e164,
@@ -803,6 +820,18 @@ async function run(req: Request) {
                 orangeDebug.resourceId ||
                 extractOrangeResourceId(orangeDebug.resourceURL);
               const acceptedAtIso = new Date().toISOString();
+              const { error: receiptError } = await srv
+                .from("notification_sms_attempts")
+                .update({
+                  state: "accepted",
+                  orange_resource_id: orangeResourceId,
+                  updated_at: acceptedAtIso,
+                })
+                .eq("queue_id", n.id)
+                .eq("phone_e164", best.phone_e164);
+              if (receiptError) console.error("[sms/dispatch] sms_receipt_update_failed", {
+                id, qid: n.id, code: (receiptError as any).code,
+              });
 
               successTargets.push({
                 profile_id: profileId,
@@ -913,8 +942,17 @@ async function run(req: Request) {
                 providerStatusWillBe: providerQueueStatus,
               });
             } catch (e: any) {
-              lastError = String(e?.message || e);
-
+              // Outcome unknown after contacting Orange: no automatic resend.
+              const providerError = String(e?.message || e);
+              lastError = "sms_delivery_uncertain";
+              const { error: uncertainError } = await srv
+                .from("notification_sms_attempts")
+                .update({ state: "unknown", last_error: providerError.slice(0, 300), updated_at: new Date().toISOString() })
+                .eq("queue_id", n.id)
+                .eq("phone_e164", best.phone_e164);
+              if (uncertainError) console.warn("[sms/dispatch] sms_uncertain_update_failed", {
+                id, qid: n.id, code: (uncertainError as any).code,
+              });
               failedTargets.push({
                 profile_id: profileId,
                 contact_id: best.id,
@@ -934,7 +972,7 @@ async function run(req: Request) {
                 attempts,
                 requestedSenderName: senderName || null,
                 message_length: message.length,
-                error: lastError.slice(0, 300),
+                error: providerError.slice(0, 300),
               });
             }
           }
