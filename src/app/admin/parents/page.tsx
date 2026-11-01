@@ -1663,6 +1663,9 @@ export default function AdminStudentsByClassPage() {
           prior_arabic_class_requires_review: "L'ancienne affectation arabe doit être vérifiée avant ce transfert.",
           multiple_arabic_links_require_review: "Plusieurs affectations arabes existent : corrigez-les avant de continuer.",
           settings_changed_reload_required: "La répartition a changé : réessayez après actualisation.",
+          save_failed: "Enregistrement impossible. Aucun rattachement nouveau n'a été confirmé. Réessayez après avoir vérifié la connexion.",
+          arabic_class_full: "Cette classe arabe a atteint sa limite de rattachements.",
+          student_not_found: "Élève introuvable dans cet établissement.",
         };
         throw new Error(messages[String(json?.error)] || json?.error || "ASSIGN_FAILED");
       }
