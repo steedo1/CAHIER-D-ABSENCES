@@ -2,7 +2,7 @@
 
 import DocumentDirectionSignatures from "@/components/DocumentDirectionSignatures";
 import SchoolReportObservationsPanel from "@/components/admin/SchoolReportObservationsPanel";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { TeachingTrack } from "@/lib/school-cycles";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
 import "./SpecializedCorrespondentReports.print.css";
@@ -79,6 +79,21 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [loadedAt, setLoadedAt] = useState("");
+  const reportController = useRef<AbortController | null>(null);
+  const busyRef = useRef(false);
+
+  // Toute nouvelle sélection invalide le résultat affiché, sans conserver un cache.
+  useEffect(() => {
+    reportController.current?.abort();
+    reportController.current = null;
+    busyRef.current = false;
+    setBusy(false);
+    setReports([]);
+    setLoaded(false);
+    setLoadedAt("");
+    return () => { reportController.current?.abort(); };
+  }, [year, classId, periodId, mode]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -115,13 +130,15 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
   useEffect(() => { setReports([]); setLoaded(false); }, [periodId, mode]);
 
   async function loadReport() {
-    if (!classId || !year || !periodId || busy) return;
+    if (!classId || !year || !periodId || busyRef.current) return;
     const relevant = mode === "annual" ? periods.slice(0, 12) : periods.filter(p => p.id === periodId);
     if (!relevant.length) return;
-    setBusy(true); setError(""); setLoaded(false); setReports([]);
+    busyRef.current = true;
+    const controller = new AbortController();
+    reportController.current = controller;
+    setBusy(true); setError(""); setLoaded(false); setReports([]); setLoadedAt("");
     try {
-      // No mutation or legacy fallback. Bounded reads, scoped to the selected
-      // institution/class by the same authorized bulletin API as the official UI.
+      // Aucune mutation : lecture fraîche des données officielles sur clic.
       const response: PeriodReport[] = [];
       for (const period of relevant) {
         const params = new URLSearchParams({
@@ -129,17 +146,26 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
           from: period.start_date, to: period.end_date,
         });
         const data = await requestData<{ specialized?: SpecializedBulletinPayload }>(
-          `/api/admin/grades/bulletin?${params}`, new AbortController().signal);
+          `/api/admin/grades/bulletin?${params}`, controller.signal);
         if (!data.specialized || data.specialized.engine !== "specialized")
           throw new Error("Le moteur officiel spécialisé n'est pas activé pour cette classe.");
         response.push({ period, payload: data.specialized });
       }
+      if (controller.signal.aborted) return;
       setReports(response);
+      setLoadedAt(new Date().toISOString());
       const availableTracks = new Set(response.flatMap(p => p.payload.programs));
       if (!availableTracks.has(track) && availableTracks.has("arabic")) setTrack("arabic");
     } catch (err) {
-      setError(readableError(err));
-    } finally { setLoaded(true); setBusy(false); }
+      if (!controller.signal.aborted) setError(readableError(err));
+    } finally {
+      if (reportController.current === controller) {
+        reportController.current = null;
+        busyRef.current = false;
+        setLoaded(true);
+        setBusy(false);
+      }
+    }
   }
 
   const chosenClass = classes.find(row => row.id === classId);
@@ -235,6 +261,9 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
       Aucune période disponible pour cette classe : les bulletins et les rapports ne peuvent pas être calculés.
     </p>}
     {loaded && !!reports.length && <div className="space-y-4">
+      {loadedAt && <p className="text-xs text-slate-600 print:hidden">
+        Résultats chargés le {new Date(loadedAt).toLocaleString("fr-FR")}. Cliquez à nouveau sur « Afficher les résultats » après toute publication de notes.
+      </p>}
       <div className="flex flex-wrap items-end gap-3 print:hidden">
         <label className="min-w-56 text-sm">Enseignement
           <select className="mt-1 w-full rounded-lg border p-2" value={selectedTrack}
