@@ -54,6 +54,7 @@ const request = (classId, pupilId = studentId, matricule = "") => new NextReques
 
 test("Arabic add links an existing French pupil without an extra enrollment or finance mutation", async () => {
   const db = setup();
+  db.tables.institutions[0].settings_json.other_large_setting = "x".repeat(65000);
   const route = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
   const response = await route.POST(request(arabicId));
   assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
@@ -63,6 +64,7 @@ test("Arabic add links an existing French pupil without an extra enrollment or f
   assert.deepEqual(classes[arabicId].linkedStudentIds, [studentId]);
   assert.equal(db.tables.class_enrollments.length, 1);
   assert.equal(db.tables.class_enrollments[0].class_id, homeId);
+  assert.equal(db.tables.institutions[0].settings_json.other_large_setting.length, 65000);
   assert.equal(db.calls.some(call => call.op !== "read" && call.table !== "institutions"), false);
   const repeat = await route.POST(request(arabicId));
   assert.equal(repeat.status, 200);
