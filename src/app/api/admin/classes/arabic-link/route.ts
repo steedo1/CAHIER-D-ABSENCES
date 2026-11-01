@@ -13,7 +13,7 @@ import { asSettingsObject, writeSchoolSettings } from "@/lib/school-settings-wri
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_ROLES = [
   "admin", "super_admin", "founder", "file_correspondent", "finance_manager", "finance",
 ] as const;
