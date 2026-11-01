@@ -58,8 +58,9 @@ BEGIN
     WHERE s.id IS NULL OR s.name <> x.name) THEN
     RAISE EXCEPTION 'One of the reserved EPC Arabic subject codes conflicts with an existing subject';
   END IF;
-  FOR level_name, item IN SELECT key, value FROM jsonb_each(catalog) LOOP
-    class_id := (item.value->>'classId')::uuid;
+  FOR item IN SELECT key AS level, value AS data FROM jsonb_each(catalog) LOOP
+    level_name := item.level;
+    class_id := (item.data->>'classId')::uuid;
     IF NOT EXISTS (SELECT 1 FROM public.classes c WHERE c.id=class_id
       AND c.institution_id=school_id AND c.academic_year=year_code
       AND c.level=level_name AND c.label ILIKE '%Arabe%')
@@ -67,7 +68,7 @@ BEGIN
       RAISE EXCEPTION 'Wrong class or teaching configuration for grade %', level_name;
     END IF;
     selected := '[]'::jsonb;
-    FOR name_or_id IN SELECT jsonb_array_elements_text(item.value->'subjects') LOOP
+    FOR name_or_id IN SELECT jsonb_array_elements_text(item.data->'subjects') LOOP
       token := name_or_id;
       IF left(token,5)='code:' THEN
         SELECT s.id INTO canonical_id FROM public.subjects s WHERE s.code=substring(token FROM 6);
@@ -79,7 +80,8 @@ BEGIN
       END IF;
       INSERT INTO public.institution_subjects(institution_id,subject_id,is_active)
         VALUES(school_id,canonical_id,true)
-      ON CONFLICT(institution_id,subject_id) DO UPDATE SET is_active=true;
+      ON CONFLICT(institution_id,subject_id) DO UPDATE SET is_active=true
+        WHERE public.institution_subjects.is_active=false;
       selected := selected || to_jsonb(canonical_id::text);
       current_tracks := COALESCE(settings#>ARRAY['school_cycles_v1','subjectTracksByCycle','primary',canonical_id::text], '[]'::jsonb);
       IF NOT (current_tracks ? 'arabic') THEN
