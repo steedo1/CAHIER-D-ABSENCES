@@ -20,7 +20,7 @@ DECLARE
   inst_subject_id uuid;
   teacher_id_from_source uuid;
   teacher_count integer;
-  class_id uuid;
+  target_class_id uuid;
   selected jsonb;
   current_tracks jsonb;
 BEGIN
@@ -60,11 +60,11 @@ BEGIN
   END IF;
   FOR item IN SELECT key AS level, value AS data FROM jsonb_each(catalog) LOOP
     level_name := item.level;
-    class_id := (item.data->>'classId')::uuid;
-    IF NOT EXISTS (SELECT 1 FROM public.classes c WHERE c.id=class_id
+    target_class_id := (item.data->>'classId')::uuid;
+    IF NOT EXISTS (SELECT 1 FROM public.classes c WHERE c.id=target_class_id
       AND c.institution_id=school_id AND c.academic_year=year_code
       AND c.level=level_name AND c.label ILIKE '%Arabe%')
-      OR (settings#>ARRAY['school_student_programs_v1','years',year_code,'classes',class_id::text,'tracks']) <> '["arabic"]'::jsonb THEN
+      OR (settings#>ARRAY['school_student_programs_v1','years',year_code,'classes',target_class_id::text,'tracks']) <> '["arabic"]'::jsonb THEN
       RAISE EXCEPTION 'Wrong class or teaching configuration for grade %', level_name;
     END IF;
     selected := '[]'::jsonb;
@@ -91,7 +91,7 @@ BEGIN
       END IF;
     END LOOP;
     settings := jsonb_set(settings,
-      ARRAY['school_class_subjects_v1','years',year_code,'classes',class_id::text],
+      ARRAY['school_class_subjects_v1','years',year_code,'classes',target_class_id::text],
       selected, true);
   END LOOP;
   -- Split old teaching assignments, retaining the same teacher for each new
@@ -124,7 +124,7 @@ BEGIN
     ('CM2','Écriture','149d6bcd-dd4a-4e17-9572-886b27eff9e7'::uuid),
     ('CM2','Dictée','149d6bcd-dd4a-4e17-9572-886b27eff9e7'::uuid)
   ) x(level,target_name,old_global_id) LOOP
-    class_id := (catalog->item.level->>'classId')::uuid;
+    target_class_id := (catalog->item.level->>'classId')::uuid;
     token := subject_map->>item.target_name;
     IF left(token,5)='code:' THEN
       SELECT s.id INTO canonical_id FROM public.subjects s WHERE s.code=substring(token FROM 6);
@@ -133,20 +133,20 @@ BEGIN
     SELECT i.id INTO inst_subject_id FROM public.institution_subjects i
       WHERE i.institution_id=school_id AND i.subject_id=canonical_id;
     IF NOT EXISTS (SELECT 1 FROM public.class_teachers ct
-        WHERE ct.institution_id=school_id AND ct.class_id=class_id
+        WHERE ct.institution_id=school_id AND ct.class_id=target_class_id
           AND ct.subject_id=inst_subject_id AND ct.end_date IS NULL) THEN
       SELECT count(DISTINCT ct.teacher_id), min(ct.teacher_id::text)::uuid
         INTO teacher_count, teacher_id_from_source
       FROM public.class_teachers ct
       JOIN public.institution_subjects i ON i.id=ct.subject_id
-      WHERE ct.institution_id=school_id AND ct.class_id=class_id
+      WHERE ct.institution_id=school_id AND ct.class_id=target_class_id
         AND ct.end_date IS NULL AND i.subject_id=item.old_global_id;
       IF teacher_count <> 1 THEN
         RAISE EXCEPTION 'Cannot establish a unique teacher for % % (old subject %)',
         item.level,item.target_name,item.old_global_id;
       END IF;
       INSERT INTO public.class_teachers(institution_id,class_id,subject_id,teacher_id,start_date)
-      VALUES(school_id,class_id,inst_subject_id,teacher_id_from_source,CURRENT_DATE)
+      VALUES(school_id,target_class_id,inst_subject_id,teacher_id_from_source,CURRENT_DATE)
       ON CONFLICT (class_id,subject_id,teacher_id,start_date) DO NOTHING;
     END IF;
   END LOOP;
