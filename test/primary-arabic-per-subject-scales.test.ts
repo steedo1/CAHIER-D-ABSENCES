@@ -1,5 +1,6 @@
 import { primarySubjectScale } from "../src/lib/grades/primary-subject-scale";
 import { EPC_PRIMARY_ARABIC_SUBJECT_COUNT, primaryArabicSubjectLabel } from "../src/lib/primary-arabic-bulletin-labels";
+import { EPC_PRIMARY_ARABIC_REFERENCE_2026 } from "../src/lib/epc-primary-arabic-reference";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -105,7 +106,7 @@ test("une matière arabe sans exception conserve /10 au lieu de devenir indispon
   assert.equal(primarySubjectScale(settings, { ...common, level: "CE1", subjectId: french }), null);
 });
 
-test("22 matières EPC ont un intitulé arabe sans modifier les noms enregistrés", () => {
+test("32 matières EPC ont un intitulé arabe sans modifier les noms enregistrés", () => {
   const names = [
     "Apprentissage des lettres", "Lecture", "Écriture et dictée", "Expression orale",
     "Grammaire arabe", "Conjugaison arabe", "Poème", "Coran (poème) et écriture",
@@ -116,10 +117,31 @@ test("22 matières EPC ont un intitulé arabe sans modifier les noms enregistré
     "Biographie du Prophète (SAW)", "Jurisprudence islamique (Fiqh)",
     "Unicité divine (Tawhîd)", "Mathématiques", "Chants et dessin", "Dessin et chants",
   ];
-  assert.equal(EPC_PRIMARY_ARABIC_SUBJECT_COUNT, 22);
+  assert.equal(EPC_PRIMARY_ARABIC_SUBJECT_COUNT, 32);
   for (const name of names) {
     assert.ok(primaryArabicSubjectLabel(name), name);
     assert.equal(name, name.normalize("NFKC"));
   }
   assert.equal(primaryArabicSubjectLabel("Matière inconnue"), null);
+});
+
+
+test("référentiel EPC 2026–2027 : six niveaux sans matières artificiellement regroupées", async () => {
+  const reference = EPC_PRIMARY_ARABIC_REFERENCE_2026;
+  assert.deepEqual(Object.fromEntries(
+    Object.entries(reference).map(([level, names]) => [level, names.length])),
+  { CP1: 9, CP2: 9, CE1: 8, CE2: 8, CM1: 8, CM2: 13 });
+  for (const [level, subjects] of Object.entries(reference)) {
+    assert.equal(new Set(subjects).size, subjects.length, level);
+    assert.ok(subjects.every(name => primaryArabicSubjectLabel(name)), level);
+    assert.ok(subjects.every(name => !/ et (?:dessin|chants|dictée|écriture)|^coran \((?:poème|règles|révision)/i.test(name)), level);
+  }
+  for (const level of ["CP1", "CP2", "CE1", "CE2"] as const) {
+    assert.ok(reference[level].includes("Jurisprudence et croyance (Al-Muslim As-Saghîr)"));
+  }
+  for (const level of ["CM1", "CM2"] as const) {
+    assert.ok(reference[level].includes("Jurisprudence islamique (Fiqh)"));
+    assert.ok(reference[level].includes("Unicité divine (Tawhîd)"));
+    assert.ok(reference[level].includes("Écriture") && reference[level].includes("Dictée"));
+  }
 });
