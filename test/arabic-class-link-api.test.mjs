@@ -35,7 +35,7 @@ function setup() {
       academic_year: "2026-2027",
     });
   }
-  db.tables.students.push({
+  (db.tables.students ||= []).push({
     id: studentId, first_name: "Awa", last_name: "Kouadio",
     matricule: "EPC260001", institution_id: db.legacyId,
   });
