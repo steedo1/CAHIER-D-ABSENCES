@@ -167,7 +167,7 @@ test("one pupil appears in separate French and Arabic classes without a second a
   assert.equal(db.tables.class_enrollments.length, 2);
 });
 
-test("additional class must be at the same academic level", async () => {
+test("Arabic primary grade may differ from the French enrollment in the same academic year", async () => {
   const db = setup();
   const other = "55555555-5555-4555-8555-555555555555";
   db.tables.classes.push({ id: other, institution_id: db.legacyId,
@@ -177,10 +177,15 @@ test("additional class must be at the same academic level", async () => {
   assert.equal((await handler.PUT(request(api, "PUT", {
     revision: first.revision, classId: c1, defaultTracks: ["french"], overrides: {},
   }))).status, 200);
-  const next = await (await handler.GET(request(api))).json();
-  const invalid = await handler.PUT(request(api, "PUT", {
-    revision: next.revision, classId: other, defaultTracks: ["arabic"],
-    overrides: {}, linkedStudentIds: [s1],
+  const before = await (await handler.GET(request(`${api}?class_id=${other}`))).json();
+  assert.deepEqual(before.candidates.map(row => row.id).sort(), [s1, s2].sort());
+  const result = await handler.PUT(request(api, "PUT", {
+    revision: before.revision, classId: other,
+    defaultTracks: ["arabic"], overrides: {}, linkedStudentIds: [s1],
   }));
-  assert.equal(invalid.status, 403);
+  assert.equal(result.status, 200, JSON.stringify(await result.clone().json()));
+  const saved = await (await handler.GET(request(`${api}?class_id=${other}`))).json();
+  assert.deepEqual(saved.linkedStudentIds, [s1]);
+  assert.equal(db.tables.class_enrollments.length, 2);
+  assert.equal(db.tables.class_enrollments.every(row => row.class_id === c1), true);
 });
