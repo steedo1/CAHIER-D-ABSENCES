@@ -226,8 +226,23 @@ function limitSmsText(value: string, maxLength = DEFAULT_MAX_SMS_LENGTH): string
   const clean = sanitizeSmsText(value);
   if (clean.length <= maxLength) return clean;
 
-  const trimmed = clean.slice(0, Math.max(0, maxLength - 3)).trim();
+  // Never cut a word (or a phone/payment amount) in the middle.
+  const prefix = clean.slice(0, Math.max(0, maxLength - 3));
+  const boundary = prefix.lastIndexOf(" ");
+  const trimmed = (boundary > maxLength / 2 ? prefix.slice(0, boundary) : prefix).trim();
   return `${trimmed}...`;
+}
+
+// Keeps the essential alert readable and adds only complete optional details.
+// 140 ASCII characters stays within one standard GSM-7 segment.
+function appendSmsDetails(essential: string, optional: string[], maxLength: number): string {
+  let output = limitSmsText(essential, maxLength);
+  for (const detail of optional) {
+    const clean = sanitizeSmsText(detail);
+    if (!clean) continue;
+    if (output.length + clean.length + 1 <= maxLength) output += ` ${clean}`;
+  }
+  return output;
 }
 
 function isProbablyStudentCode(value: string): boolean {
@@ -425,31 +440,18 @@ export function buildAttendanceSmsMessage(
   const minutesLate = Math.max(0, toSafeNumber(payload.minutes_late) ?? 0);
   const reason = sanitizeSmsText(s(payload.reason));
 
-  let main = "";
-
-  if (event === "absent") {
-    main = `${appName}: ${studentName} absent`;
-  } else if (event === "late") {
-    main = `${appName}: ${studentName} en retard`;
-    if (minutesLate > 0) main += ` (${minutesLate} min)`;
-  } else {
-    main =
-      minutesLate > 0
-        ? `${appName}: correction assiduite ${studentName} retard ${minutesLate} min`
-        : `${appName}: correction assiduite ${studentName} absence`;
-  }
-
-  const details = joinParts(
-    [
-      subjectName ? `Matiere ${subjectName}` : "",
-      when || "",
-      institutionName ? `Etab ${institutionName}` : "",
-      reason ? `Motif ${reason}` : "",
-    ],
-    " - "
-  );
-
-  return limitSmsText(details ? `${main}. ${details}.` : `${main}.`, maxLength);
+  const label = event === "absent"
+    ? "Absence signalee"
+    : event === "late" ? "Retard signale" : "Assiduite corrigee";
+  const duration = event === "late" && minutesLate > 0 ? ` (${minutesLate} min)` : "";
+  const essential = `${appName}: ${label} pour ${studentName}${duration}.`;
+  return appendSmsDetails(essential, [
+    when ? `Le ${when}.` : "",
+    subjectName ? `Cours: ${subjectName}.` : "",
+    institutionName ? `Ecole: ${institutionName}.` : "",
+    reason ? `Motif: ${reason}.` : "",
+    "Details sur Parent Connect.",
+  ], maxLength);
 }
 
 export function buildGradesDigestSmsMessage(
@@ -475,10 +477,11 @@ export function buildGradesDigestSmsMessage(
     " - "
   );
 
-  const body = items.length ? items.join(", ") : "Nouvelle note disponible.";
-
-  const full = joinParts([head, meta, body], " - ");
-  return limitSmsText(`${full}.`, maxLength);
+  const essential = joinParts([head, meta], " - ") + ".";
+  return appendSmsDetails(essential, [
+    ...items.map((item) => `${item}.`),
+    items.length ? "Details sur Parent Connect." : "Consultez Parent Connect.",
+  ], maxLength);
 }
 
 export function buildFinanceReminderSmsMessage(
