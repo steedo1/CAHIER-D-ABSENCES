@@ -399,7 +399,14 @@ async function getCurrentAcademicYear(srv: ReturnType<typeof getSupabaseServiceC
 async function fetchBulletin(req: NextRequest, cls: ClassRow, period: GradePeriodRow): Promise<BulletinResponse | null> {
   if (!period.start_date || !period.end_date) return null;
 
-  const url = new URL("/api/admin/grades/bulletin", req.url);
+  // Sur Render, req.url peut porter le protocole HTTPS du proxy alors que
+  // Next.js écoute en HTTP sur PORT. Utiliser le loopback évite l'erreur TLS
+  // ERR_SSL_WRONG_VERSION_NUMBER et les requêtes externes inutiles.
+  const internalPort = process.env.PORT;
+  const origin = internalPort && /^\d{2,5}$/.test(internalPort)
+    ? `http://127.0.0.1:${internalPort}`
+    : req.url;
+  const url = new URL("/api/admin/grades/bulletin", origin);
   url.searchParams.set("class_id", cls.id);
   url.searchParams.set("from", period.start_date);
   url.searchParams.set("to", period.end_date);
@@ -638,9 +645,16 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
-    const bulletinResults = await Promise.all(
-      classes.map((cls) => fetchBulletin(req, cls, selectedPeriod)),
-    );
+    // Éviter de saturer la petite instance Render avec un appel par classe
+    // lancé simultanément. Conserver l'ordre classes -> bulletinResults.
+    const bulletinResults: Array<BulletinResponse | null> = [];
+    const BULLETIN_BATCH_SIZE = 3;
+    for (let i = 0; i < classes.length; i += BULLETIN_BATCH_SIZE) {
+      const batch = await Promise.all(
+        classes.slice(i, i + BULLETIN_BATCH_SIZE).map((cls) => fetchBulletin(req, cls, selectedPeriod)),
+      );
+      bulletinResults.push(...batch);
+    }
 
     const allStudents: StudentPerformance[] = [];
     const topByClass: Record<string, StudentPerformance[]> = {};
