@@ -152,8 +152,11 @@ test("two teaching classes share one administrative enrollment and one pupil ide
   assert.equal(total.arabic.students, 1);
   assert.equal(total.arabic.complete, true);
   assert.equal(expandPedagogicalEnrollments(school, year,
-    [classes[0], { ...classes[1], level: "CE1" }], home).length, 1,
-    "mismatched grades must never receive a virtual enrollment");
+    [classes[0], { ...classes[1], level: "CE1" }], home).length, 2,
+    "French CP1 and Arabic CE1 can coexist inside the primary cycle");
+  assert.equal(expandPedagogicalEnrollments(school, year,
+    [classes[0], { ...classes[1], cycle: "secondary" as const, level: "6ème" }], home).length, 1,
+    "cross-cycle memberships must never receive a virtual enrollment");
   assert.equal(expandPedagogicalEnrollments(school, year, classes, []).length, 0,
     "stale links without home enrollment must never survive");
 });
