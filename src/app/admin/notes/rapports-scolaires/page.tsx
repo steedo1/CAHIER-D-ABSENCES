@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileSpreadsheet, Loader2, Printer, RefreshCw } from "lucide-react";
 import {
   type AffectationFilter, type SchoolReportKind, type ReportTrack,
@@ -18,8 +18,8 @@ type Period = {
   is_active?: boolean | null;
 };
 
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(path, { cache: "no-store" });
+async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, { cache: "no-store", signal });
   const json = await response.json().catch(() => ({}));
   if (!response.ok || json.ok === false) {
     throw new Error(String(json.error || "Impossible de récupérer les données officielles."));
@@ -112,6 +112,22 @@ export default function RapportsScolairesPage() {
   const [periodsLoading, setPeriodsLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [calculatedAt, setCalculatedAt] = useState("");
+  const reportController = useRef<AbortController | null>(null);
+  const busyRef = useRef(false);
+
+  function invalidateReport() {
+    reportController.current?.abort();
+    reportController.current = null;
+    busyRef.current = false;
+    setBusy(false);
+    setResult(null);
+    setCalculatedAt("");
+  }
+
+  useEffect(() => {
+    return () => { reportController.current?.abort(); };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,7 +156,7 @@ export default function RapportsScolairesPage() {
   const selectedPeriod = periods.find(p => p.id === periodId);
 
   useEffect(() => {
-    setResult(null);
+    invalidateReport();
     setError("");
     setNotice("");
     setPeriods([]);
@@ -163,23 +179,27 @@ export default function RapportsScolairesPage() {
   }, [academicYear, classId, availableClasses]);
 
   useEffect(() => {
-    setResult(null);
+    invalidateReport();
     setNotice("");
   }, [periodId, effectiveTrack]);
 
   async function loadReport() {
-    if (busy || !selectedPeriod || !firstClass) return;
+    if (busyRef.current || !selectedPeriod || !firstClass) return;
+    busyRef.current = true;
+    const controller = new AbortController();
+    reportController.current = controller;
     setBusy(true);
     setError("");
     setNotice("");
     setResult(null);
+    setCalculatedAt("");
     try {
       const targets = classId ? availableClasses.filter(cls => cls.id === classId) : availableClasses;
       if (!targets.length) throw new Error("Aucune classe pour cette année scolaire.");
       const fields = await getJson<{
         decision_numbers?: Record<string, string>;
         observations?: Record<string, Record<string, { text: string; validated: true }>>;
-      }>("/api/admin/notes/school-report-fields?academic_year=" + encodeURIComponent(academicYear));
+      }>("/api/admin/notes/school-report-fields?academic_year=" + encodeURIComponent(academicYear), controller.signal);
       const resultRows: SchoolReportClass[] = [];
       for (let offset = 0; offset < targets.length; offset += 2) {
         const batch = targets.slice(offset, offset + 2);
@@ -187,7 +207,7 @@ export default function RapportsScolairesPage() {
           const periodResponse = cls.id === firstClass.id
             ? { items: periods }
             : await getJson<{ items?: Period[] }>("/api/admin/institution/grading-periods?" +
-                new URLSearchParams({ academic_year: academicYear, class_id: cls.id }).toString());
+                new URLSearchParams({ academic_year: academicYear, class_id: cls.id }).toString(), controller.signal);
           const p = findSamePeriod(periodResponse.items || [], selectedPeriod);
           if (!p || !p.start_date || !p.end_date) {
             throw new Error("La période « " + formatPeriod(selectedPeriod) +
@@ -199,8 +219,8 @@ export default function RapportsScolairesPage() {
           });
           const [roster, bulletin] = await Promise.all([
             getJson<ReportRosterResponse>("/api/admin/classes/" + encodeURIComponent(cls.id) +
-              "/roster?academic_year=" + encodeURIComponent(academicYear)),
-            getJson<ReportBulletinResponse>("/api/admin/grades/bulletin?" + params.toString()),
+              "/roster?academic_year=" + encodeURIComponent(academicYear), controller.signal),
+            getJson<ReportBulletinResponse>("/api/admin/grades/bulletin?" + params.toString(), controller.signal),
           ]);
           const base = buildSchoolReportClass({
             id: cls.id, label: cls.label, level: cls.level || "",
@@ -220,13 +240,21 @@ export default function RapportsScolairesPage() {
         }));
         resultRows.push(...snapshots);
       }
+      if (controller.signal.aborted) return;
       setResult(resultRows);
+      setCalculatedAt(new Date().toISOString());
       const unknown = resultRows.reduce((n, cls) => n + cls.students.filter(s => s.isAffected === null).length, 0);
       if (unknown) setNotice(String(unknown) + " statut(s) d'affectation non renseigné(s), conservé(s) dans « Tous les élèves ».");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Impossible de construire le rapport.");
+      if (!controller.signal.aborted) {
+        setError(e instanceof Error ? e.message : "Impossible de construire le rapport.");
+      }
     } finally {
-      setBusy(false);
+      if (reportController.current === controller) {
+        reportController.current = null;
+        busyRef.current = false;
+        setBusy(false);
+      }
     }
   }
 
@@ -332,6 +360,9 @@ export default function RapportsScolairesPage() {
         {error && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-800">{error}</p>}
         {notice && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{notice}</p>}
         <p className="mt-3 text-xs text-slate-500">Le PDF utilise l'impression du navigateur. Aucun document n'est enregistré dans Supabase. Les périodes incompatibles entre classes bloquent le rapport global au lieu de produire un total incomplet.</p>
+        {calculatedAt && <p className="mt-2 text-xs text-slate-600">
+          Dernier calcul : {new Date(calculatedAt).toLocaleString("fr-FR")}. Relancez « Afficher le rapport » après une modification des notes.
+        </p>}
       </section>
       {result && (
         <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
