@@ -6,7 +6,7 @@ import { expandPedagogicalEnrollments, readStudentProgramSettings, programsForSt
 export type SchoolRosterClass = { id: string; level?: string | null; academic_year?: string | null };
 /** Reverify the persisted teaching links without creating duplicate enrollments. */
 export async function loadLinkedClassEnrollments(service: SupabaseClient, institutionId: string,
-  classroom: SchoolRosterClass, settings: unknown) {
+  classroom: SchoolRosterClass, settings: unknown, options?: { tolerateStaleLinks?: boolean }) {
   const school = parseSchoolCyclesSettings(settings);
   if (!school.enabled) return [];
   const year = classroom.academic_year || "";
@@ -21,6 +21,7 @@ export async function loadLinkedClassEnrollments(service: SupabaseClient, instit
     .in("student_id", links).is("end_date", null).limit(3501);
   if (homeError || !homes || homes.length >= 3501) throw Error("STUDENT_PROGRAM_LINK_STALE");
   if (!homes.length) {
+    if (!options?.tolerateStaleLinks) throw Error("STUDENT_PROGRAM_LINK_STALE");
     console.warn("[arabic-roster] ignored historical links without active enrollment", { count: links.length });
     return [];
   }
@@ -39,6 +40,7 @@ export async function loadLinkedClassEnrollments(service: SupabaseClient, instit
   const allowed = [...new Set(expandPedagogicalEnrollments(school, policy, classes, unambiguousHomes)
     .filter(row => row.class_id === classroom.id).map(row => row.student_id))];
   if (allowed.length !== links.length) {
+    if (!options?.tolerateStaleLinks) throw Error("STUDENT_PROGRAM_LINK_STALE");
     console.warn("[arabic-roster] excluded outdated or invalid pedagogical links", {
       excludedCount: links.length - allowed.length,
     });
@@ -49,6 +51,7 @@ export async function loadLinkedClassEnrollments(service: SupabaseClient, instit
     .eq("institution_id", institutionId).in("id", allowed).limit(701);
   if (studentError || !students) throw Error("STUDENT_SCOPE_INVALID");
   if (students.length !== allowed.length) {
+    if (!options?.tolerateStaleLinks) throw Error("STUDENT_SCOPE_INVALID");
     console.warn("[arabic-roster] excluded links to missing student records", {
       excludedCount: allowed.length - students.length,
     });
