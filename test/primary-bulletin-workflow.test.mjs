@@ -177,8 +177,11 @@ test("linked Arabic pupil appears in the teacher and paper rosters and can be gr
   assert.equal(denied.status, 403); assert.equal(db.tables.student_grades.length, 1);
   assert.deepEqual(db.tables.class_enrollments, before);
   db.tables.classes[0].level = "CM2";
-  const stale = await teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cAr}`));
-  assert.equal(stale.status, 409, "stale level cannot authorize a linked pupil");
+  const differentPrimaryLevel = await teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cAr}`));
+  assert.equal(differentPrimaryLevel.status, 200, "French and Arabic primary levels are independent");
+  db.tables.classes[0].level = "6ème";
+  const crossCycle = await teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cAr}`));
+  assert.equal(crossCycle.status, 409, "cross-cycle link remains unauthorized for teachers and grades");
 });
 
 test("classic schools retain their existing RLS-authorized grade-write rights", async () => {
