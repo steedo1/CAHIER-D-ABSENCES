@@ -43,6 +43,18 @@ function setup() {
     id: "enrollment-source", class_id: homeId, student_id: studentId,
     institution_id: db.legacyId, end_date: null,
   });
+  // Only this route uses the new service-only atomic CAS procedure.
+  // Do not modify the global test fixture's behavior for other features.
+  db.service.rpc = async (name, args) => {
+    if (name !== "cas_school_student_programs_v1")
+      return { data: null, error: { message: "Unsupported fixture RPC" } };
+    db.calls.push({ table: "institutions", op: "update" });
+    const school = db.tables.institutions.find(row => row.id === args.p_institution_id);
+    if (!school || JSON.stringify(school.settings_json.school_student_programs_v1 ?? null)
+      !== JSON.stringify(args.p_previous ?? null)) return { data: false, error: null };
+    school.settings_json.school_student_programs_v1 = structuredClone(args.p_next);
+    return { data: true, error: null };
+  };
   return db;
 }
 
