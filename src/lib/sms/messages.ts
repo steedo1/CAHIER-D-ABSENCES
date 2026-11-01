@@ -580,7 +580,7 @@ export function buildSmsMessageFromQueue(input: NotificationQueueSmsInput): stri
     const p = payload as CommunicationSmsPayload;
     return buildCommunicationSmsMessage(
       {
-        title: p.campaign_title || input.title || p.title,
+        title: p.campaign_title || p.title || input.title,
         body: p.body || input.body,
         senderName: p.sender_name || p.institution?.name || input.institutionName,
       },
