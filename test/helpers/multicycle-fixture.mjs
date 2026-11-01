@@ -117,20 +117,7 @@ export function createMulticycleFixture() {
     email_confirmed_at: "2026-01-01T00:00:00Z", created_at: "2026-01-01T00:00:00Z", identities: [] });
   fixture.users.set(superId, { user: fixture.user(superId, "super@example.invalid"), password: "FixtureOnly2026!" });
   fixture.users.set(legacyAdminId, { user: fixture.user(legacyAdminId, "legacy@example.invalid"), password: "FixtureOnly2026!" });
-  fixture.service = {
-    from: table => new Query(fixture, table),
-    rpc: async (name, args) => {
-      if (name !== "cas_school_student_programs_v1") return {
-        data: null, error: { message: "RPC absent from isolated fixture" },
-      };
-      fixture.calls.push({ table: "institutions", op: "update" });
-      const school = fixture.tables.institutions.find(row => row.id === args.p_institution_id);
-      if (!school || !same(school.settings_json.school_student_programs_v1 ?? null,
-        args.p_previous ?? null)) return { data: false, error: null };
-      school.settings_json.school_student_programs_v1 = copy(args.p_next);
-      return { data: true, error: null };
-    },
-  };
+  fixture.service = { from: table => new Query(fixture, table) };
   fixture.client = actorId => ({ ...fixture.service, auth: { getUser: async () => ({
     data: { user: fixture.users.get(actorId)?.user ?? null }, error: null,
   }) } });
