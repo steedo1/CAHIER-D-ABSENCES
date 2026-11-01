@@ -180,6 +180,7 @@ test("linked Arabic pupil appears in the teacher and paper rosters and can be gr
   const differentPrimaryLevel = await teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cAr}`));
   assert.equal(differentPrimaryLevel.status, 200, "French and Arabic primary levels are independent");
   db.tables.classes[0].level = "6ème";
+  settings.school_cycles_v1.classCycleById[cFr] = "secondary";
   const crossCycle = await teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cAr}`));
   assert.equal(crossCycle.status, 409, "cross-cycle link remains unauthorized for teachers and grades");
 });
