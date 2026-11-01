@@ -9,6 +9,8 @@ on:
       - migration-render-test-20261021
     paths:
       - src/app/api/sms/dispatch/route.ts
+      - src/lib/sms/messages.ts
+      - test/notification-sms-copy.test.mjs
       - test/sms-dispatch-jsonb.test.mjs
       - .github/workflows/render-sms-regression-20261021.yml
 
@@ -28,5 +30,5 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - run: node --test test/sms-dispatch-jsonb.test.mjs test/parent-connect-sms.test.mjs test/render-cron-secret-auth.test.mjs
+      - run: node --test test/sms-dispatch-jsonb.test.mjs test/parent-connect-sms.test.mjs test/notification-sms-copy.test.mjs test/render-cron-secret-auth.test.mjs
       - run: npm run typecheck
