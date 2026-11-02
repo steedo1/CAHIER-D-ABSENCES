@@ -1242,6 +1242,9 @@ export default function ClassDeviceNotesPage() {
           throw new Error(j?.error || "Échec d’enregistrement.");
         }
 
+        if (j?.scores_verified !== true) {
+          throw new Error("Sauvegarde non vérifiée : les notes n'ont pas été confirmées par la base. Réessayez ou contactez l'administration.");
+        }
         savedEvalIds.push(evaluation_id);
         if (j?.publication_status === "changes_requested") {
           setEvaluations(prev => prev.map(ev => ev.id === evaluation_id
