@@ -599,6 +599,7 @@ export async function POST(req: NextRequest) {
       upserted,
       deleted,
       warnings,
+      scores_verified: true,
       publication_status: publication?.ok ? "published" : correctionPendingAdmin ? "changes_requested" : editable.publication_status,
       publication: publication?.ok ? {
         is_published: true, publication_version: publication.publication_version,
