@@ -89,11 +89,14 @@ for (const role of ["teacher", "class_device"]) test(`${role}: actual primary sc
     await wait(() => !button("Fermer"));
     // Regression: published 10/10 (or 8/10 here) must genuinely become 4/10
     // after the teacher presses Enregistrer again, with an official new version.
-    score.focus();
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(score, "4");
-    score.dispatchEvent(new window.InputEvent("input", { bubbles: true, data: "4", inputType: "insertText" }));
-    score.dispatchEvent(new window.Event("change", { bubbles: true }));
-    await wait(() => !button("Enregistrer").disabled);
+    const correctionInput = window.document.querySelector('input[type="number"][max="10"]');
+    assert.ok(correctionInput?.isConnected, "published-grade editor must remain mounted");
+    correctionInput.focus();
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(correctionInput, "4");
+    correctionInput.dispatchEvent(new window.InputEvent("input", { bubbles: true, data: "4", inputType: "insertText" }));
+    correctionInput.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await wait(() => !button("Enregistrer").disabled && correctionInput.value === "4");
+    await new Promise(resolve => setTimeout(resolve, 50));
     button("Enregistrer").click();
     await wait(() => db.tables.student_grades.some(g => g.evaluation_id === ev.id && g.student_id === pupil0 && Number(g.score) === 4));
     await wait(() => db.tables.grade_published_scores.some(g => g.evaluation_id === ev.id && g.student_id === pupil0 && g.is_current && Number(g.score) === 4));
