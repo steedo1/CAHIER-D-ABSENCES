@@ -1208,6 +1208,9 @@ export default function TeacherNotesPage() {
           throw new Error(payload?.message || payload?.error || "Échec d’enregistrement.");
         }
         const saved: any = result.data;
+        if (saved?.scores_verified !== true) {
+          throw new Error("Sauvegarde non vérifiée : la base n'a pas confirmé les notes. Réessayez sans perdre vos modifications.");
+        }
         if (saved?.publication_status === "changes_requested") {
           setEvaluations(prev => prev.map(ev => ev.id === evaluation_id
             ? { ...ev, publication_status: "changes_requested" } : ev));
