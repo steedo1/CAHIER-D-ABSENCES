@@ -544,7 +544,7 @@ export async function POST(req: NextRequest) {
       if (confirmationError || !confirmedRows) {
         return bad("GRADE_VERIFICATION_UNAVAILABLE", 503, { saved: upserted > 0 || deleted > 0 });
       }
-      const savedByStudent = new Map(confirmedRows.map(row => [String(row.student_id), Number(row.score)]));
+      const savedByStudent = new Map(confirmedRows.map((row: { student_id: string; score: number | null }) => [String(row.student_id), Number(row.score)]));
       const unmatched = upserts.some(row =>
         !savedByStudent.has(row.student_id) || savedByStudent.get(row.student_id) !== Number(row.score))
         || toDelete.some(studentId => savedByStudent.has(studentId));
