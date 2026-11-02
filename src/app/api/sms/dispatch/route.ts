@@ -1,3 +1,4 @@
+import { acquireServerWork } from "@/lib/server-work-lock";
 import { parentConnectSmsContacts } from "@/lib/parent-connect/sms";
 import { filterParentConnectQueue } from "@/lib/parent-connect/server";
 // src/app/api/sms/dispatch/route.ts
@@ -536,6 +537,9 @@ async function run(req: Request) {
     );
   }
 
+  const release = acquireServerWork("sms/dispatch");
+  if (!release) return NextResponse.json({ ok: true, busy: true }, { status: 202, headers: { "Retry-After": "5", "Cache-Control": "no-store" } });
+  try {
   const srv = getSupabaseServiceClient();
 
   // Lock only due SMS rows. A second Render request cannot claim them concurrently.
@@ -1174,4 +1178,5 @@ async function run(req: Request) {
     failed,
     ms,
   });
+  } finally { release(); }
 }

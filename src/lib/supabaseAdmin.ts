@@ -3,7 +3,10 @@ import { createReferenceFetch } from "./supabase-reference-fetch";
 import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-let _admin: SupabaseClient | null = null;
+// Next can instantiate a module in several route bundles. Share only the
+// stateless service-role client, never request-authenticated clients/sessions.
+const serviceClientKey = Symbol.for("mon-cahier.supabase-service-client.v1");
+const serviceScope = globalThis as typeof globalThis & { [serviceClientKey]?: SupabaseClient };
 
 function cleanServerEnv(value: string | undefined): string {
   return String(value || "")
@@ -16,7 +19,7 @@ function cleanServerEnv(value: string | undefined): string {
  * �a� Serveur uniquement. Pas de session persist�e.
  */
 export function getSupabaseServiceClient(): SupabaseClient {
-  if (_admin) return _admin;
+  if (serviceScope[serviceClientKey]) return serviceScope[serviceClientKey];
 
   const url = cleanServerEnv(
     process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -26,12 +29,13 @@ export function getSupabaseServiceClient(): SupabaseClient {
   if (!url) throw new Error("[supabaseAdmin] SUPABASE_URL manquant.");
   if (!serviceKey) throw new Error("[supabaseAdmin] SUPABASE_SERVICE_ROLE_KEY manquant.");
 
-  _admin = createClient(url, serviceKey, {
+  const client = createClient(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: createReferenceFetch() },
   });
 
-  return _admin;
+  serviceScope[serviceClientKey] = client;
+  return client;
 }
 
 

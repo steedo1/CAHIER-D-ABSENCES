@@ -2,8 +2,13 @@
 /* eslint-disable no-console */
 
 export async function register() {
-  // no-op en prod
-  if (process.env.NODE_ENV === "production") return;
+  if (process.env.NODE_ENV === "production") {
+    if (process.env.NEXT_RUNTIME === "nodejs") {
+      const { startMemoryTelemetry } = await import("./src/lib/runtime-memory");
+      startMemoryTelemetry();
+    }
+    return;
+  }
 
   const g: any = globalThis as any;
   const p: any = g.process;

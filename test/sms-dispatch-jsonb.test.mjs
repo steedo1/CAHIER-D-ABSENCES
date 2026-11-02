@@ -46,6 +46,13 @@ function fixture({ rows = [], premium = true, parentAllowed = true } = {}) {
   });
   const dependencies = {
     "next/server": require("next/server"),
+    "@/lib/server-work-lock": (() => {
+      const active = new Set();
+      return { acquireServerWork(name) {
+        if (active.has(name)) return null;
+        active.add(name); return () => active.delete(name);
+      } };
+    })(),
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => service },
     "@/lib/parent-connect/server": { filterParentConnectQueue: async (_db, selected) => parentAllowed ? selected : [] },
     "@/lib/parent-connect/sms": { parentConnectSmsContacts: async () => new Map() },

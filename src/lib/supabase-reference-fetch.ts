@@ -1,10 +1,23 @@
 /** Short-lived cache for stable reference rows only. Authorization queries,
  * student data, sessions, grades and QR writes always go to Supabase. */
 export function createReferenceFetch(network: typeof fetch = fetch): typeof fetch {
-  const entries = new Map<string, { expires: number; response: Response }>();
-  const pending = new Map<string, Promise<Response>>();
+  // Cache bytes, never unread Response/tee streams. Bound native buffers too.
+  type Snapshot = { bytes: ArrayBuffer; init: ResponseInit; expires: number };
+  const entries = new Map<string, Snapshot>();
+  const MAX_BYTES = 4 * 1024 * 1024;
+  const MAX_ENTRY_BYTES = 256 * 1024;
+  let retainedBytes = 0;
+  const materialize = (entry: Snapshot) => new Response(
+    [204, 205, 304].includes(entry.init.status || 200) ? null : entry.bytes.slice(0), entry.init,
+  );
+  function remove(key: string) {
+    const entry = entries.get(key);
+    if (entry) retainedBytes -= entry.bytes.byteLength;
+    entries.delete(key);
+  }
+  const pending = new Map<string, Promise<Snapshot>>();
   let generation = 0;
-  function invalidate() { generation++; entries.clear(); pending.clear(); }
+  function invalidate() { generation++; entries.clear(); retainedBytes = 0; pending.clear(); }
   return async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     const method = String(init?.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
@@ -22,25 +35,30 @@ export function createReferenceFetch(network: typeof fetch = fetch): typeof fetc
         [...url.searchParams.keys()].some((column) => sensitive.test(column)) || init?.signal) return network(input, init);
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
     const key = JSON.stringify([url.href, [...headers.entries()].sort()]);
+    for (const [entryKey, entry] of entries) if (entry.expires <= Date.now()) remove(entryKey);
     const cached = entries.get(key);
-    if (cached && cached.expires > Date.now()) return cached.response.clone();
+    if (cached) return materialize(cached);
     const running = pending.get(key);
-    if (running) return (await running).clone();
+    if (running) return materialize(await running);
     const version = generation;
+    // Avoid retaining arbitrary numbers of concurrent, distinct cache loads.
+    if (pending.size >= 16) return network(input, init);
     const task = network(input, init).then(async response => {
-      if (response.ok && version === generation) {
-        // The body is consumed into an independent response so storing a clone
-        // never leaves an unbounded tee stream attached to the network response.
-        const bytes = await response.arrayBuffer();
-        const stored = new Response(bytes, {status:response.status,statusText:response.statusText,headers:response.headers});
-        if (entries.size >= 200) entries.delete(entries.keys().next().value!);
-        entries.set(key, {response:stored, expires:Date.now()+(table === "classes" ? 3_000 : 15_000)});
-        return stored;
+      const bytes = await response.arrayBuffer();
+      const snapshot: Snapshot = { bytes, init: {
+        status: response.status, statusText: response.statusText, headers: [...response.headers.entries()],
+      }, expires: Date.now() + (table === "classes" ? 3_000 : 15_000) };
+      if (response.ok && version === generation && bytes.byteLength <= MAX_ENTRY_BYTES) {
+        while (entries.size && (entries.size >= 200 || retainedBytes + bytes.byteLength > MAX_BYTES)) {
+          remove(entries.keys().next().value!);
+        }
+        entries.set(key, snapshot);
+        retainedBytes += bytes.byteLength;
       }
-      return response;
+      return snapshot;
     });
     pending.set(key, task);
-    try { return (await task).clone(); }
+    try { return materialize(await task); }
     finally { if (pending.get(key) === task) pending.delete(key); }
   };
 }

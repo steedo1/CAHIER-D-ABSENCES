@@ -28,3 +28,9 @@ test('un chargement antérieur à une écriture ne peut pas repeupler le cache',
  let release;let reads=0;const fetcher=createReferenceFetch(async(_url,init)=>{if(init?.method==='PATCH')return new Response(null,{status:204});reads++;if(reads===1)await new Promise(r=>{release=r});return Response.json({reads})});
  const old=fetcher(classes);await new Promise(r=>setTimeout(r,0));await fetcher(classes,{method:'PATCH'});release();await old;await fetcher(classes);assert.equal(reads,2);
 });
+test('réponses sans corps conservent leur statut HTTP',async()=>{
+ for(const status of [204,205,304]){
+  const fetcher=createReferenceFetch(async()=>new Response(null,{status}));
+  const response=await fetcher(classes);assert.equal(response.status,status);assert.equal(await response.text(),'');
+ }
+});

@@ -1,3 +1,4 @@
+import { acquireServerWork } from "@/lib/server-work-lock";
 // src/app/api/cron/attendance/monitor/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -98,6 +99,9 @@ async function run(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "forbidden", id }, { status: 403 });
   }
 
+  const release = acquireServerWork("cron/attendance/monitor");
+  if (!release) return NextResponse.json({ ok: true, busy: true }, { status: 202, headers: { "Retry-After": "5", "Cache-Control": "no-store" } });
+  try {
   const srv = getSupabaseServiceClient();
 
   // Référence : maintenant (UTC ~= Abidjan)
@@ -497,4 +501,5 @@ async function run(req: NextRequest) {
     insertedQueue,
     ms,
   });
+  } finally { release(); }
 }

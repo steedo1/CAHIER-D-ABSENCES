@@ -1,3 +1,4 @@
+import { acquireServerWork } from "@/lib/server-work-lock";
 import { filterPrimaryOfficialNotifications } from "@/lib/grades/primary-notification-policy";
 import { filterParentConnectQueue } from "@/lib/parent-connect/server";
 // src/app/api/push/dispatch/route.ts
@@ -7,6 +8,9 @@ import webpush from "web-push";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const verbose = process.env.MON_CAHIER_PUSH_DEBUG === "1";
+const detail = (...args: unknown[]) => { if (verbose) console.info(...args); };
 
 /* ───────────────── helpers log ───────────────── */
 function rid() {
@@ -58,7 +62,7 @@ function okAuth(req: Request) {
 function ensureWebPushConfigured() {
   const pub = process.env.VAPID_PUBLIC_KEY;
   const prv = process.env.VAPID_PRIVATE_KEY;
-  console.info("[push/dispatch] vapid_env", {
+  detail("[push/dispatch] vapid_env", {
     pubLen: pub?.length || 0,
     prvLen: prv?.length || 0,
     pubPreview: pub ? shortId(pub, 12) : null,
@@ -90,6 +94,7 @@ async function sendFCM(
       Authorization: `key=${FCM_KEY}`,
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10_000),
   });
   const text = await res.text().catch(() => "");
   if (!res.ok) throw new Error(`FCM ${res.status} ${text}`);
@@ -127,7 +132,7 @@ function hasPushChannel(row: QueueRow) {
     const arr = Array.isArray(raw) ? raw : raw ? JSON.parse(String(raw)) : [];
     const ok = Array.isArray(arr) && arr.includes("push");
     if (!ok)
-      console.debug("[push/dispatch] skip_no_push_channel", {
+      detail("[push/dispatch] skip_no_push_channel", {
         id: row.id,
         channels: raw,
       });
@@ -197,7 +202,7 @@ export const POST = run;
 async function run(req: Request) {
   const id = rid();
   const t0 = Date.now();
-  console.info("[push/dispatch] start", {
+  detail("[push/dispatch] start", {
     id,
     when: new Date().toISOString(),
     method: req.method,
@@ -225,10 +230,13 @@ async function run(req: Request) {
     );
   }
 
+  const release = acquireServerWork("push/dispatch");
+  if (!release) return NextResponse.json({ ok: true, busy: true }, { status: 202, headers: { "Retry-After": "5", "Cache-Control": "no-store" } });
+  try {
   const srv = getSupabaseServiceClient();
 
   // 1) Récupérer les items en attente (+ on prend student_id + meta + institution_id + profile_id)
-  console.info("[push/dispatch] pick_pending_query", { id });
+  detail("[push/dispatch] pick_pending_query", { id });
   // Atomic, indexed claim: other requests cannot process the same pending item.
   // The lease allows recovery after a Render restart without tight polling.
   const { data: raw, error: pickErr } = await srv.rpc(
@@ -293,7 +301,7 @@ async function run(req: Request) {
     }
   }
 
-  console.info("[push/dispatch] picked_effective", {
+  detail("[push/dispatch] picked_effective", {
     id,
     total: rows.length,
     sample: rows.slice(0, 3).map((r) => {
@@ -313,7 +321,7 @@ async function run(req: Request) {
 
   if (!rows.length) {
     const ms = Date.now() - t0;
-    console.info("[push/dispatch] done_empty", { id, ms });
+    detail("[push/dispatch] done_empty", { id, ms });
     return NextResponse.json({
       ok: true,
       id,
@@ -475,7 +483,7 @@ async function run(req: Request) {
   );
 
   // 3) Subscriptions (web + mobile) pour ces user_ids
-  console.info("[push/dispatch] subs_fetch", {
+  detail("[push/dispatch] subs_fetch", {
     id,
     userCount: allUserIds.length,
   });
@@ -585,7 +593,7 @@ async function run(req: Request) {
       : [];
     const list: SubRow[] = dedupeSubscriptions([...profileSubs, ...studentDeviceSubs]);
 
-    console.info("[push/dispatch] item_begin", {
+    detail("[push/dispatch] item_begin", {
       id,
       qid: n.id,
       targetUserCount: targetUsers.length,
@@ -602,7 +610,7 @@ async function run(req: Request) {
     let lastError = list.length ? "" : "no_subscriptions";
 
     if (!list.length) {
-      console.warn("[push/dispatch] no_resolved_subscriptions", {
+      detail("[push/dispatch] no_resolved_subscriptions", {
         id,
         qid: n.id,
         parent_id: n.parent_id,
@@ -626,8 +634,9 @@ async function run(req: Request) {
           const res: any = await webpush.sendNotification(
             s.subscription_json,
             payloadStr,
+            { timeout: 10_000 },
           );
-          console.info("[push/dispatch] web_send_ok", {
+          detail("[push/dispatch] web_send_ok", {
             id,
             qid: n.id,
             user: shortId(s.user_id),
@@ -661,7 +670,7 @@ async function run(req: Request) {
                 error: delErr.message,
               });
             } else {
-              console.info("[push/dispatch] sub_deleted", {
+              detail("[push/dispatch] sub_deleted", {
                 id,
                 qid: n.id,
                 endpoint: endpointShort,
@@ -676,7 +685,7 @@ async function run(req: Request) {
       if (s.fcm_token) {
         try {
           await sendFCM(s.fcm_token, title, body, url, core);
-          console.info("[push/dispatch] fcm_send_ok", {
+          detail("[push/dispatch] fcm_send_ok", {
             id,
             qid: n.id,
             user: shortId(s.user_id),
@@ -703,7 +712,7 @@ async function run(req: Request) {
                 error: delErr.message,
               });
             } else {
-              console.info("[push/dispatch] sub_deleted", {
+              detail("[push/dispatch] sub_deleted", {
                 id,
                 qid: n.id,
                 token: shortId(s.fcm_token, 20),
@@ -714,7 +723,7 @@ async function run(req: Request) {
         continue;
       }
 
-      console.debug("[push/dispatch] skip_sub_unknown_channel", {
+      detail("[push/dispatch] skip_sub_unknown_channel", {
         id,
         qid: n.id,
         platform,
@@ -742,7 +751,7 @@ async function run(req: Request) {
           error: updErr.message,
         });
       } else {
-        console.info("[push/dispatch] queue_update_sent_ok", {
+        detail("[push/dispatch] queue_update_sent_ok", {
           id,
           qid: n.id,
           attempts,
@@ -775,7 +784,7 @@ async function run(req: Request) {
           error: updErr.message,
         });
       } else {
-        console.warn("[push/dispatch] queue_update_error_ok", {
+        detail("[push/dispatch] queue_update_error_ok", {
           id,
           qid: n.id,
           attempts,
@@ -802,4 +811,5 @@ async function run(req: Request) {
     dropped,
     ms,
   });
+  } finally { release(); }
 }

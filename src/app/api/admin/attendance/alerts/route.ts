@@ -1,3 +1,4 @@
+import { acquireServerWork } from "@/lib/server-work-lock";
 // src/app/api/admin/attendance/alerts/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -129,6 +130,9 @@ async function run(req: Request) {
     return NextResponse.json({ ok: false, error: "forbidden", id }, { status: 403 });
   }
 
+  const release = acquireServerWork("admin/attendance/alerts");
+  if (!release) return NextResponse.json({ ok: true, busy: true }, { status: 202, headers: { "Retry-After": "5", "Cache-Control": "no-store" } });
+  try {
   const srv = getSupabaseServiceClient();
 
   // On travaille sur la journée courante (UTC ~ Africa/Abidjan)
@@ -639,4 +643,5 @@ async function run(req: Request) {
     created: inserted?.length || 0,
     ms,
   });
+  } finally { release(); }
 }
