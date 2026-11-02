@@ -85,6 +85,17 @@ for (const role of ["teacher", "class_device"]) test(`${role}: actual primary sc
     assert.match(pdf, /8[,.]00/);
     assert.match(pdf, /Fiche|statistique/i);
     assert.equal(calls.filter(c => c.method === "POST" && c.path.endsWith("/scores/bulk")).length, 1);
+    // Regression: published 10/10 (or 8/10 here) must genuinely become 4/10
+    // after the teacher presses Enregistrer again, with an official new version.
+    score.focus();
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(score, "4");
+    score.dispatchEvent(new window.InputEvent("input", { bubbles: true, data: "4", inputType: "insertText" }));
+    score.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await wait(() => !button("Enregistrer").disabled);
+    button("Enregistrer").click();
+    await wait(() => db.tables.student_grades.some(g => g.evaluation_id === ev.id && g.student_id === pupil0 && Number(g.score) === 4));
+    await wait(() => db.tables.grade_published_scores.some(g => g.evaluation_id === ev.id && g.student_id === pupil0 && g.is_current && Number(g.score) === 4));
+    assert.equal(calls.filter(c => c.method === "POST" && c.path.endsWith("/scores/bulk")).length, 2);
     assert.equal(calls.some(c => c.method === "PATCH"), false, "no separate publication action");
     assert.deepEqual(errors, []);
   } finally { await window.happyDOM.close(); }
