@@ -1112,10 +1112,13 @@ export default function TeacherNotesPage() {
 
     if (isEvalLocked(evId)) return;
 
-    const v =
-      value == null || Number.isNaN(value)
-        ? null
-        : Math.max(0, Math.min(scale, value));
+    // Never silently turn 30 into 10 or round an invalid entered mark.
+    // The school must adjust the authorized barème before entering that mark.
+    if (value !== null && (!Number.isFinite(value) || value < 0 || value > scale)) {
+      setMsg(`Note ${value} refusée : cette évaluation est sur ${scale}. Vérifiez le barème de la matière dans les paramètres.`);
+      return;
+    }
+    const v = value;
 
     // L'action Enregistrer/Publier vise la dernière colonne saisie.
     setActiveEvalId(evId);
@@ -1191,7 +1194,7 @@ export default function TeacherNotesPage() {
             evaluation_id,
             items,
             delete_if_null: true,
-            strict: false,
+            strict: isPrimaryProgram,
           });
 
         if (!result.ok) {
@@ -1205,6 +1208,9 @@ export default function TeacherNotesPage() {
           throw new Error(payload?.message || payload?.error || "Échec d’enregistrement.");
         }
         const saved: any = result.data;
+        if (saved?.scores_verified !== true) {
+          throw new Error("Sauvegarde non vérifiée : la base n'a pas confirmé les notes. Réessayez sans perdre vos modifications.");
+        }
         if (saved?.publication_status === "changes_requested") {
           setEvaluations(prev => prev.map(ev => ev.id === evaluation_id
             ? { ...ev, publication_status: "changes_requested" } : ev));

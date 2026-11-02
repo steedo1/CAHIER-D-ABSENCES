@@ -1105,10 +1105,13 @@ export default function ClassDeviceNotesPage() {
       return;
     }
 
-    const v =
-      value == null || Number.isNaN(value)
-        ? null
-        : Math.max(0, Math.min(scale, value));
+    // Never silently turn 30 into 10 or round an invalid entered mark.
+    // The school must adjust the authorized barème before entering that mark.
+    if (value !== null && (!Number.isFinite(value) || value < 0 || value > scale)) {
+      setMsg(`Note ${value} refusée : cette évaluation est sur ${scale}. Vérifiez le barème de la matière dans les paramètres.`);
+      return;
+    }
+    const v = value;
     logInfo("setGrade ->", { evId, studentId, value, clamped: v, scale });
 
     const ev = evaluations.find((x) => x.id === evId) || null;
@@ -1239,6 +1242,9 @@ export default function ClassDeviceNotesPage() {
           throw new Error(j?.error || "Échec d’enregistrement.");
         }
 
+        if (j?.scores_verified !== true) {
+          throw new Error("Sauvegarde non vérifiée : les notes n'ont pas été confirmées par la base. Réessayez ou contactez l'administration.");
+        }
         savedEvalIds.push(evaluation_id);
         if (j?.publication_status === "changes_requested") {
           setEvaluations(prev => prev.map(ev => ev.id === evaluation_id

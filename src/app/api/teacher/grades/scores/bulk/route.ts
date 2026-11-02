@@ -277,6 +277,7 @@ export async function POST(req: NextRequest) {
         console.error("[teacher/grades/scores/bulk] period fetch error", {
           evaluation_id,
           grading_period_id: ge.grading_period_id,
+      scores_verified: true,
           error: periodErr,
         });
 
@@ -529,6 +530,29 @@ export async function POST(req: NextRequest) {
       deleted = count ?? 0;
     }
 
+    // Confirm the exact saved scores once per user-initiated save, not by polling.
+    // Never tell the teacher that a correction succeeded if the database kept
+    // the old score (e.g. 10 instead of 4). A failed verification is not a
+    // reason to overwrite an official published snapshot.
+    const modifiedIds = [...new Set([...upserts.map(row => row.student_id), ...toDelete])];
+    if (modifiedIds.length > 0) {
+      if (upserted !== upserts.length) {
+        return bad("GRADE_WRITE_NOT_CONFIRMED", 503, { saved: upserted > 0 || deleted > 0 });
+      }
+      const { data: confirmedRows, error: confirmationError } = await srv.from("student_grades")
+        .select("student_id,score").eq("evaluation_id", evaluation_id).in("student_id", modifiedIds);
+      if (confirmationError || !confirmedRows) {
+        return bad("GRADE_VERIFICATION_UNAVAILABLE", 503, { saved: upserted > 0 || deleted > 0 });
+      }
+      const savedByStudent = new Map(confirmedRows.map((row: { student_id: string; score: number | null }) => [String(row.student_id), Number(row.score)]));
+      const unmatched = upserts.some(row =>
+        !savedByStudent.has(row.student_id) || savedByStudent.get(row.student_id) !== Number(row.score))
+        || toDelete.some(studentId => savedByStudent.has(studentId));
+      if (unmatched) {
+        return bad("GRADE_WRITE_NOT_CONFIRMED", 503, { saved: true });
+      }
+    }
+
     if (!strict && violations.length > 0) {
       warnings.push(`${violations.length} ligne(s) ignorée(s) (validation)`);
     }
@@ -575,6 +599,7 @@ export async function POST(req: NextRequest) {
       upserted,
       deleted,
       warnings,
+      scores_verified: true,
       publication_status: publication?.ok ? "published" : correctionPendingAdmin ? "changes_requested" : editable.publication_status,
       publication: publication?.ok ? {
         is_published: true, publication_version: publication.publication_version,
