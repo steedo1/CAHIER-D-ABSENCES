@@ -85,6 +85,8 @@ for (const role of ["teacher", "class_device"]) test(`${role}: actual primary sc
     assert.match(pdf, /8[,.]00/);
     assert.match(pdf, /Fiche|statistique/i);
     assert.equal(calls.filter(c => c.method === "POST" && c.path.endsWith("/scores/bulk")).length, 1);
+    button("Fermer").click();
+    await wait(() => !button("Fermer"));
     // Regression: published 10/10 (or 8/10 here) must genuinely become 4/10
     // after the teacher presses Enregistrer again, with an official new version.
     score.focus();
