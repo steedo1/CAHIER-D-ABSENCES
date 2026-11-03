@@ -174,7 +174,6 @@ export function buildAdminRegisterPdf(input: AdminRegisterPdfInput): Promise<Buf
 
       doc.end();
     } catch (error) {
-      doc.destroy();
       reject(error);
     }
   });
