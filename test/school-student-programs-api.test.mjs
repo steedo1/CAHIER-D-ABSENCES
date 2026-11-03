@@ -189,3 +189,55 @@ test("Arabic primary grade may differ from the French enrollment in the same aca
   assert.equal(db.tables.class_enrollments.length, 2);
   assert.equal(db.tables.class_enrollments.every(row => row.class_id === c1), true);
 });
+
+
+for (const [homeLevel, targetLevel] of [["6ème", "CP1"], ["CP1", "6ème"]]) {
+  test(`Program editor links French ${homeLevel} to Arabic ${targetLevel} without a duplicate enrollment`, async () => {
+    const db = setup();
+    const settings = db.tables.institutions[0].settings_json;
+    settings.school_cycles_v1.enabledCycles.push("secondary");
+    const homeCycle = homeLevel === "CP1" ? "primary" : "secondary";
+    const targetCycle = targetLevel === "CP1" ? "primary" : "secondary";
+    settings.school_cycles_v1.teachingTracksByCycle = { [homeCycle]: ["french"], [targetCycle]: ["arabic"] };
+    db.tables.classes[0].level = homeLevel;
+    const other = "55555555-5555-4555-8555-555555555555";
+    db.tables.classes.push({ id: other, institution_id: db.legacyId,
+      academic_year: "2026-2027", label: `${targetLevel} — Arabe`, level: targetLevel });
+    const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+    const first = await (await handler.GET(request(api))).json();
+    assert.equal((await handler.PUT(request(api, "PUT", {
+      revision: first.revision, classId: c1, defaultTracks: ["french"], overrides: {},
+    }))).status, 200);
+    const before = await (await handler.GET(request(`${api}?class_id=${other}`))).json();
+    assert.deepEqual(before.candidates.map(row => row.id).sort(), [s1, s2].sort());
+    const result = await handler.PUT(new NextRequest(`http://localhost:10000${api}`, {
+      method: "PUT", headers: { origin: "https://mon-cahier.com", "content-type": "application/json" },
+      body: JSON.stringify({ revision: before.revision, classId: other,
+        defaultTracks: ["arabic"], overrides: {}, linkedStudentIds: [s1] }),
+    }));
+    assert.equal(result.status, 200, JSON.stringify(await result.clone().json()));
+    const saved = await (await handler.GET(request(`${api}?class_id=${other}`))).json();
+    assert.deepEqual(saved.linkedStudentIds, [s1]);
+    assert.equal(db.tables.class_enrollments.length, 2);
+    assert.equal(db.tables.class_enrollments.every(row => row.class_id === c1), true);
+  });
+}
+
+
+test("Program editor never chooses a home silently when an extra current-year enrollment is in an ineligible cycle", async () => {
+  const db = setup();
+  const arabic = "55555555-5555-4555-8555-555555555555";
+  const extraHome = "66666666-6666-4666-8666-666666666666";
+  db.tables.classes.push({ id: arabic, institution_id: db.legacyId, academic_year: "2026-2027", level: "CP1", label: "CP1 Arabe" },
+    { id: extraHome, institution_id: db.legacyId, academic_year: "2026-2027", level: "PS", label: "PS" });
+  db.tables.class_enrollments.push({ id: "ambiguous-home", institution_id: db.legacyId,
+    class_id: extraHome, student_id: s1, end_date: null });
+  const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+  const before = await (await handler.GET(request(`${api}?class_id=${arabic}`))).json();
+  assert.equal(before.candidates.some(row => row.id === s1), false);
+  const writes = db.calls.filter(row => row.op !== "read").length;
+  const response = await handler.PUT(request(api, "PUT", { revision: before.revision, classId: arabic,
+    defaultTracks: ["arabic"], overrides: {}, linkedStudentIds: [s1] }));
+  assert.equal(response.status, 403);
+  assert.equal(db.calls.filter(row => row.op !== "read").length, writes);
+});

@@ -379,8 +379,13 @@ export default function ClassListPrintPage() {
   const [showCorrections, setShowCorrections] = useState(false);
   const [arabicNameEdits, setArabicNameEdits] = useState<Record<string, string>>({});
   const [showArabicNames, setShowArabicNames] = useState(false);
+  const arabicNamesPanel = useRef<HTMLElement | null>(null);
   const [savingArabicNames, setSavingArabicNames] = useState(false);
   const [arabicNameMessage, setArabicNameMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (showArabicNames) arabicNamesPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [showArabicNames]);
   const [showNewStudent, setShowNewStudent] = useState(false);
   const [creatingStudent, setCreatingStudent] = useState(false);
   const [newStudentMsg, setNewStudentMsg] = useState<string | null>(null);
@@ -1119,11 +1124,16 @@ export default function ClassListPrintPage() {
           {arabicList && data?.can_edit_arabic_names ? (
             <button
               type="button"
-              onClick={() => setShowArabicNames((value) => !value)}
+              onClick={() => {
+                setArabicNameMessage(null);
+                setShowArabicNames((value) => !value);
+              }}
+              aria-expanded={showArabicNames}
+              aria-controls="arabic-name-corrections"
               disabled={loading || !!error}
               className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
             >
-              الأسماء بالعربية (Noms en arabe)
+              تصحيح الأسماء (Corriger les noms en arabe)
             </button>
           ) : null}
           <a
@@ -1543,7 +1553,8 @@ export default function ClassListPrintPage() {
       ) : null}
 
       {showArabicNames && arabicList && data?.can_edit_arabic_names ? (
-        <section className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border bg-white p-4 shadow-sm">
+        <section id="arabic-name-corrections" ref={arabicNamesPanel} aria-label="Correction des noms arabes"
+          className="screen-toolbar mx-auto mb-4 max-w-6xl scroll-mt-24 rounded-2xl border bg-white p-4 shadow-sm">
           <div className="mb-3 font-semibold">الأسماء بالعربية — Orthographe arabe des élèves</div>
           <div className="mb-3 text-sm text-slate-600">
             Cette écriture est facultative. Elle ne change ni le matricule ni le nom officiel français.
@@ -1566,7 +1577,7 @@ export default function ClassListPrintPage() {
               </label>
             ))}
           </div>
-          {arabicNameMessage ? <p className="mt-2 text-sm">{arabicNameMessage}</p> : null}
+          {arabicNameMessage ? <p role="status" className="mt-2 text-sm">{arabicNameMessage}</p> : null}
           <button type="button" onClick={() => void saveArabicNames()}
             disabled={savingArabicNames} className="mt-3 rounded-xl bg-slate-900 px-4 py-2 font-semibold text-white disabled:opacity-60">
             {savingArabicNames ? "Enregistrement…" : "Enregistrer les noms arabes"}

@@ -30,7 +30,7 @@ test("Arabic CP1 and secondary class lists print bilingual labels and retain Ara
       assert.match(await page.locator(".roster-table tbody .col-name").nth(2).innerText(), /ÉLÈVE002/);
       assert.equal(await page.locator(".roster-table tbody .col-name").count(), isPrimary ? 8 : 6);
       if (isPrimary) assert.match(await page.locator(".roster-table thead").first().innerText(), /القراءة/);
-      assert.equal(await page.getByRole("button", { name: /Noms en arabe/ }).count(), 1);
+      assert.equal(await page.getByRole("button", { name: /Corriger les noms en arabe/ }).count(), 1);
 
       for (const [mode, heading] of [
         ["Liste provisoire", /القائمة الأولية للتلاميذ/],

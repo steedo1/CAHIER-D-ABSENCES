@@ -183,6 +183,17 @@ test("linked Arabic pupil appears in the teacher and paper rosters and can be gr
   settings.school_cycles_v1.classCycleById[cFr] = "secondary";
   const crossCycle = await teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cAr}`));
   assert.equal(crossCycle.status, 409, "cross-cycle link remains unauthorized for teachers and grades");
+  settings.school_cycles_v1.enabledCycles.push("secondary");
+  settings.school_cycles_v1.teachingTracksByCycle.secondary = ["french"];
+  const enabled = await teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cAr}`));
+  assert.equal(enabled.status, 200, JSON.stringify(await enabled.clone().json()));
+  assert.equal((await enabled.json()).items[0].id, linkedId);
+  const crossCycleGrade = await scores.POST(req("/api/teacher/grades/scores/bulk", {
+    evaluation_id: created.item.id, items: [{ student_id: linkedId, score: 17 }],
+  }));
+  assert.equal(crossCycleGrade.status, 200, JSON.stringify(await crossCycleGrade.clone().json()));
+  assert.equal(db.tables.student_grades[0].score, 17);
+  assert.deepEqual(db.tables.class_enrollments, before);
 });
 
 test("classic schools retain their existing RLS-authorized grade-write rights", async () => {

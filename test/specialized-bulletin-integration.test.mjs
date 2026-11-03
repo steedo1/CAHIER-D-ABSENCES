@@ -383,13 +383,15 @@ test("historical bulletin averages, subject calculations and ranks match the sta
   }
 });
 
-test("a student follows both French and Arabic classes with one identity in the specialized engine", async () => {
+for (const frenchLevel of ["CP1", "CP2", "6ème"]) test(`French ${frenchLevel} pupil remains visible in the CP1 Arabic specialized bulletin`, async () => {
   const db = setup();
   const frenchClass = "77777777-7777-4777-8777-777777777777";
   const virtualStudent = "88888888-8888-4888-8888-888888888888";
+  db.tables.institutions[0].settings_json.school_cycles_v1.enabledCycles.push("secondary");
+  db.tables.institutions[0].settings_json.school_cycles_v1.teachingTracksByCycle.secondary = ["french"];
   db.tables.classes.push({
     id: frenchClass, institution_id: db.legacyId, academic_year: "2026-2027",
-    level: "CP1", label: "CP1 Français", education_type: "general_secondary",
+    level: frenchLevel, label: `${frenchLevel} Français`, education_type: "general_secondary",
   });
   db.tables.class_enrollments.push({
     id: "single-home-enrollment", institution_id: db.legacyId,

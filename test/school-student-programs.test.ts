@@ -155,8 +155,13 @@ test("two teaching classes share one administrative enrollment and one pupil ide
     [classes[0], { ...classes[1], level: "CE1" }], home).length, 2,
     "French CP1 and Arabic CE1 can coexist inside the primary cycle");
   assert.equal(expandPedagogicalEnrollments(school, year,
-    [classes[0], { ...classes[1], cycle: "secondary" as const, level: "6ème" }], home).length, 1,
-    "cross-cycle memberships must never receive a virtual enrollment");
+    [classes[0], { ...classes[1], cycle: "secondary" as const, level: "6ème" }], home).length, 2,
+    "an Arabic secondary class may receive a French primary pupil");
   assert.equal(expandPedagogicalEnrollments(school, year, classes, []).length, 0,
     "stale links without home enrollment must never survive");
+  const ambiguous = expandPedagogicalEnrollments(school, year,
+    [...classes, { id: C, cycle: "primary", level: "CP2" }],
+    [...home, { class_id: C, student_id: S1, end_date: null }]);
+  assert.equal(ambiguous.some(row => row.class_id === B), false,
+    "two administrative homes cannot silently authorize an Arabic link");
 });

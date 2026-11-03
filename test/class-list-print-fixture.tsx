@@ -32,7 +32,17 @@ const students = Array.from({ length: count }, (_, index) => ({
   birth_place: null, lv2: null, enrollment_start_date: null,
 }));
 const logo = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><circle cx="90" cy="90" r="82" fill="none" stroke="#0f766e" stroke-width="8"/><path d="M40 55h40l10 12 10-12h40v65h-40l-10 12-10-12H40z" fill="#b91c1c"/><text x="90" y="155" text-anchor="middle" fill="#0f766e" font-size="18">ÉCOLE TEST</text></svg>');
-window.fetch = async (input) => {
+(window as any).__arabicNameSaves = [];
+window.fetch = async (input, init) => {
+  if (String(input) === "/api/admin/classes/fixture/arabic-names" && init?.method === "PATCH") {
+    const updates = JSON.parse(String(init.body)).updates;
+    (window as any).__arabicNameSaves.push(updates);
+    for (const update of updates) {
+      const student = students.find(row => row.id === update.student_id);
+      if (student) student.full_name_ar = update.full_name_ar;
+    }
+    return Response.json({ ok: true, updated: updates.length });
+  }
   if (String(input).startsWith("/api/admin/classes/fixture/roster")) return Response.json({
     ...(params.has("primary") ? { school_cycle: "primary", mark_subjects: (arabicRoster ? (
       params.has("epcSubjects") ? [

@@ -201,11 +201,11 @@ export default function SchoolStudentProgramsEditor() {
           </div>
           <fieldset className="rounded-xl border border-sky-200 bg-sky-50/40 p-4">
             <legend className="px-1 text-sm font-semibold text-slate-900">
-              Élèves de l'autre enseignement au même niveau
+              Élèves de l'autre enseignement
             </legend>
             <p className="mt-2 text-xs text-slate-700">
-              Exemple : un élève inscrit administrativement en CP1 Français peut
-              suivre également CP1 Arabe, sans seconde fiche ni frais doublés.
+              Le niveau et le cycle peuvent différer entre français et arabe
+              (primaire ou secondaire), sans seconde fiche ni frais doublés.
               Configurez d’abord l’enseignement de sa classe d’origine.
             </p>
             {defaultTracks.length !== 1 && <p role="status" className="mt-2 text-xs text-amber-900">
@@ -228,7 +228,7 @@ export default function SchoolStudentProgramsEditor() {
                 </label>
               ))}
               {!candidates.length && <p className="text-xs text-slate-600">
-                Aucun élève d’une autre classe du même niveau n’est encore inscrit.
+                Aucun élève d’une autre classe admissible n’est encore inscrit.
               </p>}
             </div>
           </fieldset>
