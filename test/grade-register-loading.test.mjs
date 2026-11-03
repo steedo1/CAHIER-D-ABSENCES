@@ -337,3 +337,64 @@ test("un clic sur la ligne de synthèse sélectionne la discipline et l'enseigna
   assert.match(markup(), />Note 1</);
   assert.match(markup(), />13</);
 });
+
+
+test("EPC primaire : registre annuel visible sans trimestre et notes officielles conservées", async () => {
+  const epcClass = {
+    ...classRow, id: "cp1-fr", institution_id: "epc",
+    label: "CP1 — Français", level: "CP1", education_type: null, formation_level_code: null,
+  };
+  const primaryEvaluation = {
+    id: "eval-cp1", class_id: epcClass.id, teacher_id: "teacher", subject_id: subject.id,
+    grading_period_id: null, academic_year: "2026-2027", eval_date: "2026-11-02",
+    is_published: true, publication_status: "published", scale: 10, coeff: 1,
+  };
+  const { mocks } = handlers({
+    ...base,
+    institutions: [{ id: "epc", settings_json: {} }],
+    profiles: [{ id: "admin", institution_id: "epc" }, { id: "teacher", display_name: "Maître CP1" }],
+    user_roles: [{ profile_id: "admin", role: "admin", institution_id: "epc" }],
+    classes: [epcClass],
+    institution_subjects: [{ ...instSubject, institution_id: "epc" }],
+    class_teachers: [{ ...assignment, institution_id: "epc", class_id: epcClass.id }],
+    grade_periods: [],
+    grade_evaluations: [primaryEvaluation],
+    class_enrollments: [{
+      class_id: epcClass.id, student_id: "pupil",
+      students: { id: "pupil", last_name: "Élève", first_name: "CP1", matricule: "EPC260001" },
+    }],
+    v_grade_scores_official_for_reports: [{ evaluation_id: "eval-cp1", student_id: "pupil", score: 9 }],
+  });
+  const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+  const overview = await route.GET({
+    nextUrl: new URL("https://test/api?view=overview&class_id=cp1-fr&academic_year=2026-2027"),
+  });
+  assert.equal(overview.status, 200);
+  const groups = (await overview.json()).items;
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].published_notes_count, 1);
+
+  const detail = await route.GET({
+    nextUrl: new URL("https://test/api?class_id=cp1-fr&subject_id=inst-subject&teacher_id=teacher&academic_year=2026-2027"),
+  });
+  assert.equal(detail.status, 200);
+  const data = await detail.json();
+  assert.equal(data.period, null);
+  assert.equal(data.evaluations.length, 1);
+  assert.equal(data.scores[0].score, 9);
+  assert.equal(data.roster[0].matricule, "EPC260001");
+
+  const wrongYear = await route.GET({
+    nextUrl: new URL("https://test/api?view=overview&class_id=cp1-fr&academic_year=2025-2026"),
+  });
+  assert.equal(wrongYear.status, 400);
+});
+
+test("le secondaire exige toujours une période explicite", async () => {
+  const { mocks } = handlers({ ...base, grade_evaluations: [] });
+  const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+  const response = await route.GET({
+    nextUrl: new URL("https://test/api?view=overview&class_id=6e1&academic_year=2026-2027"),
+  });
+  assert.equal(response.status, 400);
+});
