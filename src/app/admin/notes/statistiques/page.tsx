@@ -296,7 +296,6 @@ export default function AdminGradeRegisterPage() {
 
   const [register, setRegister] = useState<RegisterResponse | null>(null);
   const [registerLoading, setRegisterLoading] = useState(false);
-  const [pdfLoading, setPdfLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -317,6 +316,7 @@ export default function AdminGradeRegisterPage() {
   const [entryMode, setEntryMode] = useState<"notes" | "averages">("notes");
   const [directDirty, setDirectDirty] = useState(false);
   const [directSaving, setDirectSaving] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const overviewMode = selectedSubjectId === "";
 
   const loadSeq = useRef(0);
