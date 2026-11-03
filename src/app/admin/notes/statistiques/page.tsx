@@ -948,8 +948,8 @@ export default function AdminGradeRegisterPage() {
                   {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
                   {pdfLoading ? "Préparation du PDF…" : "Exporter PDF"}
                 </Button>
-              )
-              <Button type="button" onClick={() => void saveChanges()} disabled={!dirtyCount || saving}>
+              )}
+              <Button type="button" onClick={() => void saveChanges() disabled={!dirtyCount || saving}>
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 Enregistrer{dirtyCount ? ` (${dirtyCount})` : ""}
               </Button>
