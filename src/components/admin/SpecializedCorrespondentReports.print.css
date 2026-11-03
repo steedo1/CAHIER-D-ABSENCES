@@ -9,14 +9,30 @@
     margin: 12mm;
   }
 
-  /* Seule la matrice trimestrielle utilise une page A4 paysage. */
+  /* Matrice complète sans découpage horizontal, format adapté au nombre de matières. */
   @page specializedMatrixLandscape {
     size: A4 landscape;
     margin: 8mm;
   }
 
+  @page specializedMatrixWideLandscape {
+    size: A3 landscape;
+    margin: 8mm;
+  }
+
+  @page specializedMatrixExtraWideLandscape {
+    size: A2 landscape;
+    margin: 8mm;
+  }
+
   #specialized-correspondent-report.specialized-term-report {
     page: specializedMatrixLandscape;
+  }
+  #specialized-correspondent-report.specialized-term-wide {
+    page: specializedMatrixWideLandscape;
+  }
+  #specialized-correspondent-report.specialized-term-extra-wide {
+    page: specializedMatrixExtraWideLandscape;
   }
 
   body:has(#specialized-correspondent-report) * {
@@ -57,18 +73,12 @@
     overflow: visible !important;
   }
 
-  /* La grille à l'écran reste inchangée. Pour l'impression, cinq matières
-     par feuille évitent de comprimer les noms, notes et entêtes. */
+  /* La grille écran reste inchangée. Les matières sont toutes dans la même table. */
   #specialized-correspondent-report .specialized-term-sheet {
     font-family: Arial, Helvetica, sans-serif;
     font-size: 10.5pt;
     line-height: 1.25;
     break-inside: auto;
-  }
-
-  #specialized-correspondent-report .specialized-term-sheet + .specialized-term-sheet {
-    break-before: page;
-    page-break-before: always;
   }
 
   #specialized-correspondent-report .specialized-term-sheet h3 {
@@ -108,5 +118,25 @@
     text-align: left;
     font-weight: 700;
     overflow-wrap: break-word;
+  }
+
+  /* Les intitulés longs deviennent verticaux uniquement sur les matrices très larges. */
+  #specialized-correspondent-report:is(.specialized-term-wide, .specialized-term-extra-wide)
+  .specialized-term-table th.subject-heading {
+    height: 128px;
+    vertical-align: bottom;
+  }
+  #specialized-correspondent-report:is(.specialized-term-wide, .specialized-term-extra-wide)
+  .specialized-term-table th.subject-heading .subject-label {
+    display: inline-block;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    white-space: nowrap;
+  }
+  #specialized-correspondent-report:is(.specialized-term-wide, .specialized-term-extra-wide)
+  .specialized-term-table th,
+  #specialized-correspondent-report:is(.specialized-term-wide, .specialized-term-extra-wide)
+  .specialized-term-table td {
+    padding: 2px 3px;
   }
 }
