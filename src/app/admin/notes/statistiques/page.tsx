@@ -1,5 +1,7 @@
 "use client";
 
+import { isPrimaryGradeRegisterClass } from "@/lib/grades/grade-register-scope";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import DirectSubjectAverages from "@/components/admin/DirectSubjectAverages";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
@@ -331,6 +333,7 @@ export default function AdminGradeRegisterPage() {
     () => classes.find((row) => row.id === selectedClassId) || null,
     [classes, selectedClassId],
   );
+  const primaryRegister = isPrimaryGradeRegisterClass(selectedClass);
 
   const periodOptions = useMemo(
     () =>
@@ -509,18 +512,22 @@ export default function AdminGradeRegisterPage() {
         }
 
         const [periodResponse, affectationResponse] = await Promise.all([
-          fetch(`/api/admin/institution/grading-periods?${periodParams.toString()}`, {
-            cache: "no-store",
-          }),
+          primaryRegister
+            ? Promise.resolve(null)
+            : fetch(`/api/admin/institution/grading-periods?${periodParams.toString()}`, {
+                cache: "no-store",
+              }),
           fetch(`/api/admin/affectations/current?${affectationParams.toString()}`, {
             cache: "no-store",
           }),
         ]);
 
-        const periodData = await periodResponse.json().catch(() => ({}));
+        const periodData = periodResponse
+          ? await periodResponse.json().catch(() => ({}))
+          : { items: [] };
         const affectationData = await affectationResponse.json().catch(() => ({}));
 
-        if (!periodResponse.ok) {
+        if (periodResponse && !periodResponse.ok) {
           throw new Error(periodData?.error || "Impossible de charger les périodes.");
         }
         if (!affectationResponse.ok) {
@@ -548,7 +555,7 @@ export default function AdminGradeRegisterPage() {
     return () => {
       cancelled = true;
     };
-  }, [educationScope, selectedClassId, selectedYear]);
+  }, [educationScope, selectedClassId, selectedYear, primaryRegister]);
 
   function changeEducationScope(value: EducationScopeValue) {
     setEducationScope(value);
@@ -590,14 +597,15 @@ export default function AdminGradeRegisterPage() {
     const seq = ++loadSeq.current;
     setError(null);
     setRegister(null);
-    if (!selectedClassId || !selectedPeriodId) return;
+    if (!selectedClassId || (!primaryRegister && !selectedPeriodId)) return;
     setRegisterLoading(true);
     try {
       const params = new URLSearchParams({
         view: "overview",
         class_id: selectedClassId,
-        grading_period_id: selectedPeriodId,
+        academic_year: selectedYear,
       });
+      if (!primaryRegister) params.set("grading_period_id", selectedPeriodId);
       const response = await fetch(`/api/admin/grades/register?${params.toString()}`, { cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.ok) throw new Error(data?.error || "Impossible de charger les enseignants.");
@@ -631,7 +639,7 @@ export default function AdminGradeRegisterPage() {
     setError(null);
     if (
       !selectedClassId ||
-      !selectedPeriodId ||
+      (!primaryRegister && !selectedPeriodId) ||
       !selectedSubjectId ||
       !selectedTeacherId
     ) {
@@ -643,10 +651,11 @@ export default function AdminGradeRegisterPage() {
       if (showBusy) setRegisterLoading(true);
       const params = new URLSearchParams({
         class_id: selectedClassId,
-        grading_period_id: selectedPeriodId,
+        academic_year: selectedYear,
         subject_id: selectedSubjectId,
         teacher_id: selectedTeacherId,
       });
+      if (!primaryRegister) params.set("grading_period_id", selectedPeriodId);
       const response = await fetch(`/api/admin/grades/register?${params.toString()}`, {
         cache: "no-store",
       });
@@ -674,11 +683,11 @@ export default function AdminGradeRegisterPage() {
     setSearch("");
     setMessage(null);
     if (entryMode === "averages") return;
-    if (selectedClassId && selectedPeriodId && overviewMode) {
+    if (selectedClassId && (primaryRegister || selectedPeriodId) && overviewMode) {
       void loadOverview();
     } else if (
       selectedClassId &&
-      selectedPeriodId &&
+      (primaryRegister || selectedPeriodId) &&
       selectedSubjectId &&
       selectedTeacherId
     ) {
@@ -686,7 +695,7 @@ export default function AdminGradeRegisterPage() {
     }
     return () => { ++loadSeq.current; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClassId, selectedPeriodId, selectedSubjectId, selectedTeacherId, entryMode]);
+  }, [selectedClassId, selectedPeriodId, selectedSubjectId, selectedTeacherId, entryMode, primaryRegister]);
 
   function getCellValue(evaluationId: string, studentId: string) {
     const dirtyValue = dirty[evaluationId]?.[studentId];
@@ -794,7 +803,7 @@ export default function AdminGradeRegisterPage() {
   }
 
   async function createEvaluation() {
-    if (!selectedClassId || !selectedPeriodId || !selectedSubjectId || !selectedTeacherId) {
+    if (!selectedClassId || (!primaryRegister && !selectedPeriodId) || !selectedSubjectId || !selectedTeacherId) {
       setError("Complétez d’abord les sélections du registre.");
       return;
     }
@@ -809,7 +818,7 @@ export default function AdminGradeRegisterPage() {
         body: JSON.stringify({
           action: "create_evaluation",
           class_id: selectedClassId,
-          grading_period_id: selectedPeriodId,
+          grading_period_id: primaryRegister ? null : selectedPeriodId,
           subject_id: selectedSubjectId,
           teacher_id: selectedTeacherId,
           eval_date: newEvaluation.eval_date,
@@ -838,11 +847,11 @@ export default function AdminGradeRegisterPage() {
   const ready = Boolean(
     selectedYear &&
       selectedClassId &&
-      selectedPeriodId &&
+      (primaryRegister || selectedPeriodId) &&
       selectedSubjectId &&
       selectedTeacherId,
   );
-  const contextReady = Boolean(selectedYear && selectedClassId && selectedPeriodId);
+  const contextReady = Boolean(selectedYear && selectedClassId && (primaryRegister || selectedPeriodId));
 
   return (
     <div className="min-h-screen bg-slate-50/70 px-4 py-5 sm:px-6 lg:px-8">
@@ -931,22 +940,31 @@ export default function AdminGradeRegisterPage() {
               </Select>
             </label>
 
-            <label>
-              <FieldLabel>Trimestre / période</FieldLabel>
-              <Select
-                value={selectedPeriodId}
-                onChange={(event) => {
-                  setSelectedPeriodId(event.target.value);
-                  setOverviewItems([]);
-                  showAllDisciplines();
-                }}
-                disabled={periodsLoading || !periodOptions.length}
-              >
-                {periodOptions.map((period) => (
-                  <option key={period.id} value={period.id}>{periodLabel(period)}</option>
-                ))}
-              </Select>
-            </label>
+            {primaryRegister ? (
+              <div>
+                <FieldLabel>Période</FieldLabel>
+                <div className="flex h-10 items-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700">
+                  Toute l’année scolaire (primaire)
+                </div>
+              </div>
+            ) : (
+              <label>
+                <FieldLabel>Trimestre / période</FieldLabel>
+                <Select
+                  value={selectedPeriodId}
+                  onChange={(event) => {
+                    setSelectedPeriodId(event.target.value);
+                    setOverviewItems([]);
+                    showAllDisciplines();
+                  }}
+                  disabled={periodsLoading || !periodOptions.length}
+                >
+                  {periodOptions.map((period) => (
+                    <option key={period.id} value={period.id}>{periodLabel(period)}</option>
+                  ))}
+                </Select>
+              </label>
+            )
 
             <label>
               <FieldLabel>Discipline</FieldLabel>
