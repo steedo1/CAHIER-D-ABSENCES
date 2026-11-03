@@ -1,4 +1,5 @@
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
+import { isPrimaryGradeRegisterClass } from "@/lib/grades/grade-register-scope";
 import { selectProgramComponents } from "@/lib/school-subject-components";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -344,17 +345,17 @@ function mergeScores(
 async function loadRosterForPeriod(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   classId: string,
-  period: PeriodRow,
+  period: PeriodRow | null,
 ) {
   let query = srv
     .from("class_enrollments")
     .select("student_id,start_date,end_date,students:student_id(id,full_name,first_name,last_name,matricule)")
     .eq("class_id", classId);
 
-  if (period.end_date) {
+  if (period?.end_date) {
     query = query.or(`start_date.lte.${period.end_date},start_date.is.null`);
   }
-  if (period.start_date) {
+  if (period?.start_date) {
     query = query.or(`end_date.gte.${period.start_date},end_date.is.null`);
   }
 
@@ -497,15 +498,19 @@ async function loadRegisterOverview(
   institutionId: string,
   classId: string,
   periodId: string,
-  period: PeriodRow,
+  period: PeriodRow | null,
+  academicYear: string,
 ) {
   const evaluations: EvaluationRow[] = [];
   for (let offset = 0; ; offset += 1000) {
-    const { data, error } = await srv
+    const baseQuery = srv
       .from("grade_evaluations")
       .select("id,class_id,subject_id,teacher_id,eval_date,is_published,publication_status")
-      .eq("class_id", classId)
-      .or(buildPeriodScope(periodId, period))
+      .eq("class_id", classId);
+    const scopedQuery = period
+      ? baseQuery.or(buildPeriodScope(periodId, period))
+      : baseQuery.eq("academic_year", academicYear);
+    const { data, error } = await scopedQuery
       .order("eval_date", { ascending: true })
       .order("id", { ascending: true })
       .range(offset, offset + 999);
@@ -590,28 +595,39 @@ export async function GET(req: NextRequest) {
     const rawSubjectId = String(req.nextUrl.searchParams.get("subject_id") || "").trim();
     const teacherId = String(req.nextUrl.searchParams.get("teacher_id") || "").trim();
     const periodId = String(req.nextUrl.searchParams.get("grading_period_id") || "").trim();
+    const requestedYear = String(req.nextUrl.searchParams.get("academic_year") || "").trim();
     const overview = req.nextUrl.searchParams.get("view") === "overview";
 
-    if (!classId || !periodId || (!overview && (!rawSubjectId || !teacherId))) {
+    if (!classId || (!overview && (!rawSubjectId || !teacherId))) {
       return bad("MISSING_FILTERS", 400);
     }
 
     const classRow = await ensureClass(srv, institutionId, classId);
     if (!classRow) return bad("CLASS_NOT_FOUND", 404);
+    const primaryClass = isPrimaryGradeRegisterClass(classRow);
+    if (!periodId && !primaryClass) return bad("MISSING_FILTERS", 400);
 
-    const period = await ensurePeriod(srv, institutionId, periodId);
-    if (!period) return bad("GRADE_PERIOD_NOT_FOUND", 404);
+    const academicYear = String(classRow.academic_year || "").trim();
+    if (requestedYear && requestedYear !== academicYear) {
+      return bad("ACADEMIC_YEAR_MISMATCH", 400);
+    }
+    if (!periodId && !/^\d{4}-\d{4}$/.test(academicYear)) {
+      return bad("INVALID_ACADEMIC_YEAR", 400);
+    }
+
+    const period = periodId ? await ensurePeriod(srv, institutionId, periodId) : null;
+    if (periodId && !period) return bad("GRADE_PERIOD_NOT_FOUND", 404);
 
     if (
-      period.academic_year &&
-      classRow.academic_year &&
-      String(period.academic_year) !== String(classRow.academic_year)
+      period?.academic_year &&
+      academicYear &&
+      String(period.academic_year) !== academicYear
     ) {
       return bad("ACADEMIC_YEAR_MISMATCH", 400);
     }
 
     if (overview) {
-      const items = await loadRegisterOverview(srv, institutionId, classId, periodId, period);
+      const items = await loadRegisterOverview(srv, institutionId, classId, periodId, period, academicYear);
       return json({ ok: true, items, class: classRow, period });
     }
 
@@ -623,19 +639,21 @@ export async function GET(req: NextRequest) {
 
     const rosterMap = await loadRosterForPeriod(srv, classId, period);
 
-    const evaluationQuery = srv
+    const evaluationBase = srv
       .from("grade_evaluations")
       .select(
         "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at,publication_status,submitted_at,reviewed_at",
       )
       .eq("class_id", classId)
       .eq("teacher_id", teacherId)
-      .in("subject_id", subject.ids)
-      .or(buildPeriodScope(periodId, period))
+      .in("subject_id", subject.ids);
+    const evaluationQuery = period
+      ? evaluationBase.or(buildPeriodScope(periodId, period))
+      : evaluationBase.eq("academic_year", academicYear);
+
+    const { data: evaluationsRaw, error: evalError } = await evaluationQuery
       .order("eval_date", { ascending: true })
       .order("id", { ascending: true });
-
-    const { data: evaluationsRaw, error: evalError } = await evaluationQuery;
     if (evalError) throw evalError;
 
     const evaluations = (evaluationsRaw || []) as unknown as EvaluationRow[];
@@ -759,7 +777,7 @@ export async function POST(req: NextRequest) {
       const coeff = Number(body.coeff || 1);
       const componentId = String(body.subject_component_id || "").trim() || null;
 
-      if (!classId || !rawSubjectId || !teacherId || !periodId || !evalDate) {
+      if (!classId || !rawSubjectId || !teacherId || !evalDate) {
         return bad("MISSING_FIELDS", 400);
       }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(evalDate)) return bad("INVALID_DATE", 400);
@@ -771,17 +789,29 @@ export async function POST(req: NextRequest) {
 
       const classRow = await ensureClass(srv, institutionId, classId);
       if (!classRow) return bad("CLASS_NOT_FOUND", 404);
-      const period = await ensurePeriod(srv, institutionId, periodId);
-      if (!period) return bad("GRADE_PERIOD_NOT_FOUND", 404);
+      if (!periodId && !isPrimaryGradeRegisterClass(classRow)) {
+        return bad("MISSING_FIELDS", 400);
+      }
+      const period = periodId ? await ensurePeriod(srv, institutionId, periodId) : null;
+      if (periodId && !period) return bad("GRADE_PERIOD_NOT_FOUND", 404);
       if (
-        period.academic_year &&
+        period?.academic_year &&
         classRow.academic_year &&
         String(period.academic_year) !== String(classRow.academic_year)
       ) {
         return bad("ACADEMIC_YEAR_MISMATCH", 400);
       }
-      if (period.start_date && evalDate < period.start_date) return bad("DATE_OUTSIDE_PERIOD", 400);
-      if (period.end_date && evalDate > period.end_date) return bad("DATE_OUTSIDE_PERIOD", 400);
+      if (period?.start_date && evalDate < period.start_date) return bad("DATE_OUTSIDE_PERIOD", 400);
+      if (period?.end_date && evalDate > period.end_date) return bad("DATE_OUTSIDE_PERIOD", 400);
+      if (!period) {
+        const yearMatch = String(classRow.academic_year || "").match(/^(\d{4})-(\d{4})$/);
+        if (!yearMatch || Number(yearMatch[2]) !== Number(yearMatch[1]) + 1) {
+          return bad("INVALID_ACADEMIC_YEAR", 400);
+        }
+        if (evalDate < `${yearMatch[1]}-08-01` || evalDate > `${yearMatch[2]}-07-31`) {
+          return bad("DATE_OUTSIDE_ACADEMIC_YEAR", 400);
+        }
+      }
 
       const subject = await resolveSubjectIds(srv, institutionId, rawSubjectId);
       if (!subject.globalId || !subject.ids.length) return bad("SUBJECT_NOT_FOUND", 404);
@@ -824,8 +854,8 @@ export async function POST(req: NextRequest) {
           class_id: classId,
           subject_id: subject.globalId,
           subject_component_id: componentId,
-          grading_period_id: periodId,
-          academic_year: period.academic_year || classRow.academic_year || null,
+          grading_period_id: period?.id || null,
+          academic_year: period?.academic_year || classRow.academic_year || null,
           teacher_id: teacherId,
           eval_date: evalDate,
           eval_kind: evalKind,
