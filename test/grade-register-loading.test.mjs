@@ -347,7 +347,8 @@ test("EPC primaire : registre annuel visible sans trimestre et notes officielles
   const primaryEvaluation = {
     id: "eval-cp1", class_id: epcClass.id, teacher_id: "teacher", subject_id: subject.id,
     grading_period_id: null, academic_year: "2026-2027", eval_date: "2026-11-02",
-    is_published: true, publication_status: "published", scale: 10, coeff: 1,
+    title: "MCPE:D:DEVOIR:french:S15",
+    is_published: true, publication_status: "published", scale: 60, coeff: 1,
   };
   const { mocks } = handlers({
     ...base,
@@ -381,6 +382,7 @@ test("EPC primaire : registre annuel visible sans trimestre et notes officielles
   const data = await detail.json();
   assert.equal(data.period, null);
   assert.equal(data.evaluations.length, 1);
+  assert.equal(data.evaluations[0].scale, 15, "le barème réel /15 remplace le stockage technique /60");
   assert.equal(data.scores[0].score, 9);
   assert.equal(data.roster[0].matricule, "EPC260001");
 
@@ -397,4 +399,28 @@ test("le secondaire exige toujours une période explicite", async () => {
     nextUrl: new URL("https://test/api?view=overview&class_id=6e1&academic_year=2026-2027"),
   });
   assert.equal(response.status, 400);
+});
+
+
+test("le registre interdit de saisir 20 points dans un devoir primaire sur 15, même stocké sur 60", async () => {
+  const epcClass = { ...classRow, id: "ce1-fr", institution_id: "epc",
+    label: "CE1 — Français", level: "CE1", education_type: null };
+  const { mocks } = handlers({
+    ...base,
+    profiles: [{ id: "admin", institution_id: "epc" }],
+    user_roles: [{ profile_id: "admin", role: "admin", institution_id: "epc" }],
+    classes: [epcClass],
+    grade_evaluations: [{
+      id: "eval-ce1", class_id: "ce1-fr", title: "MCPE:D:DEVOIR:french:S15",
+      scale: 60, is_published: false, publication_status: "draft",
+    }],
+    class_enrollments: [{ class_id: "ce1-fr", student_id: "pupil" }],
+  });
+  const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+  const response = await route.POST({ json: async () => ({
+    action: "save_scores", evaluation_id: "eval-ce1",
+    items: [{ student_id: "pupil", score: 20 }],
+  }) });
+  assert.equal(response.status, 422);
+  assert.deepEqual((await response.json()).scale, 15);
 });
