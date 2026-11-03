@@ -37,6 +37,8 @@ jobs:
       - run: npm run typecheck
       - name: Registre admin mobile et export PDF
         run: node --import tsx --test test/admin-grade-register.test.mjs test/grade-register-loading.test.mjs test/grade-register-print.test.mjs
+      - name: Vérifier le vrai téléchargement PDF sur mobile
+        run: node --import tsx --test test/grade-register-download.test.mjs
       - name: Resource usage and authorization isolation
         run: node --import tsx --test test/production-consumption.test.mjs test/supabase-consumption-regression.test.mjs test/supabase-server-auth-dedupe.test.mjs test/supabase-reference-fetch.test.mjs test/background-attendance-bandwidth.test.mjs test/class-device-my-classes.test.ts test/class-device-preparation-revision.test.mjs
       - run: npm run test:primary-events
