@@ -1,7 +1,7 @@
 "use client";
 
 import { isPrimaryGradeRegisterClass } from "@/lib/grades/grade-register-scope";
-import { openGradeRegisterPdf } from "@/lib/grades/grade-register-print";
+import { downloadGradeRegisterPdf } from "@/lib/grades/grade-register-download";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import DirectSubjectAverages from "@/components/admin/DirectSubjectAverages";
@@ -317,6 +317,7 @@ export default function AdminGradeRegisterPage() {
   const [entryMode, setEntryMode] = useState<"notes" | "averages">("notes");
   const [directDirty, setDirectDirty] = useState(false);
   const [directSaving, setDirectSaving] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const overviewMode = selectedSubjectId === "";
 
   const loadSeq = useRef(0);
@@ -847,7 +848,7 @@ export default function AdminGradeRegisterPage() {
     }
   }
 
-  function exportRegisterPdf() {
+  async function exportRegisterPdf() {
     if (!register || !visibleEvaluations.length || !roster.length) {
       setError("Aucune note à exporter pour cette sélection.");
       return;
@@ -857,6 +858,8 @@ export default function AdminGradeRegisterPage() {
       return;
     }
 
+    setPdfLoading(true);
+    setError(null);
     const grades: Record<string, Record<string, number | null>> = {};
     for (const evaluation of visibleEvaluations) {
       const values: Record<string, number | null> = {};
@@ -867,7 +870,8 @@ export default function AdminGradeRegisterPage() {
       grades[evaluation.id] = values;
     }
 
-    const success = openGradeRegisterPdf({
+    try {
+      const filename = await downloadGradeRegisterPdf({
       institutionName: register.institution_name || "Établissement scolaire",
       academicYear: selectedYear,
       className: classLabel(selectedClass),
@@ -886,9 +890,12 @@ export default function AdminGradeRegisterPage() {
         component: evaluation.component_label || null,
       })),
       grades,
-    });
-    if (!success) {
-      setError("La fenêtre PDF a été bloquée. Autorisez les fenêtres d’impression puis réessayez.");
+      });
+      setMessage("Téléchargement du PDF lancé : " + filename);
+    } catch (reason: any) {
+      setError(reason?.message || "Impossible de télécharger le PDF.");
+    } finally {
+      setPdfLoading(false);
     }
   }
 
@@ -1229,11 +1236,12 @@ export default function AdminGradeRegisterPage() {
               {!overviewMode && (
                 <button
                   type="button"
-                  onClick={exportRegisterPdf}
-                  disabled={!register || !visibleEvaluations.length || !roster.length || registerLoading || dirtyCount > 0}
+                  onClick={() => void exportRegisterPdf()}
+                  disabled={!register || !visibleEvaluations.length || !roster.length || registerLoading || pdfLoading || dirtyCount > 0}
                   className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <FileDown className="h-4 w-4" /> Exporter PDF
+                  {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+                  {pdfLoading ? "Préparation PDF…" : "Exporter PDF"}
                 </button>
               )}
               <label className="block w-full sm:w-48">
