@@ -9,6 +9,7 @@ import {
   readStudentProgramSettings,
 } from "@/lib/school-student-programs";
 import { asSettingsObject } from "@/lib/school-settings-write";
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,11 +28,11 @@ const reply = (payload: unknown, status = 200) => NextResponse.json(payload, {
  * school fees: the French (home) class remains authoritative.
  */
 export async function POST(request: NextRequest) {
-  const access = await requireInstitutionAccess({ allowedRoles: ALLOWED_ROLES });
-  if ("error" in access) return access.error;
-  if (request.headers.get("origin") && request.headers.get("origin") !== request.nextUrl.origin) {
+  if (!isTrustedAppOrigin(request)) {
     return reply({ error: "invalid_origin" }, 403);
   }
+  const access = await requireInstitutionAccess({ allowedRoles: ALLOWED_ROLES });
+  if ("error" in access) return access.error;
   if (!request.headers.get("content-type")?.includes("application/json")) {
     return reply({ error: "expected_json" }, 415);
   }
