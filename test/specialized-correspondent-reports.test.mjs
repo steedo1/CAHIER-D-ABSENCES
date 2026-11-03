@@ -128,9 +128,12 @@ test("matrice primaire EPC : les compositions utilisent le calendrier officiel, 
 
 test("matrices primaires : barèmes par matière sans toucher aux calculs du secondaire", () => {
   const source = read("src/components/admin/SpecializedCorrespondentReports.tsx");
-  const expected = "isPrimaryTermMatrix ? item.denominator ?? program!.denominator : program!.denominator";
+  const expected = "isPrimaryTermMatrix ? item.denominator ?? subjectProgram!.denominator : subjectProgram!.denominator";
   assert.equal(source.split(expected).length - 1, 2, "aperçu et impression utilisent le bon barème");
   assert.match(source, /mode === "annual" \? periods\.slice\(0, 12\) : periods\.filter/);
+  assert.match(source, /const subjectProgram = isPrimaryTermMatrix \? entry\.document\[selectedTrack\] : program;/);
+  assert.match(source, /const item = subjectProgram\?\.subjects\.find/, "matières publiées visibles même si le reste est incomplet");
+  assert.match(source, /const program = programFor\(entry, selectedTrack\)/, "rang et moyenne générale exigent des notes complètes");
   assert.match(source, /PRESCHOOL_QUALITATIVE_STORAGE_REQUIRED/);
   assert.match(source, /DOCUMENT DE TRAVAIL/);
 });
