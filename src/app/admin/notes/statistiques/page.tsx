@@ -964,7 +964,7 @@ export default function AdminGradeRegisterPage() {
                   ))}
                 </Select>
               </label>
-            )
+            )}
 
             <label>
               <FieldLabel>Discipline</FieldLabel>
