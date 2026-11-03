@@ -108,9 +108,9 @@ test("sur mobile les notes sont affichées avant de faire défiler un tableau", 
   assert.match(page, /className="hidden max-h-\[68vh\] overflow-auto md:block"/, "le tableau desktop reste disponible");
 });
 
-test("le registre primaire affiche son vrai cycle et peut exporter les notes en PDF sans requête supplémentaire", () => {
+test("le registre primaire affiche son cycle et télécharge les notes en PDF sans requête SQL supplémentaire", () => {
   assert.match(page, /educationTypeLabelOverride=\{primaryRegister \? "Enseignement primaire" : undefined\}/);
-  assert.match(page, /openGradeRegisterPdf\(\{/);
+  assert.match(page, /downloadGradeRegisterPdf\(\{/);
   assert.match(page, /institutionName: register\.institution_name/);
   assert.match(page, /evaluations: visibleEvaluations\.map/);
   assert.match(page, /values\[student\.id\] = typeof raw === "number"/);
@@ -118,4 +118,19 @@ test("le registre primaire affiche son vrai cycle et peut exporter les notes en 
   assert.match(page, /if \(dirtyCount\)/, "ne pas imprimer de modifications non enregistrées");
   assert.doesNotMatch(page.slice(page.indexOf("function exportRegisterPdf()"), page.indexOf("const ready = Boolean")), /fetch\(/);
   assert.match(route, /institution_name: String\(institution\?\.name/);
+});
+
+
+test("l'export PDF télécharge le fichier directement dans la PWA, sans fenêtre d'impression", () => {
+  const source = fs.readFileSync(
+    new URL("../src/lib/grades/grade-register-download.ts", import.meta.url), "utf8",
+  );
+  assert.match(source, /pdfkit\/js\/pdfkit\.standalone\.js/, "PDFKit chargé seulement au clic");
+  assert.match(source, /card-fonts\/DejaVuSans\.ttf/, "police Unicode français et arabe");
+  assert.match(source, /doc\.on\("end"/, "fichier PDF complet avant téléchargement");
+  assert.match(source, /URL\.createObjectURL\(blob\)/, "vrai fichier généré");
+  assert.match(source, /link\.download = name/);
+  assert.match(source, /group\.map/, "notes affichées dans le PDF, 4 par feuille");
+  assert.doesNotMatch(source, /\/api\/admin\/grades|supabase|window\.open\(/i);
+  assert.match(page, /pdfLoading/);
 });
