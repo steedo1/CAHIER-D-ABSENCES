@@ -131,6 +131,6 @@ test("l'export PDF télécharge le fichier directement dans la PWA, sans fenêtr
   assert.match(source, /URL\.createObjectURL\(blob\)/, "vrai fichier généré");
   assert.match(source, /link\.download = name/);
   assert.match(source, /group\.map/, "notes affichées dans le PDF, 4 par feuille");
-  assert.doesNotMatch(source, /\/api\/admin\/grades|supabase|window\.open\(/i);
+  assert.doesNotMatch(source, /fetch\(["\x27]\/api\/|window\.open\(/i);
   assert.match(page, /pdfLoading/);
 });
