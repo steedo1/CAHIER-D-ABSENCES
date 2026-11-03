@@ -1,4 +1,4 @@
-import { loadClassComponentContext } from "@/lib/server/school-subject-components";
+import { loadClassComponentContext, loadClassComponentContextWithSchoolName } from "@/lib/server/school-subject-components";
 import { isPrimaryGradeRegisterClass } from "@/lib/grades/grade-register-scope";
 import { selectProgramComponents } from "@/lib/school-subject-components";
 import { NextRequest, NextResponse } from "next/server";
@@ -695,7 +695,7 @@ export async function GET(req: NextRequest) {
       .order("order_index", { ascending: true });
     if (componentsError) throw componentsError;
     const classLevelCode = getClassLevelCode(classRow);
-    const componentContext = await loadClassComponentContext(srv, institutionId, classRow, subject.globalId);
+    const { context: componentContext, institutionName } = await loadClassComponentContextWithSchoolName(srv, institutionId, classRow, subject.globalId);
     if (componentContext === "invalid") return bad("CLASS_SUBJECT_PROGRAM_INVALID", 409);
     const components = componentContext !== "legacy" ? selectProgramComponents(componentsRaw || [], componentContext) : (componentsRaw || []).filter((row: any) => {
       const componentLevel = String(row?.level || "").trim();
@@ -721,6 +721,7 @@ export async function GET(req: NextRequest) {
           class_id: classRow.id,
         },
       },
+      institution_name: institutionName,
       class: {
         id: classRow.id,
         label: classRow.label || "Classe",
