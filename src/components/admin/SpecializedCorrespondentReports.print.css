@@ -9,6 +9,16 @@
     margin: 12mm;
   }
 
+  /* Seule la matrice trimestrielle utilise une page A4 paysage. */
+  @page specializedMatrixLandscape {
+    size: A4 landscape;
+    margin: 8mm;
+  }
+
+  #specialized-correspondent-report.specialized-term-report {
+    page: specializedMatrixLandscape;
+  }
+
   body:has(#specialized-correspondent-report) * {
     visibility: hidden !important;
   }
@@ -45,5 +55,58 @@
 
   #specialized-correspondent-report .overflow-x-auto {
     overflow: visible !important;
+  }
+
+  /* La grille à l'écran reste inchangée. Pour l'impression, cinq matières
+     par feuille évitent de comprimer les noms, notes et entêtes. */
+  #specialized-correspondent-report .specialized-term-sheet {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.25;
+    break-inside: auto;
+  }
+
+  #specialized-correspondent-report .specialized-term-sheet + .specialized-term-sheet {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  #specialized-correspondent-report .specialized-term-sheet h3 {
+    font-size: 12pt;
+    font-weight: 700;
+    line-height: 1.3;
+    margin: 8px 0;
+    break-after: avoid;
+  }
+
+  #specialized-correspondent-report .specialized-term-table {
+    table-layout: fixed !important;
+    font-size: 10.5pt !important;
+  }
+
+  #specialized-correspondent-report .specialized-term-table th,
+  #specialized-correspondent-report .specialized-term-table td {
+    border: 1px solid #888;
+    padding: 4px 5px;
+    overflow-wrap: anywhere;
+    vertical-align: middle;
+    line-height: 1.25;
+  }
+
+  #specialized-correspondent-report .specialized-term-table th {
+    background: #f3f4f6 !important;
+    font-size: 10pt !important;
+    text-align: center;
+    font-weight: 700;
+  }
+
+  #specialized-correspondent-report .specialized-term-table td {
+    text-align: center;
+  }
+
+  #specialized-correspondent-report .specialized-term-table .student-name {
+    text-align: left;
+    font-weight: 700;
+    overflow-wrap: break-word;
   }
 }
