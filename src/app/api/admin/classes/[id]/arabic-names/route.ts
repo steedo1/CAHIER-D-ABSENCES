@@ -5,11 +5,12 @@ import { requireInstitutionRole } from "@/lib/auth/server-context";
 import { readStudentProgramSettings } from "@/lib/school-student-programs";
 import { loadLinkedClassEnrollments } from "@/lib/server/school-linked-class-roster";
 import { isValidWrittenArabicName } from "@/lib/class-list-arabic";
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const answer = (body: unknown, status = 200) => NextResponse.json(body, {
   status, headers: { "Cache-Control": "no-store" },
 });
@@ -18,8 +19,7 @@ const answer = (body: unknown, status = 200) => NextResponse.json(body, {
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id: classId } = await context.params;
   if (!UUID.test(classId)) return answer({ error: "invalid_class_id" }, 400);
-  if (request.headers.get("origin") &&
-      request.headers.get("origin") !== request.nextUrl.origin) {
+  if (!isTrustedAppOrigin(request)) {
     return answer({ error: "invalid_origin" }, 403);
   }
   if (!request.headers.get("content-type")?.includes("application/json")) {

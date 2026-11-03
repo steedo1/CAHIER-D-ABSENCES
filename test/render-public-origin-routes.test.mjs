@@ -46,3 +46,32 @@ test("modèle de bulletin derrière le proxy : garde de rôle intacte et modific
   for(const key of ["engine","scales","coefficients"])assert.deepEqual(saved.franco_arabic_reports_v1[key],before.franco_arabic_reports_v1[key]);
   assert.equal(db.calls.some(call=>call.op!=="read"&&call.table!=="institutions"),false);
 });
+
+test("noms arabes derrière Render : domaines officiels acceptés, sites étrangers et accès anonyme refusés", async () => {
+  const classId = "22222222-2222-4222-8222-222222222222";
+  const routePath = "src/app/api/admin/classes/[id]/arabic-names/route.ts";
+  const request = origin => new NextRequest(`http://localhost:10000/api/admin/classes/${classId}/arabic-names`, {
+    method: "PATCH", headers: { origin, "content-type": "application/json" },
+    body: JSON.stringify({ updates: [] }),
+  });
+  const context = () => ({ params: Promise.resolve({ id: classId }) });
+  for (const origin of ["https://mon-cahier.com", "https://www.mon-cahier.com"]) {
+    const db = createMulticycleFixture();
+    db.tables.classes.push({ id: classId, institution_id: db.legacyId, level: "CP1", academic_year: "2026-2027" });
+    db.tables.institutions[0].settings_json.school_student_programs_v1 = {
+      version: 1, years: { "2026-2027": { classes: { [classId]: { tracks: ["arabic"], students: {} } } } },
+    };
+    const anonymous = await createFixtureRouteLoader(db, null)(routePath).PATCH(request(origin), context());
+    assert.equal(anonymous.status, 401);
+    const response = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).PATCH(request(origin), context());
+    assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+    assert.deepEqual(await response.json(), { ok: true, updated: 0 });
+    assert.equal(db.calls.some(call => call.op !== "read"), false);
+  }
+  const db = createMulticycleFixture();
+  const rejected = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath)
+    .PATCH(request("https://evil.invalid"), context());
+  assert.equal(rejected.status, 403);
+  assert.equal((await rejected.json()).error, "invalid_origin");
+  assert.equal(db.calls.length, 0);
+});

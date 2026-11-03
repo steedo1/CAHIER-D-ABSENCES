@@ -142,3 +142,63 @@ test("EPC: CP2 Arabic to CP1 Arabic preserves CP2 French and does not duplicate 
   assert.deepEqual(db.tables.school_fees || [], feeSnapshot);
   assert.equal(db.calls.some(call => call.op !== "read" && call.table !== "institutions"), false);
 });
+
+const renderRequest = (origin, classId = arabicNextId, forwarded = {}) => new NextRequest(
+  "http://localhost:10000/api/admin/classes/arabic-link", {
+    method: "POST",
+    headers: { "content-type": "application/json", origin, ...forwarded },
+    body: JSON.stringify({ class_id: classId, student_id: studentId }),
+  },
+);
+
+test("Render: CP2 Arabic to CP1 Arabic works from both official domains behind TLS proxy", async () => {
+  for (const origin of ["https://mon-cahier.com", "https://www.mon-cahier.com"]) {
+    const db = setup();
+    db.tables.classes.find(row => row.id === homeId).level = "CP2";
+    db.tables.classes.find(row => row.id === arabicId).level = "CP2";
+    const policies = db.tables.institutions[0].settings_json.school_student_programs_v1.years["2026-2027"].classes;
+    policies[arabicId].linkedStudentIds = [studentId];
+    const enrollments = structuredClone(db.tables.class_enrollments);
+    const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+    const response = await handler.POST(renderRequest(origin));
+    const body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.transferred, true);
+    assert.equal(body.cross_level, true);
+    const saved = db.tables.institutions[0].settings_json.school_student_programs_v1.years["2026-2027"].classes;
+    assert.deepEqual(saved[arabicId].linkedStudentIds, []);
+    assert.deepEqual(saved[arabicNextId].linkedStudentIds, [studentId]);
+    assert.deepEqual(db.tables.class_enrollments, enrollments);
+    assert.equal(db.calls.some(call => call.op !== "read" && call.table !== "institutions"), false);
+    const repeat = await handler.POST(renderRequest(origin));
+    assert.equal(repeat.status, 200);
+    assert.equal((await repeat.json()).already_present, true);
+  }
+});
+
+test("Render: Arabic transfers reject foreign origins even with forged proxy headers", async () => {
+  for (const origin of ["https://evil.invalid", "null", "https://mon-cahier.com.evil.invalid"]) {
+    const db = setup();
+    const before = structuredClone(db.tables);
+    const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+    const response = await handler.POST(renderRequest(origin, arabicNextId, {
+      host: "evil.invalid", "x-forwarded-host": "evil.invalid", "x-forwarded-proto": "https",
+    }));
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, "invalid_origin");
+    assert.deepEqual(db.tables, before);
+    assert.equal(db.calls.length, 0);
+  }
+});
+
+test("Render: official origin does not bypass authentication or institution access", async () => {
+  const db = setup();
+  const anonymous = await createFixtureRouteLoader(db, null)(routePath)
+    .POST(renderRequest("https://mon-cahier.com"));
+  assert.equal(anonymous.status, 401);
+  db.tables.profiles.find(row => row.id === db.legacyAdminId).institution_id = foreignId;
+  const wrongInstitution = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath)
+    .POST(renderRequest("https://mon-cahier.com"));
+  assert.equal(wrongInstitution.status, 403);
+  assert.equal(db.calls.some(call => call.op !== "read"), false);
+});

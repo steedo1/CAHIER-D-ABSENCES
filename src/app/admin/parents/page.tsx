@@ -1703,6 +1703,7 @@ export default function AdminStudentsByClassPage() {
 
       if (!res.ok) {
         const messages: Record<string, string> = {
+          invalid_origin: "Adresse du site non autorisée. Ouvrez Mon Cahier sur https://www.mon-cahier.com puis réessayez.",
           arabic_class_not_configured: "Cette classe n'est pas configurée pour l'enseignement arabe.",
           french_home_not_configured: "Configurez d'abord l'enseignement français dans la classe administrative de l'élève.",
           student_has_no_home_class: "Inscrivez d'abord cet élève dans sa classe administrative française.",
