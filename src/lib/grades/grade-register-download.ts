@@ -44,7 +44,7 @@ export async function downloadGradeRegisterPdf(input: GradeRegisterPrintInput): 
     doc.on("error", reject);
     doc.on("end", () => resolve(new Blob(chunks as BlobPart[], { type: "application/pdf" })));
   });
-  doc.registerFont("school", font);
+  doc.registerFont("school", font as any);
   doc.font("school");
 
   const grades = input.grades;
