@@ -1,0 +1,27 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { matrixPrintStudentName, matrixPrintSubjectLabel } from "../src/lib/matrix-print";
+
+const measure = (value: string) => value.length * 7;
+test("Les abrégés scolaires usuels restent compréhensibles", () => {
+  const cases: Array<[string, string]> = [
+    ["Mathématiques", "MATH"], ["Anglais", "ANG"],
+    ["Composition française", "CF"], ["↳ Expression orale", "↳ E.O."],
+    ["Expression écrite", "E.E."], ["Éducation physique et sportive", "EPS"],
+    ["EDHC", "EDHC"], ["Histoire-Géographie", "HG"], ["Sciences de la vie et de la Terre", "SVT"],
+    ["Conduite", "COND"], ["↳ Grammaire", "↳ GRAM"],
+  ];
+  for (const [label, expected] of cases) assert.equal(matrixPrintSubjectLabel(label), expected);
+});
+test("Les noms courts restent complets sur le PDF", () => {
+  assert.equal(matrixPrintStudentName({ full_name: "KOUADIO Ange Aristide" }, 280, measure), "KOUADIO Ange Aristide");
+});
+test("Les prénoms suivants deviennent des initiales, sans toucher à la donnée originale", () => {
+  const student = { full_name: "KOUADIO Ange Aristide" };
+  assert.equal(matrixPrintStudentName(student, 140, measure), "KOUADIO Ange A.");
+  assert.equal(student.full_name, "KOUADIO Ange Aristide");
+});
+test("Le nom de famille composé est préservé", () => {
+  const student = { full_name: "KOUASSI N’DRI Marie Angélique Christelle" };
+  assert.equal(matrixPrintStudentName(student, 240, measure), "KOUASSI N’DRI Marie Angélique C.");
+});
