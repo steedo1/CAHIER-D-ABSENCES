@@ -99,3 +99,32 @@ test("le registre est rangé dans le groupe Cahier de notes", () => {
     "le registre ne doit plus être rangé dans Correspondant fichier",
   );
 });
+
+
+test("sur mobile les notes précèdent la moyenne, qui ne masque plus les colonnes", () => {
+  assert.match(page, /w-\\[150px\\] min-w-\\[150px\\]/);
+  assert.match(page, /lg:sticky lg:right-0/);
+  assert.doesNotMatch(page, /className="sticky right-0 z-40/);
+  assert.match(page, /Faites glisser le tableau horizontalement/);
+  const thNotes = page.indexOf("visibleEvaluations.map((evaluation, index)");
+  const thAverage = page.indexOf("Moyenne /20", thNotes);
+  assert.ok(thAverage > thNotes);
+});
+
+test("le PDF exporte les notes réellement chargées sans écriture ni nouvelle requête", () => {
+  assert.match(page, /import \\{ openGradeRegisterPdf \\}/);
+  assert.match(page, /Exporter PDF/);
+  assert.match(page, /originalScoreMap\\.get/);
+  assert.match(page, /gradeValues\\[evaluation\\.id\\] = values/);
+  assert.match(page, /institutionName: register\\.institution_name/);
+  assert.match(page, /disabled=\\{!ready \\|\\| overviewMode/);
+  assert.match(page, /dirtyCount > 0/);
+});
+
+test("l'EPC primaire est affiché comme primaire et non secondaire dans le registre", () => {
+  assert.match(page, /educationTypeLabelOverride=\\{primaryRegister/);
+  assert.match(page, /"Primaire — Arabe"/);
+  assert.match(page, /"Primaire — Français"/);
+  assert.match(page, /primaryRegister \\? "Année scolaire complète"/);
+  assert.match(route, /institution_name: institutionName/);
+});
