@@ -108,14 +108,13 @@ test("sur mobile les notes sont affichées avant de faire défiler un tableau", 
   assert.match(page, /className="hidden max-h-\[68vh\] overflow-auto md:block"/, "le tableau desktop reste disponible");
 });
 
-test("le registre primaire affiche son vrai cycle et peut exporter les notes en PDF sans requête supplémentaire", () => {
+test("le registre primaire indique le vrai cycle et fournit un PDF directement téléchargeable", () => {
   assert.match(page, /educationTypeLabelOverride=\{primaryRegister \? "Enseignement primaire" : undefined\}/);
-  assert.match(page, /openGradeRegisterPdf\(\{/);
-  assert.match(page, /institutionName: register\.institution_name/);
-  assert.match(page, /evaluations: visibleEvaluations\.map/);
-  assert.match(page, /values\[student\.id\] = typeof raw === "number"/);
+  assert.match(page, /fetch\("\/api\/admin\/grades\/register\/pdf\?"/);
+  assert.match(page, /response\.blob\(\)/);
+  assert.match(page, /link\.download = filename/);
   assert.match(page, /Exporter PDF/);
-  assert.match(page, /if \(dirtyCount\)/, "ne pas imprimer de modifications non enregistrées");
-  assert.doesNotMatch(page.slice(page.indexOf("function exportRegisterPdf()"), page.indexOf("const ready = Boolean")), /fetch\(/);
-  assert.match(route, /institution_name: String\(institution\?\.name/);
+  assert.match(page, /if \(dirtyCount > 0\)/, "ne pas exporter des modifications non enregistrées");
+  assert.match(route, /primaryTitleScale\(ev\.title\) \?\? ev\.scale/, "le barème affiché est le véritable barème");
+  assert.match(route, /primaryTitleScale\(evaluation\.title\)/, "contrôle de saisie sur barème réel");
 });
