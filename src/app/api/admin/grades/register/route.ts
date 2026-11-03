@@ -1,5 +1,6 @@
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
 import { isPrimaryGradeRegisterClass } from "@/lib/grades/grade-register-scope";
+import { primaryTitleScale } from "@/lib/grades/primary-storage-scale";
 import { selectProgramComponents } from "@/lib/school-subject-components";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -28,6 +29,7 @@ type EvaluationRow = {
   subject_component_id: string | null;
   grading_period_id: string | null;
   academic_year: string | null;
+  title?: string | null;
   teacher_id: string | null;
   eval_date: string;
   eval_kind: EvalKind;
@@ -642,7 +644,7 @@ export async function GET(req: NextRequest) {
     const evaluationBase = srv
       .from("grade_evaluations")
       .select(
-        "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at,publication_status,submitted_at,reviewed_at",
+        "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,title,eval_date,eval_kind,scale,coeff,is_published,published_at,publication_status,submitted_at,reviewed_at",
       )
       .eq("class_id", classId)
       .eq("teacher_id", teacherId)
@@ -741,6 +743,9 @@ export async function GET(req: NextRequest) {
       roster,
       evaluations: evaluations.map((ev, index) => ({
         ...ev,
+        // Le stockage historique utilise parfois /60 pour les barèmes du primaire (/15, /30...).
+        // On expose le barème pédagogique réel, sans convertir les notes brutes.
+        scale: primaryTitleScale(ev.title) ?? ev.scale,
         column_label: `Note ${index + 1}`,
         component_label: ev.subject_component_id
           ? componentLabels.get(ev.subject_component_id) || null
@@ -880,7 +885,7 @@ export async function POST(req: NextRequest) {
 
       const { data: evaluation, error: evalError } = await srv
         .from("grade_evaluations")
-        .select("id,class_id,scale,is_published,publication_status")
+        .select("id,class_id,title,scale,is_published,publication_status")
         .eq("id", evaluationId)
         .maybeSingle();
       if (evalError) throw evalError;
@@ -906,7 +911,7 @@ export async function POST(req: NextRequest) {
         (enrollmentRows || []).map((row: any) => String(row.student_id)),
       );
 
-      const scale = Number(evaluation.scale || 20);
+      const scale = primaryTitleScale(evaluation.title) ?? Number(evaluation.scale || 20);
       const upserts: Array<{
         evaluation_id: string;
         student_id: string;
