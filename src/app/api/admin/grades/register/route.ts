@@ -723,6 +723,7 @@ export async function GET(req: NextRequest) {
       },
       class: {
         id: classRow.id,
+        institution_id: institutionId,
         label: classRow.label || "Classe",
         level: classLevelCode || null,
         education_type: normalizeClassEducationType(classRow),
