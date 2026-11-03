@@ -5,7 +5,6 @@ import SchoolReportObservationsPanel from "@/components/admin/SchoolReportObserv
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TeachingTrack } from "@/lib/school-cycles";
 import type { PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
-import { isPrimaryGradeRegisterClass } from "@/lib/grades/grade-register-scope";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
 import "./SpecializedCorrespondentReports.print.css";
 
@@ -18,6 +17,11 @@ type SchoolPeriod = {
 type Entry = SpecializedBulletinPayload["documents"][number];
 type Program = NonNullable<Entry["document"]["french"]>;
 type PeriodReport = { period: SchoolPeriod; payload: SpecializedBulletinPayload };
+function isPrimaryMatrixClass(row: SchoolClass | undefined): boolean {
+  return /^(?:CP[12]|CE[12]|CM[12])(?:$|[\s—-])/i.test(
+    String(row?.level || row?.label || "").trim(),
+  );
+}
 const TITLES: Record<Mode, string> = {
   council: "Conseil de classe", term: "Matrice trimestrielle",
   annual: "Matrice annuelle", balance: "Bilan des résultats", unclassified: "Élèves non classés",
@@ -79,7 +83,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
   const [primaryEvents, setPrimaryEvents] = useState<PrimaryEvent[]>([]);
   const [primaryEventCode, setPrimaryEventCode] = useState("");
   const selectedClass = classes.find(row => row.id === classId);
-  const isPrimaryTermMatrix = mode === "term" && isPrimaryGradeRegisterClass(selectedClass);
+  const isPrimaryTermMatrix = mode === "term" && isPrimaryMatrixClass(selectedClass);
   const [track, setTrack] = useState<TeachingTrack>("french");
   const [reports, setReports] = useState<PeriodReport[]>([]);
   const [busy, setBusy] = useState(false);
