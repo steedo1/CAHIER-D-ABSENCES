@@ -1,6 +1,7 @@
 "use client";
 
 import { isPrimaryGradeRegisterClass } from "@/lib/grades/grade-register-scope";
+import { openGradeRegisterPdf } from "@/lib/grades/grade-register-print";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import DirectSubjectAverages from "@/components/admin/DirectSubjectAverages";
@@ -16,6 +17,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  FileDown,
   Loader2,
   Plus,
   RefreshCw,
@@ -101,6 +103,7 @@ type SubjectComponent = {
 type RegisterResponse = {
   ok: boolean;
   error?: string;
+  institution_name?: string | null;
   class?: {
     id: string;
     label?: string | null;
@@ -853,6 +856,48 @@ export default function AdminGradeRegisterPage() {
   );
   const contextReady = Boolean(selectedYear && selectedClassId && (primaryRegister || selectedPeriodId));
 
+  function exportRegisterPdf() {
+    if (!register || !selectedSubjectId || !visibleEvaluations.length) {
+      setError("Sélectionnez une discipline contenant des notes à exporter.");
+      return;
+    }
+    if (dirtyCount) {
+      setError("Enregistrez vos modifications avant d’exporter le PDF.");
+      return;
+    }
+
+    const gradeValues: Record<string, Record<string, number | null>> = {};
+    for (const evaluation of visibleEvaluations) {
+      const values: Record<string, number | null> = {};
+      for (const student of roster) {
+        const value = originalScoreMap.get(`${evaluation.id}:${student.id}`);
+        values[student.id] = value === undefined ? null : value;
+      }
+      gradeValues[evaluation.id] = values;
+    }
+    const opened = openGradeRegisterPdf({
+      institutionName: register.institution_name || "Établissement scolaire",
+      academicYear: selectedYear,
+      className: classLabel(selectedClass),
+      subjectName: selectedSubject?.label || register.subject?.label || "Discipline",
+      periodName: primaryRegister ? "Année scolaire complète" : periodLabel(selectedPeriod),
+      teachingName: selectedTeacher?.label ? `Enseignant : ${selectedTeacher.label}` : undefined,
+      students: roster,
+      evaluations: visibleEvaluations.map((evaluation, index) => ({
+        id: evaluation.id,
+        label: evaluation.column_label || `Note ${index + 1}`,
+        eval_date: evaluation.eval_date,
+        scale: Number(evaluation.scale || 20),
+        coeff: Number(evaluation.coeff || 1),
+        component: evaluation.component_label,
+      })),
+      grades: gradeValues,
+    });
+    if (!opened) {
+      setError("Le navigateur a bloqué le document PDF. Autorisez les fenêtres de Mon Cahier, puis réessayez.");
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50/70 px-4 py-5 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-[1700px] space-y-4">
@@ -890,6 +935,12 @@ export default function AdminGradeRegisterPage() {
                 <RefreshCw className={`h-4 w-4 ${registerLoading ? "animate-spin" : ""}`} />
                 Actualiser
               </Button>
+              <Button type="button" tone="ghost" onClick={exportRegisterPdf}
+                disabled={!ready || overviewMode || !register || !visibleEvaluations.length || dirtyCount > 0}
+                title={dirtyCount ? "Enregistrez les notes avant l’export PDF" : "Exporter les notes visibles en PDF A4 paysage"}>
+                <FileDown className="h-4 w-4" />
+                Exporter PDF
+              </Button>
               <Button type="button" tone="secondary" onClick={openNewEvaluation} disabled={!ready}>
                 <Plus className="h-4 w-4" />
                 Ajouter une note
@@ -916,6 +967,9 @@ export default function AdminGradeRegisterPage() {
             classes={classesForYear}
             disabled={classesLoading}
             title="Contexte du registre des notes"
+            educationTypeLabelOverride={primaryRegister
+              ? (/arabe/i.test(selectedClass?.label || "") ? "Primaire — Arabe" : "Primaire — Français")
+              : undefined}
           />
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1161,7 +1215,7 @@ export default function AdminGradeRegisterPage() {
                 <span className="text-slate-300">•</span>
                 <span className="inline-flex items-center gap-1 text-slate-600">
                   <CalendarDays className="h-3.5 w-3.5" />
-                  {periodLabel(selectedPeriod)}
+                  {primaryRegister ? "Année scolaire complète" : periodLabel(selectedPeriod)}
                 </span>
               </div>
               {register && (
@@ -1276,11 +1330,17 @@ export default function AdminGradeRegisterPage() {
               Aucune évaluation {publicationFilter === "published" ? "publiée" : "non publiée"} pour cette sélection.
             </div>
           ) : register ? (
-            <div className="max-h-[68vh] overflow-auto">
+            <div>
+              {visibleEvaluations.length > 0 && (
+                <p className="border-b border-slate-100 px-3 py-2 text-xs font-medium text-slate-600 lg:hidden">
+                  Faites glisser le tableau horizontalement pour consulter toutes les notes.
+                </p>
+              )}
+              <div className="max-h-[68vh] overflow-auto overscroll-x-contain">
               <table className="min-w-max border-separate border-spacing-0 text-sm">
                 <thead className="sticky top-0 z-30 bg-slate-50/95 backdrop-blur">
                   <tr>
-                    <th className="sticky left-0 z-40 min-w-[250px] border-b border-r border-slate-200 bg-slate-50 px-4 py-3 text-left font-semibold text-slate-700">
+                    <th className="sticky left-0 z-40 w-[150px] min-w-[150px] max-w-[150px] sm:w-[230px] sm:min-w-[230px] sm:max-w-[230px] border-b border-r border-slate-200 bg-slate-50 px-2 py-3 text-left font-semibold text-slate-700 sm:px-4">
                       Élève
                     </th>
                     {visibleEvaluations.map((evaluation, index) => {
@@ -1288,7 +1348,7 @@ export default function AdminGradeRegisterPage() {
                       return (
                         <th
                           key={evaluation.id}
-                          className="min-w-[150px] border-b border-r border-slate-200 bg-slate-50 px-3 py-2 text-center align-top"
+                          className="min-w-[125px] sm:min-w-[150px] border-b border-r border-slate-200 bg-slate-50 px-2 py-2 text-center align-top sm:px-3"
                         >
                           <div className="font-bold text-slate-800">
                             {evaluation.column_label || `Note ${index + 1}`}
@@ -1311,7 +1371,7 @@ export default function AdminGradeRegisterPage() {
                         </th>
                       );
                     })}
-                    <th className="sticky right-0 z-40 min-w-[120px] border-b border-l border-slate-200 bg-slate-100 px-4 py-3 text-center font-bold text-slate-800">
+                    <th className="min-w-[120px] lg:sticky lg:right-0 lg:z-40 border-b border-l border-slate-200 bg-slate-100 px-3 py-3 text-center font-bold text-slate-800 sm:px-4">
                       Moyenne /20
                       <div className="text-[10px] font-normal text-slate-500">Toutes les notes saisies</div>
                     </th>
@@ -1322,7 +1382,7 @@ export default function AdminGradeRegisterPage() {
                     const average = studentAverage20(student.id);
                     return (
                       <tr key={student.id} className={rowIndex % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
-                        <td className="sticky left-0 z-20 border-b border-r border-slate-100 bg-inherit px-4 py-2.5">
+                        <td className="sticky left-0 z-20 w-[150px] min-w-[150px] max-w-[150px] sm:w-[230px] sm:min-w-[230px] sm:max-w-[230px] border-b border-r border-slate-100 bg-inherit px-2 py-2.5 sm:px-4">
                           <div className="font-medium text-slate-900">{student.full_name}</div>
                           {student.matricule && (
                             <div className="mt-0.5 text-[11px] text-slate-400">{student.matricule}</div>
@@ -1354,7 +1414,7 @@ export default function AdminGradeRegisterPage() {
                           );
                         })}
 
-                        <td className="sticky right-0 z-20 border-b border-l border-slate-200 bg-slate-100 px-4 py-2.5 text-center font-bold tabular-nums text-slate-900">
+                        <td className="min-w-[120px] lg:sticky lg:right-0 lg:z-20 border-b border-l border-slate-200 bg-slate-100 px-3 py-2.5 text-center font-bold tabular-nums text-slate-900 sm:px-4">
                           {average === null ? "—" : average.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
@@ -1368,6 +1428,7 @@ export default function AdminGradeRegisterPage() {
                   Aucun élève ne correspond à la recherche.
                 </div>
               )}
+              </div>
             </div>
           ) : (
             <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm text-slate-500">
