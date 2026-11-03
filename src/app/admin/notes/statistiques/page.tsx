@@ -16,6 +16,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  FileDown,
   Loader2,
   Plus,
   RefreshCw,
@@ -294,6 +295,8 @@ export default function AdminGradeRegisterPage() {
 
   const [register, setRegister] = useState<RegisterResponse | null>(null);
   const [registerLoading, setRegisterLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const registerScrollRef = useRef<HTMLDivElement | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -317,6 +320,10 @@ export default function AdminGradeRegisterPage() {
   const overviewMode = selectedSubjectId === "";
 
   const loadSeq = useRef(0);
+
+  useEffect(() => {
+    if (registerScrollRef.current) registerScrollRef.current.scrollLeft = 0;
+  }, [selectedClassId, selectedSubjectId, selectedTeacherId]);
 
   const academicYears = useMemo(() => {
     return Array.from(
@@ -844,6 +851,46 @@ export default function AdminGradeRegisterPage() {
     }
   }
 
+  async function exportRegisterPdf() {
+    if (!selectedClassId || !selectedSubjectId || !selectedTeacherId ||
+        (!primaryRegister && !selectedPeriodId) || !register || dirtyCount > 0) return;
+    setPdfLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        class_id: selectedClassId,
+        academic_year: selectedYear,
+        subject_id: selectedSubjectId,
+        teacher_id: selectedTeacherId,
+        publication_filter: publicationFilter,
+      });
+      if (!primaryRegister) params.set("grading_period_id", selectedPeriodId);
+      const response = await fetch("/api/admin/grades/register/pdf?" + params.toString(), {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail?.error || "L'export PDF a échoué.");
+      }
+      const pdf = await response.blob();
+      if (!pdf.size) throw new Error("Le PDF généré est vide.");
+      const fileHeader = response.headers.get("content-disposition") || "";
+      const filename = /filename="([^"]+)"/.exec(fileHeader)?.[1] || "registre-notes.pdf";
+      const objectUrl = URL.createObjectURL(pdf);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+    } catch (reason: any) {
+      setError(reason?.message || "Impossible de télécharger le PDF.");
+    } finally {
+      setPdfLoading(false);
+    }
+  }
+
   const ready = Boolean(
     selectedYear &&
       selectedClassId &&
@@ -894,6 +941,14 @@ export default function AdminGradeRegisterPage() {
                 <Plus className="h-4 w-4" />
                 Ajouter une note
               </Button>
+              {!overviewMode && (
+                <Button type="button" tone="ghost" onClick={() => void exportRegisterPdf()}
+                  disabled={!ready || registerLoading || pdfLoading || !register || dirtyCount > 0}
+                  title={dirtyCount > 0 ? "Enregistrez les notes modifiées avant d’exporter." : "Télécharger le registre de notes au format PDF"}>
+                  {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+                  {pdfLoading ? "Préparation du PDF…" : "Exporter PDF"}
+                </Button>
+              )
               <Button type="button" onClick={() => void saveChanges()} disabled={!dirtyCount || saving}>
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 Enregistrer{dirtyCount ? ` (${dirtyCount})` : ""}
@@ -916,6 +971,7 @@ export default function AdminGradeRegisterPage() {
             classes={classesForYear}
             disabled={classesLoading}
             title="Contexte du registre des notes"
+            educationTypeLabelOverride={primaryRegister ? "Primaire" : undefined}
           />
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1161,7 +1217,7 @@ export default function AdminGradeRegisterPage() {
                 <span className="text-slate-300">•</span>
                 <span className="inline-flex items-center gap-1 text-slate-600">
                   <CalendarDays className="h-3.5 w-3.5" />
-                  {periodLabel(selectedPeriod)}
+                  {primaryRegister ? "Année scolaire " + selectedYear : periodLabel(selectedPeriod)}
                 </span>
               </div>
               {register && (
@@ -1253,7 +1309,9 @@ export default function AdminGradeRegisterPage() {
             )
           ) : !ready ? (
             <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm text-slate-500">
-              Sélectionnez l’année, la période, le niveau, la classe, la discipline et le professeur.
+              {primaryRegister
+                ? "Sélectionnez l’année, la classe, la discipline et le professeur."
+                : "Sélectionnez l’année, la période, le niveau, la classe, la discipline et le professeur."}
             </div>
           ) : register && evaluations.length === 0 ? (
             <div className="flex min-h-64 flex-col items-center justify-center gap-3 px-6 text-center">
@@ -1276,11 +1334,11 @@ export default function AdminGradeRegisterPage() {
               Aucune évaluation {publicationFilter === "published" ? "publiée" : "non publiée"} pour cette sélection.
             </div>
           ) : register ? (
-            <div className="max-h-[68vh] overflow-auto">
+            <div ref={registerScrollRef} className="max-h-[68vh] overflow-auto">
               <table className="min-w-max border-separate border-spacing-0 text-sm">
                 <thead className="sticky top-0 z-30 bg-slate-50/95 backdrop-blur">
                   <tr>
-                    <th className="sticky left-0 z-40 min-w-[250px] border-b border-r border-slate-200 bg-slate-50 px-4 py-3 text-left font-semibold text-slate-700">
+                    <th className="sticky left-0 z-40 min-w-[154px] max-w-[170px] md:min-w-[250px] md:max-w-none border-b border-r border-slate-200 bg-slate-50 px-2 py-3 text-left font-semibold text-slate-700 md:px-4">
                       Élève
                     </th>
                     {visibleEvaluations.map((evaluation, index) => {
@@ -1288,7 +1346,7 @@ export default function AdminGradeRegisterPage() {
                       return (
                         <th
                           key={evaluation.id}
-                          className="min-w-[150px] border-b border-r border-slate-200 bg-slate-50 px-3 py-2 text-center align-top"
+                          className="min-w-[130px] md:min-w-[150px] border-b border-r border-slate-200 bg-slate-50 px-2 py-2 text-center align-top md:px-3"
                         >
                           <div className="font-bold text-slate-800">
                             {evaluation.column_label || `Note ${index + 1}`}
@@ -1311,7 +1369,7 @@ export default function AdminGradeRegisterPage() {
                         </th>
                       );
                     })}
-                    <th className="sticky right-0 z-40 min-w-[120px] border-b border-l border-slate-200 bg-slate-100 px-4 py-3 text-center font-bold text-slate-800">
+                    <th className="md:sticky md:right-0 z-40 min-w-[120px] border-b border-l border-slate-200 bg-slate-100 px-4 py-3 text-center font-bold text-slate-800">
                       Moyenne /20
                       <div className="text-[10px] font-normal text-slate-500">Toutes les notes saisies</div>
                     </th>
@@ -1322,7 +1380,7 @@ export default function AdminGradeRegisterPage() {
                     const average = studentAverage20(student.id);
                     return (
                       <tr key={student.id} className={rowIndex % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
-                        <td className="sticky left-0 z-20 border-b border-r border-slate-100 bg-inherit px-4 py-2.5">
+                        <td className="sticky left-0 z-20 min-w-[154px] max-w-[170px] md:min-w-[250px] md:max-w-none border-b border-r border-slate-100 bg-inherit px-2 py-2.5 md:px-4">
                           <div className="font-medium text-slate-900">{student.full_name}</div>
                           {student.matricule && (
                             <div className="mt-0.5 text-[11px] text-slate-400">{student.matricule}</div>
@@ -1354,7 +1412,7 @@ export default function AdminGradeRegisterPage() {
                           );
                         })}
 
-                        <td className="sticky right-0 z-20 border-b border-l border-slate-200 bg-slate-100 px-4 py-2.5 text-center font-bold tabular-nums text-slate-900">
+                        <td className="md:sticky md:right-0 z-20 border-b border-l border-slate-200 bg-slate-100 px-4 py-2.5 text-center font-bold tabular-nums text-slate-900">
                           {average === null ? "—" : average.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
