@@ -50,6 +50,8 @@ jobs:
         run: npm run test:multicycle
       - name: PDF grade register regressions
         run: node --import tsx --test test/grade-register-print.test.mjs
+      - name: Admin grade register mobile, real PDF and EPC scale checks
+        run: node --import tsx --test test/admin-grade-register.test.mjs test/grade-register-loading.test.mjs test/admin-grade-register-pdf.test.mjs
       - name: Parent Connect and SMS regressions
         run: npm run test:parent-connect
       - name: EPC column delete and QR memory regressions
