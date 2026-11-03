@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
 import { parsePrimaryEventTitle, type PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
+import { openGradebookPdf } from "@/lib/grades/gradebook-pdf";
 import Link from "next/link";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
@@ -2265,6 +2266,42 @@ export default function TeacherNotesPage() {
     return map;
   }, [evaluations, primaryEvents]);
 
+
+  function exportGradebookPdf() {
+    if (!selected || loading || roster.length === 0 || evaluations.length === 0) {
+      setMsg("Sélectionnez une classe possédant des élèves et des évaluations.");
+      return;
+    }
+    // Le PDF doit refléter uniquement les notes enregistrées, jamais les saisies provisoires.
+    if (Object.values(changed).some((byStudent) => Object.keys(byStudent).length > 0)) {
+      setMsg("Enregistrez d’abord les notes modifiées avant d’exporter le cahier de notes en PDF.");
+      return;
+    }
+    const opened = openGradebookPdf({
+      institution: institutionName,
+      academicYear: academicYearLabel,
+      classLabel: selected.class_label,
+      subjectLabel: selected.subject_name,
+      teachingLabel: selected.teaching_track ? teachingLabel : null,
+      periodLabel: isPrimaryProgram && primaryCatalogEnabled
+        ? null
+        : selectedPeriod?.label || selectedPeriod?.short_label || selectedPeriod?.code || null,
+      students: roster,
+      evaluations: evaluations.map((ev) => ({
+        id: ev.id,
+        label: labelByEvalId[ev.id] || "NOTE",
+        eval_date: ev.eval_date,
+        scale: ev.scale,
+        component_label: ev.subject_component_id
+          ? componentById[ev.subject_component_id]?.short_label ||
+            componentById[ev.subject_component_id]?.label || null
+          : null,
+      })),
+      grades,
+    });
+    if (!opened) setMsg("Impossible d’ouvrir le PDF. Autorisez les fenêtres contextuelles puis réessayez.");
+  }
+
   /* ==========================================
      Colonne active sur mobile
   ========================================== */
@@ -2604,6 +2641,15 @@ export default function TeacherNotesPage() {
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <GhostButton
+                type="button"
+                tone="emerald"
+                onClick={exportGradebookPdf}
+                disabled={!selected || loading || roster.length === 0 || evaluations.length === 0}
+                title="Exporter toutes les évaluations et notes enregistrées de cette classe"
+              >
+                <FileText className="h-4 w-4" /> Exporter PDF
+              </GhostButton>
               {!isPrimaryProgram && !isPreschoolProgram && (
                 <>
                   <Button
