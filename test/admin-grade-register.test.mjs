@@ -101,30 +101,34 @@ test("le registre est rangé dans le groupe Cahier de notes", () => {
 });
 
 
-test("sur mobile les notes précèdent la moyenne, qui ne masque plus les colonnes", () => {
-  assert.match(page, /w-\\[150px\\] min-w-\\[150px\\]/);
-  assert.match(page, /lg:sticky lg:right-0/);
-  assert.doesNotMatch(page, /className="sticky right-0 z-40/);
-  assert.match(page, /Faites glisser le tableau horizontalement/);
+test("sur mobile les notes précèdent la moyenne sans être masquées", () => {
+  assert.ok(page.includes("w-[150px] min-w-[150px]"));
+  assert.ok(page.includes("lg:sticky lg:right-0"));
+  assert.ok(!page.includes('className="sticky right-0 z-40'));
+  assert.ok(page.includes("Faites glisser le tableau horizontalement"));
   const thNotes = page.indexOf("visibleEvaluations.map((evaluation, index)");
   const thAverage = page.indexOf("Moyenne /20", thNotes);
   assert.ok(thAverage > thNotes);
 });
 
-test("le PDF exporte les notes réellement chargées sans écriture ni nouvelle requête", () => {
-  assert.match(page, /import \\{ openGradeRegisterPdf \\}/);
-  assert.match(page, /Exporter PDF/);
-  assert.match(page, /originalScoreMap\\.get/);
-  assert.match(page, /gradeValues\\[evaluation\\.id\\] = values/);
-  assert.match(page, /institutionName: register\\.institution_name/);
-  assert.match(page, /disabled=\\{!ready \\|\\| overviewMode/);
-  assert.match(page, /dirtyCount > 0/);
+test("le bouton PDF reprend les valeurs du registre, sans écriture supplémentaire", () => {
+  for (const fragment of [
+    "import { openGradeRegisterPdf }",
+    "Exporter PDF",
+    "originalScoreMap.get",
+    "gradeValues[evaluation.id] = values",
+    "institutionName: register.institution_name",
+    "disabled={!ready || overviewMode",
+    "dirtyCount > 0",
+  ]) assert.ok(page.includes(fragment), fragment);
 });
 
-test("l'EPC primaire est affiché comme primaire et non secondaire dans le registre", () => {
-  assert.match(page, /educationTypeLabelOverride=\\{primaryRegister/);
-  assert.match(page, /"Primaire — Arabe"/);
-  assert.match(page, /"Primaire — Français"/);
-  assert.match(page, /primaryRegister \\? "Année scolaire complète"/);
-  assert.match(route, /institution_name: institutionName/);
+test("l'EPC primaire affiche un contexte primaire, en français ou arabe", () => {
+  for (const fragment of [
+    "educationTypeLabelOverride={primaryRegister",
+    '"Primaire — Arabe"',
+    '"Primaire — Français"',
+    'primaryRegister ? "Année scolaire complète"',
+  ]) assert.ok(page.includes(fragment), fragment);
+  assert.ok(route.includes("institution_name: institutionName"));
 });
