@@ -1336,11 +1336,11 @@ export default function AdminGradeRegisterPage() {
             <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm text-slate-500">
               Aucune évaluation {publicationFilter === "published" ? "publiée" : "non publiée"} pour cette sélection.
             </div>
-) : register ? (
+          ) : register ? (
             <>
               <div className="max-h-[72vh] overflow-y-auto p-3 md:hidden">
                 <div className="space-y-3">
-                  {filteredRoster.map((student, rowIndex) => {
+                  {filteredRoster.map((student) => {
                     const average = studentAverage20(student.id);
                     return (
                       <article key={student.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
