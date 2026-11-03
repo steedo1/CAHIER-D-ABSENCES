@@ -406,9 +406,12 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
                 return <tr key={entry.studentId} className="border-b">
                   <td className="p-2 font-semibold">{studentName(entry)}</td>
                   {mode === "term" && subjects.map(subject => {
-                    const item = program?.subjects.find(s => s.id === subject.id);
+                    // Les matières déjà publiées restent visibles dans un document de travail
+                    // même si la composition entière n'est pas encore complète.
+                    const subjectProgram = isPrimaryTermMatrix ? entry.document[selectedTrack] : program;
+                    const item = subjectProgram?.subjects.find(s => s.id === subject.id);
                     return <td key={subject.id} className="p-2 text-center">
-                      {item ? formatScore(item.average, isPrimaryTermMatrix ? item.denominator ?? program!.denominator : program!.denominator) : "—"}
+                      {item ? formatScore(item.average, isPrimaryTermMatrix ? item.denominator ?? subjectProgram!.denominator : subjectProgram!.denominator) : "—"}
                     </td>;
                   })}
                   {mode === "annual" && reports.map(report => {
@@ -458,9 +461,12 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
                     return <tr key={entry.studentId}>
                       <td className="student-name">{studentName(entry)}</td>
                       {subjects.map(subject => {
-                        const item = program?.subjects.find(s => s.id === subject.id);
+                        // Les matières déjà publiées restent visibles dans un document de travail
+                    // même si la composition entière n'est pas encore complète.
+                    const subjectProgram = isPrimaryTermMatrix ? entry.document[selectedTrack] : program;
+                    const item = subjectProgram?.subjects.find(s => s.id === subject.id);
                         return <td key={subject.id}>
-                          {item ? formatScore(item.average, isPrimaryTermMatrix ? item.denominator ?? program!.denominator : program!.denominator) : "—"}
+                          {item ? formatScore(item.average, isPrimaryTermMatrix ? item.denominator ?? subjectProgram!.denominator : subjectProgram!.denominator) : "—"}
                         </td>;
                       })}
                       <td>{program ? formatScore(program.generalAverage, program.denominator) : "—"}</td>
