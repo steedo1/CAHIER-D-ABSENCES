@@ -99,3 +99,15 @@ test("le registre est rangé dans le groupe Cahier de notes", () => {
     "le registre ne doit plus être rangé dans Correspondant fichier",
   );
 });
+
+
+test("le registre admin du primaire affiche une note avant la moyenne sur mobile", () => {
+  assert.match(page, /educationTypeLabelOverride=\{primaryRegister \? "Primaire"/);
+  assert.match(page, /md:sticky md:right-0/, "la moyenne n'est plus fixée sur le bord droit mobile");
+  assert.match(page, /min-w-\[154px\]/, "la colonne élève tient sur un écran de téléphone");
+  assert.match(page, /registerScrollRef\.current\.scrollLeft = 0/, "le défilement revient aux notes après sélection");
+  assert.match(page, /Exporter PDF/);
+  assert.match(page, /\/api\/admin\/grades\/register\/pdf/);
+  assert.match(route, /primaryTitleScale\(ev\.title\) \?\? ev\.scale/);
+  assert.match(route, /primaryTitleScale\(evaluation\.title\)/);
+});
