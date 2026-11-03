@@ -42,6 +42,13 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
     if (schoolError) throw schoolError;
 
+    const { data: teacher, error: teacherError } = await srv
+      .from("profiles")
+      .select("display_name")
+      .eq("id", String(result.teacher_id || ""))
+      .maybeSingle();
+    if (teacherError) throw teacherError;
+
     const filter = req.nextUrl.searchParams.get("publication_filter") || "all";
     if (!["all", "published", "unpublished"].includes(filter)) {
       return NextResponse.json({ ok: false, error: "INVALID_FILTER" }, { status: 400 });
@@ -60,7 +67,7 @@ export async function GET(req: NextRequest) {
       classLabel: String(result.class.label || "Classe"),
       academicYear: String(result.class.academic_year || ""),
       subject: String(result.subject.label || ""),
-      teacher: String(req.nextUrl.searchParams.get("teacher_name") || "Enseignant"),
+      teacher: String(teacher?.display_name || "Enseignant"),
       period: String(result.period?.label || "Toute l’année scolaire"),
       students: result.roster || [],
       evaluations,
