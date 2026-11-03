@@ -704,9 +704,16 @@ export async function GET(req: NextRequest) {
 
     const locks = await readLocks(srv, evaluationIds);
     const legacyPeriodEvaluations = evaluations.filter((ev) => !ev.grading_period_id).length;
+    // Un seul accès léger pour l'en-tête du PDF ; toutes les notes proviennent du registre déjà chargé.
+    const { data: institution } = await srv
+      .from("institutions")
+      .select("name")
+      .eq("id", institutionId)
+      .maybeSingle();
 
     return json({
       ok: true,
+      institution_name: String(institution?.name || "").trim() || null,
       meta: {
         subject_ids_used: subject.ids,
         evaluations_count: evaluations.length,
