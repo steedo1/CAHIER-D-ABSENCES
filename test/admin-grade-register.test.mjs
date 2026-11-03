@@ -99,3 +99,23 @@ test("le registre est rangé dans le groupe Cahier de notes", () => {
     "le registre ne doit plus être rangé dans Correspondant fichier",
   );
 });
+
+
+test("sur mobile les notes sont affichées avant de faire défiler un tableau", () => {
+  assert.match(page, /className="max-h-\[72vh\] overflow-y-auto p-3 md:hidden"/);
+  assert.match(page, /visibleEvaluations\.map\(\(evaluation, index\) =>/);
+  assert.match(page, /value\.trim\(\) === "" \? "—" : value/, "la note zéro ne doit pas disparaître");
+  assert.match(page, /className="hidden max-h-\[68vh\] overflow-auto md:block"/, "le tableau desktop reste disponible");
+});
+
+test("le registre primaire affiche son vrai cycle et peut exporter les notes en PDF sans requête supplémentaire", () => {
+  assert.match(page, /educationTypeLabelOverride=\{primaryRegister \? "Enseignement primaire" : undefined\}/);
+  assert.match(page, /openGradeRegisterPdf\(\{/);
+  assert.match(page, /institutionName: register\.institution_name/);
+  assert.match(page, /evaluations: visibleEvaluations\.map/);
+  assert.match(page, /values\[student\.id\] = typeof raw === "number"/);
+  assert.match(page, /Exporter PDF/);
+  assert.match(page, /if \(dirtyCount\)/, "ne pas imprimer de modifications non enregistrées");
+  assert.doesNotMatch(page.slice(page.indexOf("function exportRegisterPdf()"), page.indexOf("const ready = Boolean")), /fetch\(/);
+  assert.match(route, /institution_name: String\(institution\?\.name/);
+});
