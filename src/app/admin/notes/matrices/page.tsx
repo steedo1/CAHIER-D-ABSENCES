@@ -571,68 +571,78 @@ function LegacyMatricesTrimestriellesPage() {
       .map(escapeHtml)
       .join(" • ");
 
-    const subjectHeaders = subjects.map((s) => {
-      const isComponent = s.subject_id.startsWith("__matrice_component__:");
-      return `<th class="${isComponent ? "component" : ""}">${escapeHtml(s.subject_name || "Matière")}</th>`;
+    // Six matières maximum par feuille A4 : lisibilité plutôt que réduction de police.
+    // Identification, moyenne générale et rang répétés sur chaque feuille.
+    const subjectsPerSheet = 6;
+    const subjectGroups = Array.from(
+      { length: Math.max(1, Math.ceil(subjects.length / subjectsPerSheet)) },
+      (_, index) => subjects.slice(index * subjectsPerSheet, (index + 1) * subjectsPerSheet),
+    );
+    const sheetsHtml = subjectGroups.map((group, groupIndex) => {
+      const subjectHeaders = group.map((s) => {
+        const isComponent = s.subject_id.startsWith("__matrice_component__:");
+        return `<th class="${isComponent ? "component" : ""}">${escapeHtml(s.subject_name || "Matière")}</th>`;
+      }).join("");
+      const bodyRows = rows.map((row, idx) => `<tr>
+        <td class="num">${idx + 1}</td>
+        <td class="matricule">${escapeHtml(row.matricule || "")}</td>
+        <td class="student">${escapeHtml(row.full_name)}</td>
+        ${group.map((s) => `<td class="num">${escapeHtml(formatAvg(row.averages[s.subject_id]))}</td>`).join("")}
+        <td class="num strong">${escapeHtml(formatAvg(row.general_avg))}</td>
+        <td class="num strong">${escapeHtml(row.rank ?? "NC")}</td>
+      </tr>`).join("");
+      const subjectColumns = group.map(() => `<col style="width:${(48 / Math.max(1, group.length)).toFixed(2)}%" />`).join("");
+      const groupLabel = subjectGroups.length > 1
+        ? ` — matières ${groupIndex * subjectsPerSheet + 1} à ${groupIndex * subjectsPerSheet + group.length} sur ${subjects.length}`
+        : "";
+      return `<section class="sheet">
+        <div class="header"><div class="logo">${logoHtml}</div><div><h1>${escapeHtml(instName)}</h1><div class="meta">${meta || "Document généré par Mon Cahier"}</div></div><div class="side"><div><strong>Classe :</strong> ${escapeHtml(clsLabel(selectedClass))}</div><div><strong>Trimestre :</strong> ${escapeHtml(periodLabel(selectedPeriod))}</div><div><strong>Dates :</strong> ${escapeHtml(formatDateFr(selectedPeriod?.start_date))} - ${escapeHtml(formatDateFr(selectedPeriod?.end_date))}</div></div></div>
+        <div class="title">Matrice des moyennes par matière — liste alphabétique${escapeHtml(groupLabel)}</div>
+        <div class="table-wrap"><table><colgroup><col style="width:3%" /><col style="width:11%" /><col style="width:25%" />${subjectColumns}<col style="width:9%" /><col style="width:4%" /></colgroup><thead><tr><th>N°</th><th>Matricule</th><th>Nom et prénoms</th>${subjectHeaders}<th>Moy. générale</th><th>Rang</th></tr></thead><tbody>${bodyRows}</tbody></table></div>
+        <div class="footer"><strong>${BRAND_SITE}</strong> - ${escapeHtml(BRAND_SLOGAN)}</div>
+      </section>`;
     }).join("");
-    const bodyRows = rows
-      .map(
-        (row, idx) => `<tr>
-          <td class="num">${idx + 1}</td>
-          <td>${escapeHtml(row.matricule || "")}</td>
-          <td class="student">${escapeHtml(row.full_name)}</td>
-          ${subjects.map((s) => `<td class="num">${escapeHtml(formatAvg(row.averages[s.subject_id]))}</td>`).join("")}
-          <td class="num strong">${escapeHtml(formatAvg(row.general_avg))}</td>
-          <td class="num strong">${escapeHtml(row.rank ?? "NC")}</td>
-        </tr>`,
-      )
-      .join("");
-
     const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8" />
 <title>Matrice trimestrielle - ${escapeHtml(clsLabel(selectedClass))}</title>
 <style>
-@page { size: ${subjects.length > 13 ? "A3" : "A4"} landscape; margin: 6mm; }
+@page { size: A4 landscape; margin: 7mm; }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; color: #0f172a; background: #f8fafc; font-family: Inter, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-body { padding: 8px; }
-.sheet { background: #fff; border: 1px solid #dbe3ee; border-radius: 8px; padding: 8px; position: static; width: 100%; }
-.header { display: grid; grid-template-columns: 58px 1fr 190px; gap: 7px; align-items: center; border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px; background: linear-gradient(135deg, rgba(16,185,129,.10), rgba(15,23,42,.02)), white; break-inside: avoid; }
+body { padding: 0; }
+.sheet { background: #fff; border: 0; border-radius: 0; padding: 0; position: static; width: 100%; }
+.sheet + .sheet { break-before: page; page-break-before: always; }
+.header { display: grid; grid-template-columns: 64px 1fr 220px; gap: 7px; align-items: center; border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px; background: linear-gradient(135deg, rgba(16,185,129,.10), rgba(15,23,42,.02)), white; break-inside: avoid; }
 .logo { width: 52px; height: 52px; border: 1px solid #cbd5e1; border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: #94a3b8; font-size: 9px; font-weight: 900; }
 .logo img { width: 100%; height: 100%; object-fit: contain; padding: 5px; }
-h1 { margin: 0; font-size: 13px; text-transform: uppercase; }
-.meta { margin-top: 3px; color: #475569; font-size: 8px; line-height: 1.2; }
-.side { border-left: 1px solid #cbd5e1; padding-left: 7px; font-size: 8.5px; color: #334155; }
+h1 { margin: 0; font-size: 15pt; text-transform: uppercase; }
+.meta { margin-top: 3px; color: #475569; font-size: 10pt; line-height: 1.25; }
+.side { border-left: 1px solid #cbd5e1; padding-left: 7px; font-size: 10pt; line-height: 1.3; color: #334155; }
 .side strong { color: #0f172a; }
-.title { margin: 6px 0; padding: 5px 7px; border-radius: 4px; background: #0f172a; color: white; font-weight: 900; text-transform: uppercase; letter-spacing: .035em; font-size: 10px; break-after: avoid; }
+.title { margin: 6px 0; padding: 5px 7px; border-radius: 4px; background: #0f172a; color: white; font-weight: 900; text-transform: uppercase; letter-spacing: .035em; font-size: 11pt; break-after: avoid; }
 .table-wrap { overflow: visible; }
-table { width: 100%; border-collapse: collapse; font-size: 8px; }
+table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 10.5pt; }
 thead { display: table-header-group; }
 tr { break-inside: avoid; page-break-inside: avoid; }
-th { background: #e2e8f0; color: #0f172a; font-size: 7px; text-transform: uppercase; line-height: 1.12; }
+th { background: #e2e8f0; color: #0f172a; font-size: 10pt; overflow-wrap: anywhere; line-height: 1.18; }
 th.component { background: #d9f3e8; }
-th, td { border: 1px solid #cbd5e1; padding: 2px 3px; vertical-align: middle; line-height: 1.14; }
+th, td { border: 1px solid #cbd5e1; padding: 3px 4px; vertical-align: middle; line-height: 1.25; }
 tr:nth-child(even) td { background: #f8fafc; }
 .num { text-align: right; white-space: nowrap; }
-.student { min-width: 165px; font-weight: 800; white-space: nowrap; font-size: 7.7px; }
+.student { font-weight: 800; white-space: normal; overflow-wrap: break-word; font-size: 10.5pt; }
+.matricule { overflow-wrap: anywhere; }
 .strong { font-weight: 950; color: #064e3b; }
-.footer { position: static; margin-top: 7px; border-top: 1px solid #cbd5e1; padding-top: 4px; text-align: center; font-size: 8px; color: #475569; break-inside: avoid; }
+.footer { position: static; margin-top: 7px; border-top: 1px solid #cbd5e1; padding-top: 4px; text-align: center; font-size: 9.5pt; color: #475569; break-inside: avoid; }
 .footer strong { color: #047857; }
 @media print {
   html, body { margin: 0 !important; padding: 0 !important; background: white !important; }
   .sheet { border: 0; border-radius: 0; padding: 0; margin: 0; min-height: 0; }
   .header { padding: 5px; }
   .title { margin: 4px 0; }
-  th, td { padding: 1.5px 2px; }
-  .student { min-width: 135px; }
+  th, td { padding: 2.5px 3px; }
   .footer { margin-top: 5px; }
 }
 </style></head><body>
-<div class="sheet">
-  <div class="header"><div class="logo">${logoHtml}</div><div><h1>${escapeHtml(instName)}</h1><div class="meta">${meta || "Document généré par Mon Cahier"}</div></div><div class="side"><div><strong>Classe :</strong> ${escapeHtml(clsLabel(selectedClass))}</div><div><strong>Trimestre :</strong> ${escapeHtml(periodLabel(selectedPeriod))}</div><div><strong>Dates :</strong> ${escapeHtml(formatDateFr(selectedPeriod?.start_date))} - ${escapeHtml(formatDateFr(selectedPeriod?.end_date))}</div></div></div>
-  <div class="title">Matrice des moyennes par matière — liste alphabétique</div>
-  <div class="table-wrap"><table><thead><tr><th>N°</th><th>Matricule</th><th>Nom et prénoms</th>${subjectHeaders}<th>Moy. générale</th><th>Rang</th></tr></thead><tbody>${bodyRows}</tbody></table></div>
-  <div class="footer"><strong>${BRAND_SITE}</strong> - ${escapeHtml(BRAND_SLOGAN)}</div>
-</div>
+${sheetsHtml}
 </body></html>`;
 
     setErrorMsg(null);
