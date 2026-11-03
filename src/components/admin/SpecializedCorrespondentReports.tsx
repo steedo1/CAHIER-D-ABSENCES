@@ -294,7 +294,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
           />
         </div>
       ) : null}
-      <div id="specialized-correspondent-report" className={`space-y-4 rounded-xl border bg-white p-4 sm:p-6 ${mode === "term" ? "specialized-term-report" : ""}`}>
+      <div id="specialized-correspondent-report" className={`space-y-4 rounded-xl border bg-white p-4 sm:p-6 ${mode === "term" ? (subjects.length > 20 ? "specialized-term-report specialized-term-extra-wide" : subjects.length > 10 ? "specialized-term-report specialized-term-wide" : "specialized-term-report") : ""}`}>
         <div className="border-b pb-3 text-center">
           <p className="text-sm font-semibold">RÉPUBLIQUE DE CÔTE D’IVOIRE</p>
           <p className="text-xs">Union - Discipline - Travail</p>
@@ -368,45 +368,42 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
         </div>
         {mode === "term" && (
           <div className="specialized-term-pages hidden print:block">
-            {Array.from({ length: Math.max(1, Math.ceil(subjects.length / 5)) }, (_, index) => index)
-              .map(pageIndex => {
-                const group = subjects.slice(pageIndex * 5, (pageIndex + 1) * 5);
-                return <section key={pageIndex} className="specialized-term-sheet">
-                  <h3>
-                    {TITLES.term} · {TRACK_LABELS[selectedTrack]} · {chosenClass?.label} · {chosenPeriod?.label}
-                    {subjects.length > 5 ? ` · Matières ${pageIndex * 5 + 1}–${pageIndex * 5 + group.length} / ${subjects.length}` : ""}
-                  </h3>
-                  <table className="specialized-term-table">
-                    <colgroup>
-                      <col style={{ width: "28%" }} />
-                      {group.map(subject => <col key={subject.id} style={{ width: `${50 / Math.max(1, group.length)}%` }} />)}
-                      <col style={{ width: "8%" }} /><col style={{ width: "6%" }} /><col style={{ width: "8%" }} />
-                    </colgroup>
-                    <thead><tr>
-                      <th>Élève</th>
-                      {group.map(subject => <th key={subject.id}>{subject.name}</th>)}
-                      <th>Moyenne</th><th>Rang</th><th>Statut</th>
-                    </tr></thead>
-                    <tbody>
-                      {display.map(entry => {
-                        const program = programFor(entry, selectedTrack);
-                        return <tr key={entry.studentId}>
-                          <td className="student-name">{studentName(entry)}</td>
-                          {group.map(subject => {
-                            const item = program?.subjects.find(s => s.id === subject.id);
-                            return <td key={subject.id}>
-                              {item ? formatScore(item.average, program!.denominator) : "—"}
-                            </td>;
-                          })}
-                          <td>{program ? formatScore(program.generalAverage, program.denominator) : "—"}</td>
-                          <td>{program?.rank ?? "—"}</td>
-                          <td>{program ? "Complet" : "Incomplet"}</td>
-                        </tr>;
+            <section className="specialized-term-sheet">
+              <h3>
+                {TITLES.term} · {TRACK_LABELS[selectedTrack]} · {chosenClass?.label} · {chosenPeriod?.label}
+              </h3>
+              <table className="specialized-term-table">
+                <colgroup>
+                  <col style={{ width: subjects.length > 10 ? "21%" : "28%" }} />
+                  {subjects.map(subject => <col key={subject.id} style={{ width: `${((subjects.length > 10 ? 61 : 50) / Math.max(1, subjects.length)).toFixed(3)}%` }} />)}
+                  <col style={{ width: subjects.length > 10 ? "7%" : "8%" }} />
+                  <col style={{ width: subjects.length > 10 ? "5%" : "6%" }} />
+                  <col style={{ width: subjects.length > 10 ? "6%" : "8%" }} />
+                </colgroup>
+                <thead><tr>
+                  <th>Élève</th>
+                  {subjects.map(subject => <th className="subject-heading" key={subject.id}><span className="subject-label">{subject.name}</span></th>)}
+                  <th>Moyenne</th><th>Rang</th><th>Statut</th>
+                </tr></thead>
+                <tbody>
+                  {display.map(entry => {
+                    const program = programFor(entry, selectedTrack);
+                    return <tr key={entry.studentId}>
+                      <td className="student-name">{studentName(entry)}</td>
+                      {subjects.map(subject => {
+                        const item = program?.subjects.find(s => s.id === subject.id);
+                        return <td key={subject.id}>
+                          {item ? formatScore(item.average, program!.denominator) : "—"}
+                        </td>;
                       })}
-                    </tbody>
-                  </table>
-                </section>;
-              })}
+                      <td>{program ? formatScore(program.generalAverage, program.denominator) : "—"}</td>
+                      <td>{program?.rank ?? "—"}</td>
+                      <td>{program ? "Complet" : "Incomplet"}</td>
+                    </tr>;
+                  })}
+                </tbody>
+              </table>
+            </section>
           </div>
         )}
         <DocumentDirectionSignatures className="mt-4" signatories={[{
