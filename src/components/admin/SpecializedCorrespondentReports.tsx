@@ -133,7 +133,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
         new URLSearchParams({ academic_year: year, class_id: classId });
       requestData<{ events?: PrimaryEvent[] }>(url, controller.signal).then(data => {
         if (controller.signal.aborted) return;
-        const level = String(selectedClass?.level || "").replace(/[\\s.-]/g, "").toUpperCase();
+        const level = String(selectedClass?.level || "").replace(/[\s.-]/g, "").toUpperCase();
         const available = (data.events || []).filter(event =>
           event.printBulletin && event.levels.includes(level as any));
         setPrimaryEvents(available);
