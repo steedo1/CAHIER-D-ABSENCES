@@ -14,6 +14,7 @@ import {
   Unlock,
 } from "lucide-react";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
+import { openGradeRegisterPdf } from "@/lib/grades/grade-register-print";
 import { parsePrimaryEventTitle, type PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import Link from "next/link";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
@@ -2265,6 +2266,42 @@ export default function TeacherNotesPage() {
     return map;
   }, [evaluations, primaryEvents]);
 
+  function exportGradebookPdf() {
+    if (!selected || !roster.length || !evaluations.length) {
+      setMsg("Sélectionnez une classe contenant des élèves et des notes à exporter.");
+      return;
+    }
+    if (Object.values(changed).some((perEval) => Object.keys(perEval).length > 0)) {
+      setMsg("Enregistrez d'abord les notes modifiées avant d'exporter le cahier en PDF.");
+      return;
+    }
+
+    const opened = openGradeRegisterPdf({
+      institutionName,
+      academicYear: academicYearLabel,
+      className: selected.class_label,
+      subjectName: selected.subject_name,
+      teachingName: selected.teaching_track === "arabic" ? "Enseignement arabe"
+        : selected.teaching_track === "french" ? "Enseignement français" : null,
+      periodName: isPrimaryProgram && primaryCatalogEnabled ? null
+        : (selectedPeriod?.label || selectedPeriod?.short_label || selectedPeriod?.code || null),
+      students: roster,
+      evaluations: evaluations.map((ev) => ({
+        id: ev.id,
+        label: labelByEvalId[ev.id] || ev.title || ev.eval_kind,
+        scale: Number(ev.scale),
+        eval_date: ev.eval_date,
+        coeff: isPrimaryProgram ? null : ev.coeff,
+        component: ev.subject_component_id
+          ? (componentById[ev.subject_component_id]?.short_label ||
+              componentById[ev.subject_component_id]?.label || null)
+          : null,
+      })),
+      grades,
+    });
+    if (!opened) setMsg("Le navigateur a bloqué l'export PDF. Autorisez les fenêtres pour Mon Cahier puis réessayez.");
+  }
+
   /* ==========================================
      Colonne active sur mobile
   ========================================== */
@@ -2604,6 +2641,15 @@ export default function TeacherNotesPage() {
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <GhostButton
+                tone="slate"
+                type="button"
+                onClick={exportGradebookPdf}
+                disabled={loading || !selected || roster.length === 0 || evaluations.length === 0 || selected?.school_cycle === "preschool"}
+                title="Imprimer ou enregistrer le cahier de notes en PDF (A4 paysage)"
+              >
+                <FileText className="h-4 w-4" /> Exporter PDF
+              </GhostButton>
               {!isPrimaryProgram && !isPreschoolProgram && (
                 <>
                   <Button

@@ -11,6 +11,7 @@ on:
       - 'src/app/api/teacher/grades/**'
       - 'src/lib/grades/**'
       - 'test/primary-events-integration.test.mjs'
+      - 'test/grade-register-print.test.mjs'
       - 'test/franco-arabic-direct-grade-publication.test.mjs'
       - 'package*.json'
       - '.github/workflows/render-notes-live-gate.yml'
@@ -47,6 +48,8 @@ jobs:
         run: npm run typecheck
       - name: Gradebook and school-cycle regressions
         run: npm run test:multicycle
+      - name: PDF grade register regressions
+        run: node --import tsx --test test/grade-register-print.test.mjs
       - name: Parent Connect and SMS regressions
         run: npm run test:parent-connect
       - name: EPC column delete and QR memory regressions
