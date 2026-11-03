@@ -90,13 +90,23 @@ export function programsForStudent(
   return tracks.filter(track => allowed.includes(track));
 }
 
+/** French and Arabic progress independently through primary and secondary.
+ * Callers still verify school, year, configured tracks and unique enrollment.
+ * Preschool and reverse (French) links retain their existing constraints. */
+export function canLinkTeachingClass(
+  source: { cycle: SchoolCycle | null; level?: string | null },
+  target: { cycle: SchoolCycle | null; level?: string | null },
+  teaching: TeachingTrack,
+): boolean {
+  if (!source.cycle || !target.cycle || !source.level?.trim() || !target.level?.trim()) return false;
+  if (teaching === "arabic" && source.cycle !== "preschool" && target.cycle !== "preschool") return true;
+  return source.cycle === target.cycle && sameSchoolLevel(source.level, target.level, target.cycle);
+}
 
 /**
  * A pupil retains ONE class_enrollments record. An explicitly authorized
- * pedagogical class in the same school cycle may display that pupil too.
- * Within the primary Arabic teaching track, grades can differ from the
- * administrative French grade (e.g. French CP2 / Arabic CP1).
- * Stale, ambiguous or cross-cycle links are silently excluded from counts.
+ * Arabic teaching class may use a different grade or primary/secondary cycle.
+ * Stale, disabled or unconfigured links are excluded from counts.
  * Caller supplies classes and actual active enrollments of ONE institution/year.
  */
 export function expandPedagogicalEnrollments(
@@ -107,10 +117,12 @@ export function expandPedagogicalEnrollments(
 ): ActiveProgramEnrollment[] {
   const byClass = new Map(classes.map(row => [row.id, row]));
   const homeByStudent = new Map<string, ActiveProgramEnrollment>();
+  const homeCounts = new Map<string, number>();
   const seen = new Set<string>();
   const result: ActiveProgramEnrollment[] = [];
   for (const row of administrative) {
     if (row.end_date || !row.student_id || !byClass.has(row.class_id)) continue;
+    homeCounts.set(row.student_id, (homeCounts.get(row.student_id) || 0) + 1);
     if (!homeByStudent.has(row.student_id)) homeByStudent.set(row.student_id, row);
     const pair = row.class_id + ":" + row.student_id;
     if (!seen.has(pair)) { seen.add(pair); result.push(row); }
@@ -119,14 +131,14 @@ export function expandPedagogicalEnrollments(
     const policy = yearPolicy?.classes[target.id];
     if (!policy?.linkedStudentIds?.length || policy.tracks.length !== 1 || !target.level) continue;
     const teaching = policy.tracks[0];
-    if (!school.teachingTracksByCycle[target.cycle]?.includes(teaching)) continue;
+    if (!school.enabledCycles.includes(target.cycle) ||
+      !school.teachingTracksByCycle[target.cycle]?.includes(teaching)) continue;
     for (const id of policy.linkedStudentIds) {
       const home = homeByStudent.get(id);
-      if (!home || home.class_id === target.id) continue;
+      if (!home || homeCounts.get(id) !== 1 || home.class_id === target.id) continue;
       const source = byClass.get(home.class_id);
-      const primaryArabicCrossGrade = target.cycle === "primary" && teaching === "arabic";
-      if (!source?.level || source.cycle !== target.cycle ||
-        (!primaryArabicCrossGrade && !sameSchoolLevel(source.level, target.level, target.cycle))) continue;
+      if (!source || !school.enabledCycles.includes(source.cycle) ||
+        !canLinkTeachingClass(source, target, teaching)) continue;
       const sourceTracks = programsForStudent(
         yearPolicy?.classes[source.id], id, school.teachingTracksByCycle[source.cycle] || []);
       if (sourceTracks.length !== 1 || sourceTracks[0] === teaching) continue;

@@ -202,3 +202,40 @@ test("Render: official origin does not bypass authentication or institution acce
   assert.equal(wrongInstitution.status, 403);
   assert.equal(db.calls.some(call => call.op !== "read"), false);
 });
+
+
+test("French and Arabic primary/secondary cycles are independent in both directions", async () => {
+  for (const [frenchLevel, arabicLevel, oldArabicLevel] of [
+    ["6ème", "CP1", "6ème"], ["CP2", "6ème", "CP1"],
+  ]) {
+    const db = setup();
+    const settings = db.tables.institutions[0].settings_json;
+    settings.school_cycles_v1.enabledCycles = ["primary", "secondary"];
+    settings.school_cycles_v1.teachingTracksByCycle.secondary = ["french", "arabic"];
+    db.tables.classes.find(row => row.id === homeId).level = frenchLevel;
+    db.tables.classes.find(row => row.id === arabicId).level = oldArabicLevel;
+    db.tables.classes.find(row => row.id === arabicNextId).level = arabicLevel;
+    settings.school_student_programs_v1.years["2026-2027"].classes[arabicId].linkedStudentIds = [studentId];
+    const enrollment = structuredClone(db.tables.class_enrollments);
+    const students = structuredClone(db.tables.students);
+    const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+    const response = await handler.POST(renderRequest("https://mon-cahier.com"));
+    const body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.cross_cycle, true);
+    assert.equal(body.transferred, true);
+    assert.equal(body.french_level, frenchLevel);
+    assert.equal(body.arabic_level, arabicLevel);
+    const policies = settings.school_student_programs_v1.years["2026-2027"].classes;
+    assert.deepEqual(policies[arabicId].linkedStudentIds, []);
+    assert.deepEqual(policies[arabicNextId].linkedStudentIds, [studentId]);
+    const classroom = db.tables.classes.find(row => row.id === arabicNextId);
+    const loader = createFixtureRouteLoader(db, db.legacyAdminId);
+    const roster = await loader("src/lib/server/school-linked-class-roster.ts")
+      .loadLinkedClassEnrollments(db.service, db.legacyId, classroom, settings);
+    assert.deepEqual(roster.map(row => row.student_id), [studentId]);
+    assert.deepEqual(db.tables.class_enrollments, enrollment);
+    assert.deepEqual(db.tables.students, students);
+    assert.equal(db.calls.some(call => call.op !== "read" && call.table !== "institutions"), false);
+  }
+});

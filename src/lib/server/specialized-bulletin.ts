@@ -11,8 +11,7 @@ import { primarySubjectScale, primarySubjectTeachingTrack } from "@/lib/grades/p
 import type { BulletinSchool, BulletinDocument, BulletinProgram } from "@/components/bulletins/FrancoArabicBulletin";
 import { SCHOOL_CYCLE_OPTIONS, type SchoolCycle, type TeachingTrack } from "@/lib/school-cycles";
 import { buildPedagogicalRanks } from "@/lib/pedagogical-ranking";
-import { isBilingualSchool, programsForStudent, readStudentProgramSettings } from "@/lib/school-student-programs";
-import { sameSchoolLevel } from "@/lib/school-levels";
+import { isBilingualSchool, programsForStudent, readStudentProgramSettings, canLinkTeachingClass } from "@/lib/school-student-programs";
 import { selectedBulletinFormat } from "@/lib/franco-arabic-reporting";
 import { inferSchoolCycleFromLevel } from "@/lib/school-cycles";
 import { classSubjectIds, hasCiPrimaryFrenchReference } from "@/lib/school-class-subjects";
@@ -155,11 +154,12 @@ export async function loadSpecializedBulletin(input: {
       const byClass = new Map(sources.map(row => [row.id, row]));
       for (const studentId of links) {
         const source = byClass.get(byStudent.get(studentId) || "");
-        const fromTrack = source && programsForStudent(storedYear?.classes[source.id], studentId,
-          school.teachingTracksByCycle[cycle] || []);
         const fromCycle = source && (school.classCycleById[source.id] || inferSchoolCycleFromLevel(source.level));
+        const fromTrack = source && fromCycle && programsForStudent(storedYear?.classes[source.id], studentId,
+          school.teachingTracksByCycle[fromCycle] || []);
         if (!source || source.institution_id !== institutionId || source.academic_year !== year ||
-          fromCycle !== cycle || !sameSchoolLevel(source.level, level, cycle) ||
+          !fromCycle || !school.enabledCycles.includes(fromCycle) ||
+          !canLinkTeachingClass({ ...source, cycle: fromCycle }, { cycle, level }, classPolicy.tracks[0]) ||
           fromTrack?.length !== 1 || fromTrack[0] === classPolicy.tracks[0]) {
           return json({ ok: false, error: "STUDENT_PROGRAM_LINK_STALE" }, 409);
         }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sameSchoolLevel } from "@/lib/school-levels";
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
@@ -14,6 +14,7 @@ import {
   normalizedProgramTracks,
   readStudentProgramSettings,
   programsForStudent,
+  canLinkTeachingClass,
 } from "@/lib/school-student-programs";
 import {
   asSettingsObject, schoolSettingsRevision, writeSchoolSettings,
@@ -91,23 +92,27 @@ async function eligibleHomeStudents(
   institutionId: string,
   selected: SchoolChoice,
   choices: SchoolChoice[],
-  primaryArabicCrossGrade: boolean,
+  teaching: TeachingTrack,
 ) {
   if (!selected.level?.trim()) return { candidates: [] };
   const siblingIds = choices.filter(row =>
-    row.id !== selected.id && !!row.level?.trim() && !!row.cycle && row.cycle === selected.cycle &&
-    (primaryArabicCrossGrade || sameSchoolLevel(row.level, selected.level, selected.cycle || undefined)))
+    row.id !== selected.id && canLinkTeachingClass(row, selected, teaching))
     .map(row => row.id);
   const candidates: Array<{ student_id: string; class_id: string }> = [];
   if (!siblingIds.length) return { candidates };
+  const siblingSet = new Set(siblingIds);
   for (let offset = 0; offset < 10000; offset += 500) {
     const { data, error } = await service.from("class_enrollments")
       .select("student_id,class_id").eq("institution_id", institutionId)
-      .in("class_id", siblingIds).is("end_date", null)
+      .in("class_id", choices.map(row => row.id)).is("end_date", null)
       .order("id").range(offset, offset + 499);
     if (error) return { error: "candidate_roster_unavailable" } as const;
     candidates.push(...(data || []));
-    if (!data || data.length < 500) return { candidates } as const;
+    if (!data || data.length < 500) {
+      const counts = new Map<string, number>();
+      for (const row of candidates) counts.set(row.student_id, (counts.get(row.student_id) || 0) + 1);
+      return { candidates: candidates.filter(row => siblingSet.has(row.class_id) && counts.get(row.student_id) === 1) };
+    }
   }
   return { error: "candidate_roster_too_large" } as const;
 }
@@ -146,15 +151,14 @@ export async function GET(request: NextRequest) {
     const enroll = await activeClassStudentIds(service, institutionId, selected.id);
     if ("error" in enroll) return json({ error: enroll.error }, 503);
     const studentIds = enroll.studentIds;
-    // An unconfigured primary class must offer all same-cycle French homes;
-    // the chosen track is only known at save time, where eligibility is
-    // rechecked strictly for the Arabic teaching track.
+    // Offer French homes across primary/secondary for an Arabic class.
+    // PUT rechecks the chosen teaching, source policy and active enrollment.
     const selectedTracks = stored.years[year]?.classes[selected.id]?.tracks;
-    const targetIsArabicPrimary = selected.cycle === "primary" &&
-      settings.teachingTracksByCycle.primary?.includes("arabic") === true &&
+    const targetIsArabic = selected.cycle &&
+      settings.teachingTracksByCycle[selected.cycle]?.includes("arabic") === true &&
       (!selectedTracks?.length || selectedTracks.length === 1 && selectedTracks[0] === "arabic");
     const nearby = selected.cycle ? await eligibleHomeStudents(
-      service, institutionId, selected, choices, targetIsArabicPrimary,
+      service, institutionId, selected, choices, targetIsArabic ? "arabic" : "french",
     ) : { candidates: [] as Array<{ class_id: string; student_id: string }> };
     if ("error" in nearby) return json({ error: nearby.error }, 503);
     const nearbyStudents = nearby.candidates.filter(row => !studentIds.includes(row.student_id));
@@ -203,11 +207,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  if (!isTrustedAppOrigin(request)) return json({ error: "invalid_origin" }, 403);
   const context = await authorizedSchool();
   if ("error" in context) return context.error;
   const { service, institutionId, rawSettings, settings, year } = context;
-  const origin = request.headers.get("origin");
-  if (origin && origin !== request.nextUrl.origin) return json({ error: "invalid_origin" }, 403);
   if (!request.headers.get("content-type")?.includes("application/json")) return json({ error: "expected_json" }, 415);
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -271,24 +274,29 @@ export async function PUT(request: NextRequest) {
         .select("id,label,level").eq("institution_id", institutionId)
         .eq("academic_year", year).order("id").range(offset, offset + 499);
       if (error) return json({ error: "classes_load_failed" }, 503);
-      choices.push(...(data || []).map(row => ({
-        ...row, cycle: settings.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level),
-      })));
+      choices.push(...(data || []).map(row => {
+        const value = settings.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level);
+        return { ...row, cycle: value && settings.enabledCycles.includes(value) ? value : null };
+      }));
       if (!data || data.length < 500) break;
       if (offset === 4500) return json({ error: "too_many_classes" }, 503);
     }
     const target = choices.find(row => row.id === classId);
     if (!target) return json({ error: "class_not_found" }, 404);
     const eligibleHome = await eligibleHomeStudents(
-      service, institutionId, target, choices, cycle === "primary" && defaultTracks[0] === "arabic",
+      service, institutionId, target, choices, defaultTracks[0],
     );
     if ("error" in eligibleHome) return json({ error: eligibleHome.error }, 503);
     const homeByStudent = new Map(eligibleHome.candidates.map(row => [row.student_id, row.class_id]));
+    const homeCounts = new Map<string, number>();
+    for (const row of eligibleHome.candidates) homeCounts.set(row.student_id, (homeCounts.get(row.student_id) || 0) + 1);
     for (const id of linkedStudentIds) {
       const sourceClassId = homeByStudent.get(id);
+      const sourceCycle = choices.find(row => row.id === sourceClassId)?.cycle;
       const sourceTracks = sourceClassId && programsForStudent(
-        existing.years[year]?.classes[sourceClassId], id, allowed);
-      if (!sourceClassId || sourceTracks?.length !== 1 ||
+        existing.years[year]?.classes[sourceClassId], id,
+        sourceCycle ? settings.teachingTracksByCycle[sourceCycle] || [] : []);
+      if (!sourceClassId || homeCounts.get(id) !== 1 || sourceTracks?.length !== 1 ||
         sourceTracks[0] === defaultTracks[0] || eligible.has(id)) {
         return json({ error: "linked_student_not_eligible" }, 403);
       }
@@ -297,9 +305,8 @@ export async function PUT(request: NextRequest) {
         if (otherId === classId || !policy.linkedStudentIds?.includes(id) ||
           !policy.tracks.includes(defaultTracks[0])) continue;
         const otherClass = choices.find(row => row.id === otherId);
-        if (otherClass?.cycle === cycle &&
-          (cycle === "primary" && defaultTracks[0] === "arabic" ||
-            sameSchoolLevel(otherClass.level, target.level, cycle))) {
+        if (otherClass && (defaultTracks[0] === "arabic" ||
+          canLinkTeachingClass(otherClass, target, defaultTracks[0]))) {
           return json({ error: "duplicate_teaching_class" }, 409);
         }
       }

@@ -6,6 +6,7 @@ import {
   SCHOOL_STUDENT_PROGRAMS_KEY,
   isBilingualSchool,
   programsForStudent,
+  canLinkTeachingClass,
   readStudentProgramSettings,
 } from "@/lib/school-student-programs";
 import { asSettingsObject } from "@/lib/school-settings-write";
@@ -100,17 +101,12 @@ export async function POST(request: NextRequest) {
   const source = homes.find(home => home.id === relevant[0].class_id)!;
   if (source.id === classId) return reply({ ok: true, already_present: true, student: pupil });
   const sourceCycle = school.classCycleById[source.id] || inferSchoolCycleFromLevel(source.level);
-  // The two teaching programs can place the same primary-school pupil in
-  // different grades (e.g. CP2 French / CP1 Arabic). Never alter the French
-  // administrative enrollment; keep same-grade constraints for other cycles.
-  const primaryArabicCrossGrade = cycle === "primary" &&
-    school.teachingTracksByCycle.primary?.includes("arabic");
-  if (!sourceCycle || sourceCycle !== cycle || !source.level || !target.level ||
-    (!primaryArabicCrossGrade && !sameSchoolLevel(source.level, target.level, cycle))) {
+  if (!sourceCycle || !school.enabledCycles.includes(sourceCycle) ||
+    !canLinkTeachingClass({ ...source, cycle: sourceCycle }, { ...target, cycle }, "arabic")) {
     return reply({ error: "student_not_same_cycle_or_eligible_level" }, 409);
   }
   const homeTracks = programsForStudent(
-    yearPolicy?.classes[source.id], pupil.id, school.teachingTracksByCycle[cycle] || [],
+    yearPolicy?.classes[source.id], pupil.id, school.teachingTracksByCycle[sourceCycle] || [],
   );
   if (homeTracks.length !== 1 || homeTracks[0] !== "french") {
     return reply({ error: "french_home_not_configured" }, 409);
@@ -132,8 +128,9 @@ export async function POST(request: NextRequest) {
     if (error || !previous || previous.length !== oldIds.length ||
       previous.some(row => {
         const previousCycle = school.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level);
-        return previousCycle !== cycle || !row.level ||
-          (!primaryArabicCrossGrade && !sameSchoolLevel(row.level, target.level, cycle));
+        return !previousCycle || !school.enabledCycles.includes(previousCycle) ||
+          !school.teachingTracksByCycle[previousCycle]?.includes("arabic") ||
+          !canLinkTeachingClass({ ...row, cycle: previousCycle }, { ...target, cycle }, "arabic");
       })) {
       return reply({ error: "prior_arabic_class_requires_review" }, 409);
     }
@@ -164,6 +161,7 @@ export async function POST(request: NextRequest) {
   return reply({
     ok: true, student: pupil, transferred: oldIds.length > 0,
     french_level: source.level, arabic_level: target.level,
+    french_cycle: sourceCycle, arabic_cycle: cycle, cross_cycle: sourceCycle !== cycle,
     cross_level: !sameSchoolLevel(source.level, target.level, cycle),
   });
 }

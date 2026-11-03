@@ -1707,8 +1707,8 @@ export default function AdminStudentsByClassPage() {
           arabic_class_not_configured: "Cette classe n'est pas configurée pour l'enseignement arabe.",
           french_home_not_configured: "Configurez d'abord l'enseignement français dans la classe administrative de l'élève.",
           student_has_no_home_class: "Inscrivez d'abord cet élève dans sa classe administrative française.",
-          student_not_same_level_or_cycle: "Le niveau arabe peut être différent au primaire. Vérifiez que les deux classes appartiennent au même cycle.",
-          student_not_same_cycle_or_eligible_level: "Le transfert doit rester dans le même cycle scolaire (primaire, maternelle ou secondaire).",
+          student_not_same_level_or_cycle: "Les niveaux et cycles français/arabe peuvent différer entre primaire et secondaire. Vérifiez la configuration des deux classes.",
+          student_not_same_cycle_or_eligible_level: "Vérifiez que les deux classes ont un cycle activé et un niveau renseigné. Les parcours français/arabe sont indépendants au primaire et au secondaire.",
           student_home_ambiguous_for_year: "Plusieurs inscriptions administratives sont actives : vérifiez la fiche de l'élève.",
           prior_arabic_class_requires_review: "L'ancienne affectation arabe doit être vérifiée avant ce transfert.",
           multiple_arabic_links_require_review: "Plusieurs affectations arabes existent : corrigez-les avant de continuer.",
@@ -1727,8 +1727,8 @@ export default function AdminStudentsByClassPage() {
         setMsg(json?.already_present
           ? "Cet élève figure déjà dans cette classe arabe."
           : json?.transferred
-            ? json?.cross_level
-              ? `Élève transféré en arabe de ${json.french_level} français vers ${json.arabic_level} arabe. L'inscription française et les frais sont conservés.`
+            ? json?.cross_level || json?.cross_cycle
+              ? `Élève transféré vers ${json.arabic_level} arabe. Son inscription en ${json.french_level} français et les frais sont conservés.`
               : "Élève transféré dans cette classe arabe. L'inscription française et les frais sont conservés."
             : "Élève ajouté à l'enseignement arabe. L'inscription française et les frais sont conservés.");
         return;
@@ -2269,7 +2269,7 @@ export default function AdminStudentsByClassPage() {
               ) : (
                 <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
                   {isArabicClassSelection
-                    ? "Choisissez un élève déjà inscrit administrativement en français. Au primaire, son niveau arabe peut être différent de son niveau français. Seule sa classe arabe change : l'inscription française, la fiche et les frais sont conservés."
+                    ? "Choisissez un élève déjà inscrit en français. Son niveau et son cycle en arabe peuvent être différents (primaire ou secondaire). Seule sa classe arabe change : l'inscription française et les frais sont conservés."
                     : "Selectionnez un eleve existant : sa classe et ses donnees financieres seront transferees vers la classe choisie."}
                 </div>
               )}
