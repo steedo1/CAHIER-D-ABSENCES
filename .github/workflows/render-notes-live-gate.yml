@@ -48,6 +48,8 @@ jobs:
         run: npm run typecheck
       - name: Gradebook and school-cycle regressions
         run: npm run test:multicycle
+      - name: EPC primary composition matrices regressions
+        run: node --import tsx --test test/specialized-correspondent-reports.test.mjs test/matrix-print.test.ts
       - name: PDF grade register regressions
         run: node --import tsx --test test/grade-register-print.test.mjs
       - name: Admin notes PDF download and actual EPC scoring scales
