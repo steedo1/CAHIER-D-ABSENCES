@@ -571,46 +571,32 @@ function LegacyMatricesTrimestriellesPage() {
       .map(escapeHtml)
       .join(" • ");
 
-    // Six matières maximum par feuille A4 : lisibilité plutôt que réduction de police.
-    // Identification, moyenne générale et rang répétés sur chaque feuille.
-    const subjectsPerSheet = 6;
-    const subjectGroups = Array.from(
-      { length: Math.max(1, Math.ceil(subjects.length / subjectsPerSheet)) },
-      (_, index) => subjects.slice(index * subjectsPerSheet, (index + 1) * subjectsPerSheet),
-    );
-    const sheetsHtml = subjectGroups.map((group, groupIndex) => {
-      const subjectHeaders = group.map((s) => {
-        const isComponent = s.subject_id.startsWith("__matrice_component__:");
-        return `<th class="${isComponent ? "component" : ""}">${escapeHtml(s.subject_name || "Matière")}</th>`;
-      }).join("");
-      const bodyRows = rows.map((row, idx) => `<tr>
+    // Toutes les matières restent dans un tableau unique, de la première à la dernière colonne.
+    // Le format du papier augmente avec la largeur ; on ne scinde jamais les matières.
+    const paperSize = subjects.length > 20 ? "A2" : subjects.length > 10 ? "A3" : "A4";
+    const useVerticalHeaders = subjects.length > 10;
+    const subjectSpace = subjects.length > 10 ? 61 : 48;
+    const subjectColumns = subjects.map(() => `<col style="width:${(subjectSpace / Math.max(1, subjects.length)).toFixed(3)}%" />`).join("");
+    const subjectHeaders = subjects.map((s) => {
+      const isComponent = s.subject_id.startsWith("__matrice_component__:");
+      return `<th class="subject ${isComponent ? "component" : ""}"><span class="subject-label">${escapeHtml(s.subject_name || "Matière")}</span></th>`;
+    }).join("");
+    const bodyRows = rows.map((row, idx) => `<tr>
         <td class="num">${idx + 1}</td>
         <td class="matricule">${escapeHtml(row.matricule || "")}</td>
         <td class="student">${escapeHtml(row.full_name)}</td>
-        ${group.map((s) => `<td class="num">${escapeHtml(formatAvg(row.averages[s.subject_id]))}</td>`).join("")}
+        ${subjects.map((s) => `<td class="num">${escapeHtml(formatAvg(row.averages[s.subject_id]))}</td>`).join("")}
         <td class="num strong">${escapeHtml(formatAvg(row.general_avg))}</td>
         <td class="num strong">${escapeHtml(row.rank ?? "NC")}</td>
       </tr>`).join("");
-      const subjectColumns = group.map(() => `<col style="width:${(48 / Math.max(1, group.length)).toFixed(2)}%" />`).join("");
-      const groupLabel = subjectGroups.length > 1
-        ? ` — matières ${groupIndex * subjectsPerSheet + 1} à ${groupIndex * subjectsPerSheet + group.length} sur ${subjects.length}`
-        : "";
-      return `<section class="sheet">
-        <div class="header"><div class="logo">${logoHtml}</div><div><h1>${escapeHtml(instName)}</h1><div class="meta">${meta || "Document généré par Mon Cahier"}</div></div><div class="side"><div><strong>Classe :</strong> ${escapeHtml(clsLabel(selectedClass))}</div><div><strong>Trimestre :</strong> ${escapeHtml(periodLabel(selectedPeriod))}</div><div><strong>Dates :</strong> ${escapeHtml(formatDateFr(selectedPeriod?.start_date))} - ${escapeHtml(formatDateFr(selectedPeriod?.end_date))}</div></div></div>
-        <div class="title">Matrice des moyennes par matière — liste alphabétique${escapeHtml(groupLabel)}</div>
-        <div class="table-wrap"><table><colgroup><col style="width:3%" /><col style="width:11%" /><col style="width:25%" />${subjectColumns}<col style="width:9%" /><col style="width:4%" /></colgroup><thead><tr><th>N°</th><th>Matricule</th><th>Nom et prénoms</th>${subjectHeaders}<th>Moy. générale</th><th>Rang</th></tr></thead><tbody>${bodyRows}</tbody></table></div>
-        <div class="footer"><strong>${BRAND_SITE}</strong> - ${escapeHtml(BRAND_SLOGAN)}</div>
-      </section>`;
-    }).join("");
     const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8" />
 <title>Matrice trimestrielle - ${escapeHtml(clsLabel(selectedClass))}</title>
 <style>
-@page { size: A4 landscape; margin: 7mm; }
+@page { size: ${paperSize} landscape; margin: 7mm; }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; color: #0f172a; background: #f8fafc; font-family: Inter, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 body { padding: 0; }
 .sheet { background: #fff; border: 0; border-radius: 0; padding: 0; position: static; width: 100%; }
-.sheet + .sheet { break-before: page; page-break-before: always; }
 .header { display: grid; grid-template-columns: 64px 1fr 220px; gap: 7px; align-items: center; border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px; background: linear-gradient(135deg, rgba(16,185,129,.10), rgba(15,23,42,.02)), white; break-inside: avoid; }
 .logo { width: 52px; height: 52px; border: 1px solid #cbd5e1; border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: #94a3b8; font-size: 9px; font-weight: 900; }
 .logo img { width: 100%; height: 100%; object-fit: contain; padding: 5px; }
@@ -625,6 +611,8 @@ thead { display: table-header-group; }
 tr { break-inside: avoid; page-break-inside: avoid; }
 th { background: #e2e8f0; color: #0f172a; font-size: 10pt; overflow-wrap: anywhere; line-height: 1.18; }
 th.component { background: #d9f3e8; }
+body.wide-matrix th.subject { height: 128px; vertical-align: bottom; text-align: center; }
+body.wide-matrix th.subject .subject-label { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
 th, td { border: 1px solid #cbd5e1; padding: 3px 4px; vertical-align: middle; line-height: 1.25; }
 tr:nth-child(even) td { background: #f8fafc; }
 .num { text-align: right; white-space: nowrap; }
@@ -641,8 +629,13 @@ tr:nth-child(even) td { background: #f8fafc; }
   th, td { padding: 2.5px 3px; }
   .footer { margin-top: 5px; }
 }
-</style></head><body>
-${sheetsHtml}
+</style></head><body class="${useVerticalHeaders ? "wide-matrix" : ""}">
+<div class="sheet">
+  <div class="header"><div class="logo">${logoHtml}</div><div><h1>${escapeHtml(instName)}</h1><div class="meta">${meta || "Document généré par Mon Cahier"}</div></div><div class="side"><div><strong>Classe :</strong> ${escapeHtml(clsLabel(selectedClass))}</div><div><strong>Trimestre :</strong> ${escapeHtml(periodLabel(selectedPeriod))}</div><div><strong>Dates :</strong> ${escapeHtml(formatDateFr(selectedPeriod?.start_date))} - ${escapeHtml(formatDateFr(selectedPeriod?.end_date))}</div></div></div>
+  <div class="title">Matrice des moyennes par matière — liste alphabétique</div>
+  <div class="table-wrap"><table><colgroup><col style="width:3%" /><col style="width:${subjects.length > 10 ? 8 : 11}%" /><col style="width:${subjects.length > 10 ? 19 : 25}%" />${subjectColumns}<col style="width:${subjects.length > 10 ? 6 : 9}%" /><col style="width:${subjects.length > 10 ? 3 : 4}%" /></colgroup><thead><tr><th>N°</th><th>Matricule</th><th>Nom et prénoms</th>${subjectHeaders}<th>Moy. générale</th><th>Rang</th></tr></thead><tbody>${bodyRows}</tbody></table></div>
+  <div class="footer"><strong>${BRAND_SITE}</strong> - ${escapeHtml(BRAND_SLOGAN)}</div>
+</div>
 </body></html>`;
 
     setErrorMsg(null);
