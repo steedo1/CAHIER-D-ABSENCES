@@ -27,21 +27,6 @@ export async function GET(req: NextRequest) {
     }
 
     const srv = getSupabaseServiceClient();
-    const { data: cls, error: classError } = await srv
-      .from("classes")
-      .select("institution_id")
-      .eq("id", result.class.id)
-      .maybeSingle();
-    if (classError || !cls?.institution_id) {
-      return NextResponse.json({ ok: false, error: "CLASS_NOT_FOUND" }, { status: 404 });
-    }
-    const { data: institution, error: schoolError } = await srv
-      .from("institutions")
-      .select("name")
-      .eq("id", cls.institution_id)
-      .maybeSingle();
-    if (schoolError) throw schoolError;
-
     const { data: teacher, error: teacherError } = await srv
       .from("profiles")
       .select("display_name")
@@ -63,7 +48,7 @@ export async function GET(req: NextRequest) {
     }
     const ids = new Set(evaluations.map((ev: any) => String(ev.id)));
     const pdf = await buildAdminRegisterPdf({
-      institution: String(institution?.name || "Établissement scolaire"),
+      institution: String(result.institution_name || "Établissement scolaire"),
       classLabel: String(result.class.label || "Classe"),
       academicYear: String(result.class.academic_year || ""),
       subject: String(result.subject.label || ""),
