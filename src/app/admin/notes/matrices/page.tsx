@@ -606,7 +606,20 @@ function LegacyMatricesTrimestriellesPage() {
     const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8" />
 <title>Matrice trimestrielle - ${escapeHtml(clsLabel(selectedClass))}</title>
 <style>
-@page { size: ${paperSize} landscape; margin: 6mm 7mm 13mm; }
+@page {
+  size: ${paperSize} landscape;
+  margin: 6mm 7mm 13mm;
+  /* Marge dédiée : la signature se répète sans chevauchement sur chaque page. */
+  @bottom-center {
+    content: "${BRAND_SITE} - ${BRAND_SLOGAN}";
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 8pt;
+    font-weight: 700;
+    color: #047857;
+    border-top: .5pt solid #d1d5db;
+    padding-top: 1mm;
+  }
+}
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; color: #111827; background: #fff; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .sheet { width: 100%; }
@@ -633,20 +646,16 @@ tbody tr:nth-child(even) td { background: #f9fafb; }
 .strong { font-weight: 800; color: #065f46; }
 .compact table, .compact .student { font-size: 9pt; }
 .compact td { padding-top: .75pt; padding-bottom: .75pt; line-height: 1.09; }
-.footer { position: fixed; left: 0; right: 0; bottom: -9mm; height: 6.5mm; border-top: .5pt solid #d1d5db; padding-top: 2mm; text-align: center; font-size: 8pt; line-height: 1.1; white-space: nowrap; color: #4b5563; background: #fff; }
-.footer strong { color: #047857; }
 @media print {
   html, body { background: #fff !important; }
   .sheet { margin: 0; padding: 0; }
   thead { display: table-header-group; }
-  .footer { position: fixed; }
 }
 </style></head><body>
 <div class="sheet${compact ? " compact" : ""}">
   <div class="header"><div class="logo">${logoHtml}</div><div><h1>${escapeHtml(instName)}</h1><div class="meta">${meta || "Document généré par Mon Cahier"}</div></div><div class="side"><div><strong>Classe :</strong> ${escapeHtml(clsLabel(selectedClass))}</div><div><strong>Trimestre :</strong> ${escapeHtml(periodLabel(selectedPeriod))}</div><div><strong>Dates :</strong> ${escapeHtml(formatDateFr(selectedPeriod?.start_date))} - ${escapeHtml(formatDateFr(selectedPeriod?.end_date))}</div></div></div>
   <div class="title">Matrice des moyennes par matière — liste alphabétique</div>
   <div class="table-wrap"><table><colgroup><col style="width:2.8%" /><col style="width:8.8%" /><col style="width:24.5%" />${subjectColumns}<col style="width:6.2%" /><col style="width:3.6%" /></colgroup><thead><tr><th>N°</th><th>Matricule</th><th>Nom et prénoms</th>${subjectHeaders}<th>M.G.</th><th>Rang</th></tr></thead><tbody>${bodyRows}</tbody></table></div>
-  <div class="footer"><strong>${BRAND_SITE}</strong> - ${escapeHtml(BRAND_SLOGAN)}</div>
 </div>
 </body></html>`;
 
