@@ -1,3 +1,5 @@
+import { buildAdminRegisterPdf } from "../src/lib/grades/admin-register-pdf.ts";
+import fs from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildGradeRegisterPrintHtml } from "../src/lib/grades/grade-register-print.ts";
@@ -71,4 +73,67 @@ test("un registre sans matricules ne crée pas de colonne matricule inutile", ()
     students: [{ id: "a", full_name: "Élève", matricule: null }],
   });
   assert.doesNotMatch(html, /<th>Matricule<\/th>/);
+});
+
+
+test("PDF admin : vrai fichier téléchargeable avec noms et notes, y compris le primaire arabe", async () => {
+  const pdf = await buildAdminRegisterPdf({
+    institutionName: "EPC Dimbokro",
+    academicYear: "2026-2027",
+    className: "CP2 — Arabe",
+    subjectName: "اللغة العربية",
+    publicationLabel: "Notes publiées",
+    students: [
+      { id: "a", full_name: "TRAORE Ahmed", matricule: "EPC260001" },
+      { id: "b", full_name: "DIALLO Aïcha", matricule: "EPC260002" },
+    ],
+    evaluations: [
+      { id: "ev1", column_label: "Note 1", scale: 10, coeff: 1, eval_date: "2026-11-02", is_published: true },
+      { id: "ev2", column_label: "Note 2", scale: 10, coeff: 1, eval_date: "2026-11-03", is_published: true },
+    ],
+    scores: [
+      { evaluation_id: "ev1", student_id: "a", score: 0 },
+      { evaluation_id: "ev1", student_id: "b", score: 8 },
+      { evaluation_id: "ev2", student_id: "a", score: 9 },
+    ],
+  });
+  assert.ok(Buffer.isBuffer(pdf));
+  assert.match(pdf.subarray(0, 8).toString("ascii"), /^%PDF-/);
+  assert.ok(pdf.length > 3000, "la police et la table sont intégrées");
+});
+
+test("PDF admin : 5 évaluations et 60 élèves répartis sur plusieurs feuilles", async () => {
+  const pdf = await buildAdminRegisterPdf({
+    institutionName: "Mon Cahier", academicYear: "2026-2027",
+    className: "CE1 — Français", subjectName: "EDHC",
+    publicationLabel: "Toutes les notes",
+    students: Array.from({ length: 60 }, (_, i) => ({
+      id: "e" + i, matricule: "EPC26" + String(i).padStart(4, "0"),
+      full_name: "Élève " + String(i).padStart(3, "0"),
+    })),
+    evaluations: Array.from({ length: 5 }, (_, i) => ({
+      id: "n" + i, column_label: "Note " + (i + 1), scale: 10,
+    })),
+    scores: [{ student_id: "e0", evaluation_id: "n0", score: 0 }],
+  });
+  assert.match(pdf.subarray(0, 8).toString("ascii"), /^%PDF-/);
+  assert.ok(pdf.length > 3000);
+});
+
+test("interface admin : notes accessibles sur mobile, vraie exportation PDF et badge Primaire", () => {
+  const page = fs.readFileSync(
+    new URL("../src/app/admin/notes/statistiques/page.tsx", import.meta.url), "utf8",
+  );
+  const route = fs.readFileSync(
+    new URL("../src/app/api/admin/grades/register/export-pdf/route.ts", import.meta.url), "utf8",
+  );
+  assert.match(page, /md:sticky md:right-0/, "la moyenne n'est plus fixe sur téléphone");
+  assert.match(page, /w-\[142px\]/, "largeur élève adaptée au mobile");
+  assert.match(page, /Notes par évaluation/, "instructions de défilement");
+  assert.match(page, /educationTypeLabelOverride=/);
+  assert.match(page, /"Primaire"/);
+  assert.match(page, /Exporter PDF/);
+  assert.match(page, /export-pdf\?/);
+  assert.match(route, /loadAdminRegister\(req\)/, "les notes sont relues via l'API authentifiée");
+  assert.match(route, /Content-Disposition/);
 });
