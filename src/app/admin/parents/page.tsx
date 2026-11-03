@@ -15,6 +15,9 @@ import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import { resolveAttestationSignatories } from "@/lib/franco-arabic-document-signatories";
 import { attestationPhotoUrlForCurrentOrigin } from "@/lib/attestation-photo-url";
 import { documentNationalEmblem } from "@/lib/document-national-emblem";
+import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
+import { isBilingualSchool } from "@/lib/school-student-programs";
+import { buildOrdinaryClassRosterCsv, ordinaryClassRosterCsvFilename } from "@/lib/class-roster-csv";
 import {
   DEFAULT_EDUCATION_SCOPE,
   getClassLevelCode,
@@ -118,6 +121,7 @@ type StudentRow = {
   class_id: string | null;
   class_label: string | null;
   matricule?: string | null;
+  gender?: string | null;
   level?: string | null;
 
   // Champs additionnels compatibles avec le bulletin
@@ -970,6 +974,11 @@ export default function AdminStudentsByClassPage() {
       String(selectedClass.name || selectedClass.label || ""),
     ),
   );
+  // Restrict the new CSV action to ordinary schools, not bilingual programs.
+  // Wait for verified school settings rather than assuming a missing setting
+  // means a school is ordinary during the initial loading state.
+  const ordinarySchoolCsvEnabled = cfg.settings_json != null &&
+    !isBilingualSchool(parseSchoolCyclesSettings(cfg.settings_json));
   const isPrimaryClassSelection = /^(?:MAT|CP[12]|CE[12]|CM[12])$/i.test(
     String(selectedClass?.level || level || "").trim(),
   );
@@ -1504,6 +1513,45 @@ export default function AdminStudentsByClassPage() {
     }
   }
 
+  function exportSelectedOrdinaryClassCsv() {
+    if (!ordinarySchoolCsvEnabled || !classId || !selectedClass || loading) {
+      setMsg("Choisissez une classe d'un établissement ordinaire avant l'export CSV.");
+      return;
+    }
+    // Export the entire loaded class, independently of pagination, checkboxes
+    // and the on-screen search. No extra Supabase/Render request is made.
+    const label = selectedClass.name || selectedClass.label || selectedClass.level || "Classe";
+    const year = academicYear || computeAcademicYearFromDate();
+    try {
+      const { csv, count } = buildOrdinaryClassRosterCsv({
+        classId,
+        classLabel: label,
+        academicYear: year,
+        students,
+      });
+      if (!count) {
+        setMsg("Aucun élève dans cette classe à exporter.");
+        return;
+      }
+      const name = ordinaryClassRosterCsvFilename({
+        institutionName: institutionDisplayName(cfg),
+        classLabel: label,
+        academicYear: year,
+      });
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 3000);
+      setMsg(`Export CSV : ${count} élève${count > 1 ? "s" : ""} de la classe ${label}.`);
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Impossible de générer le fichier CSV.");
+    }
+  }
+
   function openClassListPdf() {
     if (!classId) {
       setMsg("Choisissez d'abord une classe avant d'exporter la liste PDF.");
@@ -1824,6 +1872,18 @@ export default function AdminStudentsByClassPage() {
               >
                 Liste PDF (classe)
               </Button>
+              {ordinarySchoolCsvEnabled ? (
+                <Button
+                  tone="white"
+                  onClick={exportSelectedOrdinaryClassCsv}
+                  disabled={loading || !classId}
+                  title={classId
+                    ? "Exporter tous les élèves de la classe au format CSV (Excel), sans nouvelle requête"
+                    : "Choisissez d'abord une classe"}
+                >
+                  Export CSV (classe)
+                </Button>
+              ) : null}
 
             </div>
           </div>
