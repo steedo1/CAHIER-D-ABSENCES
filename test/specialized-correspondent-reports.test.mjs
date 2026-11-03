@@ -107,3 +107,33 @@ test("printing a specialized report hides other dashboard content and repeats ma
   assert.match(css, /#specialized-correspondent-report/);
   assert.match(css, /display: table-header-group/);
 });
+
+
+test("matrice primaire EPC : les compositions utilisent le calendrier officiel, jamais les trimestres secondaires", () => {
+  const source = read("src/components/admin/SpecializedCorrespondentReports.tsx");
+  const primitive = read("src/lib/server/specialized-bulletin.ts");
+  assert.match(source, /mode === "term" && isPrimaryMatrixClass\(selectedClass\)/);
+  assert.match(source, /\/api\/admin\/institution\/primary-evaluation-events\?/);
+  assert.match(source, /event\.printBulletin && event\.levels\.includes/);
+  assert.match(source, /primaryEvents\.map\(event => <option/);
+  assert.match(source, /params\.set\("primary_event_code", primaryEventCode\)/);
+  assert.match(source, /params\.set\("period_id", period\.id\)/);
+  assert.match(source, /Matrice de composition/);
+  assert.match(source, /Matrice d’examen blanc/);
+  assert.match(source, /Matrice d’évaluation/);
+  assert.match(primitive, /const eventsMode = cycle === "primary" && searchParams\.has\("primary_event_code"\)/);
+  assert.match(primitive, /marker\?\.code !== primaryEvent\.code \|\| marker\.kind !== primaryEvent\.kind/);
+  assert.doesNotMatch(source, /method:\s*["'](?:POST|PUT|PATCH|DELETE)["']/);
+});
+
+test("matrices primaires : barèmes par matière sans toucher aux calculs du secondaire", () => {
+  const source = read("src/components/admin/SpecializedCorrespondentReports.tsx");
+  const expected = "isPrimaryTermMatrix ? item.denominator ?? subjectProgram!.denominator : subjectProgram!.denominator";
+  assert.equal(source.split(expected).length - 1, 2, "aperçu et impression utilisent le bon barème");
+  assert.match(source, /mode === "annual" \? periods\.slice\(0, 12\) : periods\.filter/);
+  assert.match(source, /const subjectProgram = isPrimaryTermMatrix \? entry\.document\[selectedTrack\] : program;/);
+  assert.match(source, /const item = subjectProgram\?\.subjects\.find/, "matières publiées visibles même si le reste est incomplet");
+  assert.match(source, /const program = programFor\(entry, selectedTrack\)/, "rang et moyenne générale exigent des notes complètes");
+  assert.match(source, /PRESCHOOL_QUALITATIVE_STORAGE_REQUIRED/);
+  assert.match(source, /DOCUMENT DE TRAVAIL/);
+});

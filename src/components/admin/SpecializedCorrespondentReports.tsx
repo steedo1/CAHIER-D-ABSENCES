@@ -4,6 +4,7 @@ import DocumentDirectionSignatures from "@/components/DocumentDirectionSignature
 import SchoolReportObservationsPanel from "@/components/admin/SchoolReportObservationsPanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TeachingTrack } from "@/lib/school-cycles";
+import type { PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
 import "./SpecializedCorrespondentReports.print.css";
 
@@ -16,6 +17,11 @@ type SchoolPeriod = {
 type Entry = SpecializedBulletinPayload["documents"][number];
 type Program = NonNullable<Entry["document"]["french"]>;
 type PeriodReport = { period: SchoolPeriod; payload: SpecializedBulletinPayload };
+function isPrimaryMatrixClass(row: SchoolClass | undefined): boolean {
+  return /^(?:CP[12]|CE[12]|CM[12])(?:$|[\s—-])/i.test(
+    String(row?.level || row?.label || "").trim(),
+  );
+}
 const TITLES: Record<Mode, string> = {
   council: "Conseil de classe", term: "Matrice trimestrielle",
   annual: "Matrice annuelle", balance: "Bilan des résultats", unclassified: "Élèves non classés",
@@ -74,6 +80,10 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
   const [classId, setClassId] = useState("");
   const [periods, setPeriods] = useState<SchoolPeriod[]>([]);
   const [periodId, setPeriodId] = useState("");
+  const [primaryEvents, setPrimaryEvents] = useState<PrimaryEvent[]>([]);
+  const [primaryEventCode, setPrimaryEventCode] = useState("");
+  const selectedClass = classes.find(row => row.id === classId);
+  const isPrimaryTermMatrix = mode === "term" && isPrimaryMatrixClass(selectedClass);
   const [track, setTrack] = useState<TeachingTrack>("french");
   const [reports, setReports] = useState<PeriodReport[]>([]);
   const [busy, setBusy] = useState(false);
@@ -93,7 +103,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
     setLoaded(false);
     setLoadedAt("");
     return () => { reportController.current?.abort(); };
-  }, [year, classId, periodId, mode]);
+  }, [year, classId, periodId, primaryEventCode, mode]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -111,27 +121,56 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
     Array.from(new Set(classes.map(row => row.academic_year))).sort().reverse(), [classes]);
   const availableClasses = useMemo(() =>
     classes.filter(row => row.academic_year === year), [classes, year]);
-  useEffect(() => { setClassId(""); setPeriods([]); setPeriodId(""); setReports([]); setLoaded(false); }, [year]);
+  useEffect(() => {
+    setClassId(""); setPeriods([]); setPeriodId("");
+    setPrimaryEvents([]); setPrimaryEventCode("");
+    setReports([]); setLoaded(false);
+  }, [year]);
 
   useEffect(() => {
-    setPeriods([]); setPeriodId(""); setReports([]); setLoaded(false);
+    setPeriods([]); setPeriodId(""); setPrimaryEvents([]); setPrimaryEventCode("");
+    setReports([]); setLoaded(false);
     if (!classId || !year) return;
     const controller = new AbortController();
-    const url = `/api/admin/institution/grading-periods?academic_year=${encodeURIComponent(year)}&class_id=${encodeURIComponent(classId)}`;
-    requestData<{ items?: SchoolPeriod[] }>(url, controller.signal).then(data => {
-      const available = (data.items || []).filter(row =>
-        row.id && row.is_active !== false && row.start_date && row.end_date);
-      setPeriods(available);
-      setPeriodId(available[0]?.id || "");
-    }).catch(err => { if (!controller.signal.aborted) setError(readableError(err)); });
+    if (isPrimaryTermMatrix) {
+      const url = "/api/admin/institution/primary-evaluation-events?" +
+        new URLSearchParams({ academic_year: year, class_id: classId });
+      requestData<{ events?: PrimaryEvent[] }>(url, controller.signal).then(data => {
+        if (controller.signal.aborted) return;
+        const level = String(selectedClass?.level || "").replace(/[\s.-]/g, "").toUpperCase();
+        const available = (data.events || []).filter(event =>
+          event.printBulletin && event.levels.includes(level as any));
+        setPrimaryEvents(available);
+        setPrimaryEventCode(available[0]?.code || "");
+      }).catch(err => { if (!controller.signal.aborted) setError(readableError(err)); });
+    } else {
+      const url = `/api/admin/institution/grading-periods?academic_year=${encodeURIComponent(year)}&class_id=${encodeURIComponent(classId)}`;
+      requestData<{ items?: SchoolPeriod[] }>(url, controller.signal).then(data => {
+        if (controller.signal.aborted) return;
+        const available = (data.items || []).filter(row =>
+          row.id && row.is_active !== false && row.start_date && row.end_date);
+        setPeriods(available);
+        setPeriodId(available[0]?.id || "");
+      }).catch(err => { if (!controller.signal.aborted) setError(readableError(err)); });
+    }
     return () => controller.abort();
-  }, [classId, year]);
+  }, [classId, year, isPrimaryTermMatrix]);
 
   useEffect(() => { setReports([]); setLoaded(false); }, [periodId, mode]);
 
   async function loadReport() {
-    if (!classId || !year || !periodId || busyRef.current) return;
-    const relevant = mode === "annual" ? periods.slice(0, 12) : periods.filter(p => p.id === periodId);
+    if (!classId || !year || busyRef.current ||
+      (isPrimaryTermMatrix ? !primaryEventCode : !periodId)) return;
+    const selectedEvent = primaryEvents.find(event => event.code === primaryEventCode);
+    const relevant: SchoolPeriod[] = isPrimaryTermMatrix
+      ? selectedEvent ? [{
+          id: "MCPE:" + selectedEvent.code,
+          label: selectedEvent.label,
+          code: selectedEvent.code,
+          start_date: selectedEvent.date,
+          end_date: selectedEvent.date,
+        }] : []
+      : mode === "annual" ? periods.slice(0, 12) : periods.filter(p => p.id === periodId);
     if (!relevant.length) return;
     busyRef.current = true;
     const controller = new AbortController();
@@ -141,10 +180,14 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
       // Aucune mutation : lecture fraîche des données officielles sur clic.
       const response: PeriodReport[] = [];
       for (const period of relevant) {
-        const params = new URLSearchParams({
-          class_id: classId, academic_year: year, period_id: period.id,
-          from: period.start_date, to: period.end_date,
-        });
+        const params = new URLSearchParams({ class_id: classId, academic_year: year });
+        if (isPrimaryTermMatrix) {
+          params.set("primary_event_code", primaryEventCode);
+        } else {
+          params.set("period_id", period.id);
+          params.set("from", period.start_date);
+          params.set("to", period.end_date);
+        }
         const data = await requestData<{ specialized?: SpecializedBulletinPayload }>(
           `/api/admin/grades/bulletin?${params}`, controller.signal);
         if (!data.specialized || data.specialized.engine !== "specialized")
@@ -168,8 +211,16 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
     }
   }
 
-  const chosenClass = classes.find(row => row.id === classId);
-  const chosenPeriod = periods.find(row => row.id === periodId);
+  const chosenClass = selectedClass;
+  const chosenEvent = primaryEvents.find(event => event.code === primaryEventCode);
+  const chosenPeriod = isPrimaryTermMatrix
+    ? (chosenEvent ? { label: chosenEvent.label } : null)
+    : periods.find(row => row.id === periodId);
+  const termTitle = isPrimaryTermMatrix
+    ? chosenEvent?.kind === "official" || chosenEvent?.kind === "passage"
+      ? "Matrice de composition"
+      : chosenEvent?.kind === "mock" ? "Matrice d’examen blanc" : "Matrice d’évaluation"
+    : TITLES[mode];
   const supportedTracks = useMemo(() => Array.from(new Set(reports.flatMap(r => r.payload.programs))), [reports]);
   const selectedTrack = supportedTracks.includes(track) ? track : supportedTracks[0] || track;
   const first = reports[0]?.payload;
@@ -221,10 +272,11 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
       <div className="text-xs font-semibold uppercase tracking-widest text-emerald-700">
         Correspondant Fichier · Enseignements franco-arabes
       </div>
-      <h1 className="mt-1 text-2xl font-bold text-slate-900">{TITLES[mode]}</h1>
+      <h1 className="mt-1 text-2xl font-bold text-slate-900">{termTitle}</h1>
       <p className="mt-2 text-sm text-slate-600">
         Les résultats proviennent des notes officiellement publiées. Français et arabe restent
         indépendants, y compris pour les rangs, matières et barèmes.
+        {isPrimaryTermMatrix ? " Le primaire est présenté par composition ou évaluation, sans trimestre artificiel." : ""}
       </p>
     </header>
     <div className="grid gap-3 rounded-xl border bg-white p-4 print:hidden sm:grid-cols-2 lg:grid-cols-4">
@@ -243,23 +295,38 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
           </option>)}
         </select>
       </label>
-      <label className="text-sm">Période
-        <select aria-label="Période" className="mt-1 w-full rounded-lg border p-2" value={periodId}
-          onChange={e => setPeriodId(e.target.value)} disabled={!classId}>
-          <option value="">— Choisir une période —</option>
-          {periods.map(item => <option key={item.id} value={item.id}>{item.label || item.code || item.id}</option>)}
-        </select>
-      </label>
+      {isPrimaryTermMatrix ? (
+        <label className="text-sm">Composition / évaluation
+          <select aria-label="Composition / évaluation" className="mt-1 w-full rounded-lg border p-2"
+            value={primaryEventCode} onChange={e => setPrimaryEventCode(e.target.value)} disabled={!classId}>
+            <option value="">— Choisir une composition —</option>
+            {primaryEvents.map(event => <option key={event.code} value={event.code}>
+              {event.label} · {event.date.split("-").reverse().join("/")}
+            </option>)}
+          </select>
+        </label>
+      ) : (
+        <label className="text-sm">Période
+          <select aria-label="Période" className="mt-1 w-full rounded-lg border p-2" value={periodId}
+            onChange={e => setPeriodId(e.target.value)} disabled={!classId}>
+            <option value="">— Choisir une période —</option>
+            {periods.map(item => <option key={item.id} value={item.id}>{item.label || item.code || item.id}</option>)}
+          </select>
+        </label>
+      )}
       <div className="flex items-end">
-        <button type="button" disabled={busy || !classId || !periodId}
+        <button type="button" disabled={busy || !classId || (isPrimaryTermMatrix ? !primaryEventCode : !periodId)}
           className="w-full rounded-lg bg-emerald-700 p-2.5 font-semibold text-white disabled:opacity-50"
           onClick={() => void loadReport()}>{busy ? "Chargement…" : "Afficher les résultats"}</button>
       </div>
     </div>
     {error && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 print:hidden">{error}</p>}
-    {classId && !periods.length && !error && <p className="text-sm text-slate-600 print:hidden">
-      Aucune période disponible pour cette classe : les bulletins et les rapports ne peuvent pas être calculés.
-    </p>}
+    {classId && (isPrimaryTermMatrix ? !primaryEvents.length : !periods.length) && !error &&
+      <p className="text-sm text-slate-600 print:hidden">
+        {isPrimaryTermMatrix
+          ? "Aucune composition ou évaluation configurée pour cette classe. Vérifiez le calendrier du primaire."
+          : "Aucune période disponible pour cette classe : les bulletins et les rapports ne peuvent pas être calculés."}
+      </p>}
     {loaded && !!reports.length && <div className="space-y-4">
       {loadedAt && <p className="text-xs text-slate-600 print:hidden">
         Résultats chargés le {new Date(loadedAt).toLocaleString("fr-FR")}. Cliquez à nouveau sur « Afficher les résultats » après toute publication de notes.
@@ -298,7 +365,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
         <div className="border-b pb-3 text-center">
           <p className="text-sm font-semibold">RÉPUBLIQUE DE CÔTE D’IVOIRE</p>
           <p className="text-xs">Union - Discipline - Travail</p>
-          <h2 className="mt-3 text-lg font-bold uppercase">{TITLES[mode]} · {TRACK_LABELS[selectedTrack]}</h2>
+          <h2 className="mt-3 text-lg font-bold uppercase">{termTitle} · {TRACK_LABELS[selectedTrack]}</h2>
           <p className="text-sm">{chosenClass?.label} · {year} · {mode === "annual" ? "Toutes les périodes" : chosenPeriod?.label}</p>
           <p className="text-xs font-semibold text-amber-800">DOCUMENT DE TRAVAIL — N’EST PAS UN BULLETIN OFFICIEL</p>
         </div>
@@ -339,9 +406,12 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
                 return <tr key={entry.studentId} className="border-b">
                   <td className="p-2 font-semibold">{studentName(entry)}</td>
                   {mode === "term" && subjects.map(subject => {
-                    const item = program?.subjects.find(s => s.id === subject.id);
+                    // Les matières déjà publiées restent visibles dans un document de travail
+                    // même si la composition entière n'est pas encore complète.
+                    const subjectProgram = isPrimaryTermMatrix ? entry.document[selectedTrack] : program;
+                    const item = subjectProgram?.subjects.find(s => s.id === subject.id);
                     return <td key={subject.id} className="p-2 text-center">
-                      {item ? formatScore(item.average, program!.denominator) : "—"}
+                      {item ? formatScore(item.average, isPrimaryTermMatrix ? item.denominator ?? subjectProgram!.denominator : subjectProgram!.denominator) : "—"}
                     </td>;
                   })}
                   {mode === "annual" && reports.map(report => {
@@ -370,7 +440,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
           <div className="specialized-term-pages hidden print:block">
             <section className="specialized-term-sheet">
               <h3>
-                {TITLES.term} · {TRACK_LABELS[selectedTrack]} · {chosenClass?.label} · {chosenPeriod?.label}
+                {termTitle} · {TRACK_LABELS[selectedTrack]} · {chosenClass?.label} · {chosenPeriod?.label}
               </h3>
               <table className="specialized-term-table">
                 <colgroup>
@@ -391,9 +461,12 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
                     return <tr key={entry.studentId}>
                       <td className="student-name">{studentName(entry)}</td>
                       {subjects.map(subject => {
-                        const item = program?.subjects.find(s => s.id === subject.id);
+                        // Les matières déjà publiées restent visibles dans un document de travail
+                    // même si la composition entière n'est pas encore complète.
+                    const subjectProgram = isPrimaryTermMatrix ? entry.document[selectedTrack] : program;
+                    const item = subjectProgram?.subjects.find(s => s.id === subject.id);
                         return <td key={subject.id}>
-                          {item ? formatScore(item.average, program!.denominator) : "—"}
+                          {item ? formatScore(item.average, isPrimaryTermMatrix ? item.denominator ?? subjectProgram!.denominator : subjectProgram!.denominator) : "—"}
                         </td>;
                       })}
                       <td>{program ? formatScore(program.generalAverage, program.denominator) : "—"}</td>
