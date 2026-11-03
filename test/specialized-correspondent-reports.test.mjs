@@ -112,7 +112,7 @@ test("printing a specialized report hides other dashboard content and repeats ma
 test("matrice primaire EPC : les compositions utilisent le calendrier officiel, jamais les trimestres secondaires", () => {
   const source = read("src/components/admin/SpecializedCorrespondentReports.tsx");
   const primitive = read("src/lib/server/specialized-bulletin.ts");
-  assert.match(source, /mode === "term" && isPrimaryGradeRegisterClass\(selectedClass\)/);
+  assert.match(source, /mode === "term" && isPrimaryMatrixClass\(selectedClass\)/);
   assert.match(source, /\/api\/admin\/institution\/primary-evaluation-events\?/);
   assert.match(source, /event\.printBulletin && event\.levels\.includes/);
   assert.match(source, /primaryEvents\.map\(event => <option/);
