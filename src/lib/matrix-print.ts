@@ -35,6 +35,8 @@ const ABBREVIATIONS: Array<[RegExp, string]> = [
   [/^(CONDUITE|MOYENNE DE CONDUITE)$/, "COND"],
   [/^GRAMMAIRE$/, "GRAM"],
   [/^CONJUGAISON$/, "CONJ"],
+  // Intitulé « Orthographe-Grammaire » : colonne courte demandée en A4.
+  [/^(ORTHOGRAPHE GRAMMAIRE|ORTHOGRAPHE ET GRAMMAIRE|ORT GRA|ORTH GRA|ORT GRAM|ORTH GRAM)$/, "GR"],
   [/^ORTHOGRAPHE$/, "ORTH"],
   [/^LECTURE$/, "LECT"],
   [/^DICTEE$/, "DICT"],

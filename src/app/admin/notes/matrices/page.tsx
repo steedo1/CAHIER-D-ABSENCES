@@ -5,7 +5,7 @@ import { useBilingualCorrespondentMode } from "@/hooks/useBilingualCorrespondent
 
 
 import React, { useEffect, useMemo, useState } from "react";
-import { matrixPrintStudentName, matrixPrintSubjectLabel } from "@/lib/matrix-print";
+import { matrixPrintSubjectLabel } from "@/lib/matrix-print";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import {
   DEFAULT_EDUCATION_SCOPE,
@@ -580,24 +580,25 @@ function LegacyMatricesTrimestriellesPage() {
 
     // Toutes les matières et sous-matières restent dans le même tableau.
     // On préfère le A4 paysage quand il reste lisible, sans jamais scinder les colonnes.
-    const paperSize = subjects.length > 20 ? "A2" : subjects.length > 13 ? "A3" : "A4";
-    const paperWidthMm = paperSize === "A2" ? 594 : paperSize === "A3" ? 420 : 297;
-    const printableWidthPx = ((paperWidthMm - 14) * 96) / 25.4;
-    const nameWidthPx = printableWidthPx * 0.18 - 8;
-    const nameContext = document.createElement("canvas").getContext("2d");
-    if (nameContext) nameContext.font = "800 14.7px Arial, sans-serif";
-    const measureName = (text: string) => nameContext?.measureText(text).width ?? text.length * 8;
-    const subjectSpace = 61;
+    // Une véritable mise en page A4 paysage pour les matrices scolaires usuelles.
+    // Les classes comportant exceptionnellement plus de 16 matières utilisent un
+    // papier plus large plutôt que de rendre les notes illisibles.
+    const paperSize = subjects.length > 24 ? "A2" : subjects.length > 16 ? "A3" : "A4";
+    const subjectSpace = 54.1;
+    const compact = rows.length >= 24;
     const subjectColumns = subjects.map(() => `<col style="width:${(subjectSpace / Math.max(1, subjects.length)).toFixed(3)}%" />`).join("");
     const subjectHeaders = subjects.map((subject) => {
       const fullLabel = subject.subject_name || "Matière";
       const isComponent = subject.subject_id.startsWith("__matrice_component__:");
-      return `<th class="subject ${isComponent ? "component" : ""}" title="${escapeHtml(fullLabel)}"><span class="subject-label">${escapeHtml(matrixPrintSubjectLabel(fullLabel))}</span></th>`;
+      // La couleur distingue déjà les sous-matières : supprimer la flèche
+      // évite les sauts de ligne disgracieux dans les colonnes étroites.
+      const printLabel = matrixPrintSubjectLabel(fullLabel).replace(/^[↳↪→]\s*/u, "");
+      return `<th class="subject ${isComponent ? "component" : ""}" title="${escapeHtml(fullLabel)}"><span class="subject-label">${escapeHtml(printLabel)}</span></th>`;
     }).join("");
     const bodyRows = rows.map((row, idx) => `<tr>
         <td class="num">${idx + 1}</td>
         <td class="matricule">${escapeHtml(row.matricule || "")}</td>
-        <td class="student" title="${escapeHtml(row.full_name)}">${escapeHtml(matrixPrintStudentName(row, nameWidthPx, measureName))}</td>
+        <td class="student">${escapeHtml(row.full_name)}</td>
         ${subjects.map((s) => `<td class="num">${escapeHtml(formatAvg(row.averages[s.subject_id]))}</td>`).join("")}
         <td class="num strong">${escapeHtml(formatAvg(row.general_avg))}</td>
         <td class="num strong">${escapeHtml(row.rank ?? "NC")}</td>
@@ -605,48 +606,56 @@ function LegacyMatricesTrimestriellesPage() {
     const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8" />
 <title>Matrice trimestrielle - ${escapeHtml(clsLabel(selectedClass))}</title>
 <style>
-@page { size: ${paperSize} landscape; margin: 7mm; }
+@page {
+  size: ${paperSize} landscape;
+  margin: 6mm 7mm 13mm;
+  /* Marge dédiée : la signature se répète sans chevauchement sur chaque page. */
+  @bottom-center {
+    content: "${BRAND_SITE} - ${BRAND_SLOGAN}";
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 8pt;
+    font-weight: 700;
+    color: #047857;
+    border-top: .5pt solid #d1d5db;
+    padding-top: 1mm;
+  }
+}
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; color: #0f172a; background: #f8fafc; font-family: Inter, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-body { padding: 0; }
-.sheet { background: #fff; border: 0; border-radius: 0; padding: 0; position: static; width: 100%; }
-.header { display: grid; grid-template-columns: 60px 1fr 205px; gap: 6px; align-items: center; border-bottom: 1px solid #94a3b8; padding: 4px 0; background: white; break-inside: avoid; }
-.logo { width: 52px; height: 52px; border: 1px solid #cbd5e1; border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: #94a3b8; font-size: 9px; font-weight: 900; }
-.logo img { width: 100%; height: 100%; object-fit: contain; padding: 5px; }
-h1 { margin: 0; font-size: 15pt; text-transform: uppercase; }
-.meta { margin-top: 3px; color: #475569; font-size: 10pt; line-height: 1.25; }
-.side { border-left: 1px solid #cbd5e1; padding-left: 7px; font-size: 10pt; line-height: 1.3; color: #334155; }
-.side strong { color: #0f172a; }
-.title { margin: 5px 0; padding: 3px 0 5px; border-bottom: 1px solid #94a3b8; background: white; color: #0f172a; font-weight: 900; text-align: center; text-transform: uppercase; font-size: 12pt; break-after: avoid; }
+html, body { margin: 0; padding: 0; color: #111827; background: #fff; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.sheet { width: 100%; }
+.header { display: grid; grid-template-columns: 42px minmax(0, 1fr) 173px; gap: 7px; align-items: center; padding: 0 0 3px; border-bottom: 1px solid #9ca3af; break-inside: avoid; }
+.logo { width: 40px; height: 40px; border: 1px solid #d1d5db; border-radius: 3px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: #6b7280; font-size: 8pt; font-weight: 700; }
+.logo img { display: block; width: 100%; height: 100%; object-fit: contain; padding: 2px; }
+h1 { margin: 0; font-size: 11.6pt; line-height: 1.08; text-transform: uppercase; overflow-wrap: anywhere; }
+.meta { margin-top: 2px; color: #4b5563; font-size: 8.1pt; line-height: 1.15; overflow-wrap: anywhere; }
+.side { border-left: 1px solid #d1d5db; padding-left: 6px; font-size: 8.4pt; line-height: 1.2; color: #374151; }
+.side strong { color: #111827; }
+.title { margin: 3px 0 4px; padding: 1px 0 3px; border-bottom: 1px solid #d1d5db; font-weight: 800; text-align: center; text-transform: uppercase; font-size: 10.4pt; break-after: avoid; }
 .table-wrap { overflow: visible; }
-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 11pt; }
+table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 9.3pt; }
 thead { display: table-header-group; }
 tr { break-inside: avoid; page-break-inside: avoid; }
-th { background: #f1f5f9; color: #0f172a; font-size: 10.5pt; overflow-wrap: anywhere; line-height: 1.2; text-align: center; }
-th.component { background: #d9f3e8; }
-th.subject .subject-label { display: inline-block; white-space: normal; overflow-wrap: anywhere; font-weight: 800; }
-th, td { border: 1px solid #94a3b8; padding: 3px 2px; vertical-align: middle; line-height: 1.22; }
-tr:nth-child(even) td { background: #f8fafc; }
-.num { text-align: center; white-space: nowrap; }
-.student { font-weight: 800; white-space: normal; overflow-wrap: anywhere; font-size: 11pt; text-align: left; }
-.matricule { overflow-wrap: anywhere; }
-.strong { font-weight: 950; color: #064e3b; }
-.footer { position: static; margin-top: 7px; border-top: 1px solid #cbd5e1; padding-top: 4px; text-align: center; font-size: 9.5pt; color: #475569; break-inside: avoid; }
-.footer strong { color: #047857; }
+th, td { border: .55pt solid #9ca3af; padding: 1.1pt 1.3pt; vertical-align: middle; line-height: 1.13; }
+th { background: #f3f4f6; color: #111827; font-size: 8.7pt; line-height: 1.08; white-space: nowrap; padding: 2pt .8pt; text-align: center; font-weight: 800; }
+th.component { background: #e5f5ec; }
+th.subject .subject-label { display: inline-block; white-space: nowrap; font-weight: 800; }
+tbody tr:nth-child(even) td { background: #f9fafb; }
+.num { text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; letter-spacing: -.012em; }
+.student { font-weight: 700; font-size: 9.3pt; white-space: normal; word-break: normal; overflow-wrap: anywhere; text-align: left; }
+.matricule { font-size: 8.8pt; text-align: center; white-space: nowrap; letter-spacing: -.015em; font-variant-numeric: tabular-nums; }
+.strong { font-weight: 800; color: #065f46; }
+.compact table, .compact .student { font-size: 9pt; }
+.compact td { padding-top: .75pt; padding-bottom: .75pt; line-height: 1.09; }
 @media print {
-  html, body { margin: 0 !important; padding: 0 !important; background: white !important; }
-  .sheet { border: 0; border-radius: 0; padding: 0; margin: 0; min-height: 0; }
-  .header { padding: 5px; }
-  .title { margin: 4px 0; }
-  th, td { padding: 2.5px 3px; }
-  .footer { margin-top: 5px; }
+  html, body { background: #fff !important; }
+  .sheet { margin: 0; padding: 0; }
+  thead { display: table-header-group; }
 }
 </style></head><body>
-<div class="sheet">
+<div class="sheet${compact ? " compact" : ""}">
   <div class="header"><div class="logo">${logoHtml}</div><div><h1>${escapeHtml(instName)}</h1><div class="meta">${meta || "Document généré par Mon Cahier"}</div></div><div class="side"><div><strong>Classe :</strong> ${escapeHtml(clsLabel(selectedClass))}</div><div><strong>Trimestre :</strong> ${escapeHtml(periodLabel(selectedPeriod))}</div><div><strong>Dates :</strong> ${escapeHtml(formatDateFr(selectedPeriod?.start_date))} - ${escapeHtml(formatDateFr(selectedPeriod?.end_date))}</div></div></div>
   <div class="title">Matrice des moyennes par matière — liste alphabétique</div>
-  <div class="table-wrap"><table><colgroup><col style="width:3%" /><col style="width:8%" /><col style="width:18%" />${subjectColumns}<col style="width:7%" /><col style="width:3%" /></colgroup><thead><tr><th>N°</th><th>Matricule</th><th>Nom et prénoms</th>${subjectHeaders}<th>M.G.</th><th>Rang</th></tr></thead><tbody>${bodyRows}</tbody></table></div>
-  <div class="footer"><strong>${BRAND_SITE}</strong> - ${escapeHtml(BRAND_SLOGAN)}</div>
+  <div class="table-wrap"><table><colgroup><col style="width:2.8%" /><col style="width:8.8%" /><col style="width:24.5%" />${subjectColumns}<col style="width:6.2%" /><col style="width:3.6%" /></colgroup><thead><tr><th>N°</th><th>Matricule</th><th>Nom et prénoms</th>${subjectHeaders}<th>M.G.</th><th>Rang</th></tr></thead><tbody>${bodyRows}</tbody></table></div>
 </div>
 </body></html>`;
 
