@@ -140,8 +140,8 @@
     padding: 2px 3px;
   }
 
-  /* EPC primaire : un A4 paysage lisible, sans agrandir en A3/A2.
-     On répartit les colonnes entre plusieurs tableaux, jamais les barèmes. */
+  /* EPC primaire : A4 paysage et une seule grille avec TOUTES les matières.
+     Seules les lignes d'élèves peuvent continuer sur la page suivante. */
   #specialized-correspondent-report.specialized-primary-matrix {
     page: specializedMatrixLandscape;
   }
@@ -223,21 +223,38 @@
     font-size: 10.5pt !important;
   }
 
-  /* Garde une vraie police de 10–10,5 pt, mais retire seulement le
-     rembourrage excessif qui provoquait une page supplémentaire de 1 élève. */
+  /* Abréviations et notes compactes, sans descendre à 7–8 px. */
   #specialized-correspondent-report .specialized-primary-table th,
   #specialized-correspondent-report .specialized-primary-table td {
-    padding: 2px 4px !important;
-    line-height: 1.15 !important;
+    padding: 2px 1px !important;
+    line-height: 1.12 !important;
   }
 
   #specialized-correspondent-report .specialized-primary-table th {
-    font-size: 10pt !important;
+    font-size: 9.5pt !important;
     overflow-wrap: anywhere;
     white-space: normal;
   }
 
+  #specialized-correspondent-report .specialized-primary-table th:first-child,
+  #specialized-correspondent-report .specialized-primary-table td.student-name {
+    padding: 2px 4px !important;
+  }
+
+  #specialized-correspondent-report .specialized-primary-table .subject-label,
+  #specialized-correspondent-report .specialized-primary-table .subject-denominator {
+    display: block;
+    line-height: 1.05;
+  }
+
+  #specialized-correspondent-report .specialized-primary-table .subject-denominator {
+    font-size: 9pt;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
   #specialized-correspondent-report .specialized-primary-table td {
+    font-size: 10pt !important;
     font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
   }
