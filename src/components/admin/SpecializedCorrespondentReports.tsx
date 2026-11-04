@@ -508,8 +508,8 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
               </section>;
             })}
           </div>
-        ) : (
-                      <div className="specialized-term-pages hidden print:block">
+        ) : mode === "term" ? (
+          <div className="specialized-term-pages hidden print:block">
               <section className="specialized-term-sheet">
                 <h3>
                   {termTitle} · {TRACK_LABELS[selectedTrack]} · {chosenClass?.label} · {chosenPeriod?.label}
@@ -549,9 +549,8 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
                   </tbody>
                 </table>
               </section>
-            </div>
-  
-        )}
+          </div>
+        ) : null}
         <DocumentDirectionSignatures className="mt-4" signatories={[{
           track: selectedTrack, title: "Directeur",
           name: reports.flatMap(report => report.payload.documents).find(entry =>
