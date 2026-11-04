@@ -145,7 +145,8 @@ test("EPC primaire : les notes publiées, y compris zéro, sont imprimables sans
   assert.match(source, /typeof subject\.average === "number" && Number\.isFinite\(subject\.average\)/);
   assert.match(source, /const printable = isPrimaryTermMatrix \? primaryPrintHasMarks/);
   assert.match(source, /isAllComplete\(reports, selectedTrack\) && unique\.length > 0/, "les autres documents gardent leurs règles");
-  assert.match(source, /item\?\.average == null \? ""/, "une absence n'est pas une note zéro");
+  assert.match(source, /primaryMatrixPrintScore\(item\?\.average/,
+    "une absence n'est pas une note zéro et les cellules sont compactes");
   assert.match(source, /formatScore\(item\.average, item\.denominator \?\? subjectProgram!\.denominator\)/,
     "ne jamais changer le barème réel de la matière");
   assert.match(source, /program \? formatScore\(program\.generalAverage, program\.denominator\) : ""/,
