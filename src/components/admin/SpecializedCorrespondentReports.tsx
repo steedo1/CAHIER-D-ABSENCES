@@ -62,6 +62,49 @@ function formatScore(value: number | null | undefined, denominator: number | nul
   if (!denominator || !Number.isFinite(denominator)) return "—";
   return `${value.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / ${denominator}`;
 }
+// Titres compacts réservés à l'impression A4 ; les libellés officiels restent inchangés.
+function primaryMatrixShortName(name: string): string {
+  const key = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/['’]/g, " ").replace(/[^a-z0-9\u0600-\u06ff]+/g, " ").trim();
+  const known: Record<string, string> = {
+    "lecture": "LECT", "lecture comprehension": "LEC/COMP",
+    "ecriture copie": "ÉCR", "ecriture": "ÉCR", "copie": "COP",
+    "orthographe dictee": "ORTH/DICT", "orthographe grammaire": "GR",
+    "orthographe": "ORTH", "dictee": "DICT", "grammaire": "GR",
+    "expression ecrite": "EX.ÉCR", "exploitation de texte": "EXPL.TXT",
+    "eveil au milieu": "ÉVEIL", "mathematiques": "MATH",
+    "calcul": "CALC", "problemes": "PROB", "geometrie": "GÉOM",
+    "chant poeme": "CH/PO", "chant poesie": "CH/PO",
+    "dessin": "DESS", "edhc": "EDHC", "eps": "EPS",
+    "education physique et sportive": "EPS",
+    "education aux droits de l homme et a la citoyennete": "EDHC",
+    "القرآن الكريم": "ق.ك", "اللغة العربية": "عربي",
+    "التربية الاسلامية": "ت.إ", "الفقه": "فقه",
+    "التوحيد": "توح", "السيرة النبوية": "سيرة",
+    "الحديث الشريف": "حديث", "الخط العربي": "خط",
+    "الاملاء": "إملاء", "القراءة": "قراءة",
+  };
+  if (known[key]) return known[key];
+  if (name.trim().length <= 9) return name.trim();
+  const tokens = name.trim().split(/[\s/–-]+/).filter(Boolean);
+  // Aucun intitulé inconnu n'est supprimé : abréviation initiale + libellé complet dans title.
+  const initials = tokens.filter(token => !/^(de|du|des|la|le|les|et|a|au|aux)$/i.test(token))
+    .map(token => token.slice(0, 1).toLocaleUpperCase("fr-FR")).join(".");
+  return initials || name.trim();
+}
+function primaryMatrixNumber(value: number): string {
+  return value.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+}
+function primaryMatrixPrintScore(
+  value: number | null | undefined, denominator: number | null | undefined, headerDenominator: number | null,
+): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  const number = primaryMatrixNumber(value);
+  // Si les barèmes varient effectivement d'un élève à l'autre, les montrer dans chaque cellule.
+  return denominator && Number.isFinite(denominator) && denominator !== headerDenominator
+    ? number + "/" + primaryMatrixNumber(denominator) : number;
+}
+
 function isAllComplete(reports: PeriodReport[], track: TeachingTrack) {
   return reports.length > 0 && reports.every(({ payload }) =>
     payload.documents.length > 0 && payload.documents.every(entry =>
@@ -270,19 +313,28 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
     entry.document[selectedTrack]?.subjects.some(subject =>
       typeof subject.average === "number" && Number.isFinite(subject.average)));
   const primaryPrintIsPartial = isPrimaryTermMatrix && !isAllComplete(reports, selectedTrack);
-  const primaryPrintGroups = isPrimaryTermMatrix
-    ? Array.from({ length: Math.ceil(subjects.length / 6) },
-        (_, index) => subjects.slice(index * 6, index * 6 + 6))
+  // Une matière = une colonne : jamais de répartition des matières en plusieurs blocs.
+  // Le barème est affiché dans l'en-tête lorsqu'il est commun à la classe.
+  const primaryPrintSubjects = isPrimaryTermMatrix ? subjects.map(subject => {
+    const scales = new Set<number>();
+    for (const entry of display) {
+      const teaching = entry.document[selectedTrack];
+      const item = teaching?.subjects.find(row => row.id === subject.id);
+      if (item?.average == null) continue;
+      const denominator = item.denominator ?? teaching?.denominator;
+      if (typeof denominator === "number" && Number.isFinite(denominator) && denominator > 0) {
+        scales.add(denominator);
+      }
+    }
+    return { ...subject, shortName: primaryMatrixShortName(subject.name),
+      denominator: scales.size === 1 ? [...scales][0] : null };
+  }) : [];
+  // Comme les listes de classe EPC, seules les LIGNES des élèves se poursuivent.
+  const primaryPrintSheets = isPrimaryTermMatrix
+    ? Array.from({ length: Math.max(1, Math.ceil(display.length / 24)) }, (_, sheetIndex) => ({
+        rows: display.slice(sheetIndex * 24, sheetIndex * 24 + 24),
+      }))
     : [];
-  // Comme les listes de classe EPC : un nombre défini d'élèves par feuille
-  // empêche une feuille presque vide après une première page surchargée.
-  const primaryPrintSheets = primaryPrintGroups.flatMap((group, groupIndex) => {
-    const pages = Math.max(1, Math.ceil(display.length / 24));
-    return Array.from({ length: pages }, (_, sheetIndex) => ({
-      group, groupIndex, rows: display.slice(sheetIndex * 24, sheetIndex * 24 + 24),
-      lastGroup: groupIndex === primaryPrintGroups.length - 1,
-    }));
-  });
   const institutionName = first?.documents[0]?.document.school?.name || "Établissement scolaire";
   const printable = isPrimaryTermMatrix ? primaryPrintHasMarks :
     mode === "unclassified" ? reports.length > 0 :
@@ -467,7 +519,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
 
         {isPrimaryTermMatrix && mode === "term" ? (
           <div className="specialized-term-pages hidden print:block">
-            {primaryPrintSheets.map(({ group, groupIndex, rows, lastGroup }, index) => {
+            {primaryPrintSheets.map(({ rows }, index) => {
               return <section key={index} className="specialized-term-sheet specialized-primary-sheet"
                 dir={selectedTrack === "arabic" ? "rtl" : undefined}>
                 <header className="specialized-primary-header">
@@ -475,21 +527,24 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
                   <h3>{termTitle} · {TRACK_LABELS[selectedTrack]}</h3>
                   <p>{chosenClass?.label} · {year} · {chosenPeriod?.label}</p>
                   <p>DOCUMENT DE TRAVAIL — NOTES PUBLIÉES{primaryPrintIsPartial ? " — RÉSULTATS EN COURS" : ""}</p>
-                  <p>Matières {groupIndex * 6 + 1} à {groupIndex * 6 + group.length} sur {subjects.length}</p>
                 </header>
                 <table className="specialized-term-table specialized-primary-table">
                   <colgroup>
-                    <col style={{ width: "25%" }} />
-                    {group.map(subject => <col key={subject.id}
-                      style={{ width: `${(lastGroup ? 55 : 75) / group.length}%` }} />)}
-                    {lastGroup && <><col style={{ width: "8%" }} /><col style={{ width: "5%" }} /><col style={{ width: "7%" }} /></>}
+                    <col style={{ width: "28%" }} />
+                    {primaryPrintSubjects.map(subject => <col key={subject.id}
+                      style={{ width: `${(57 / Math.max(1, primaryPrintSubjects.length)).toFixed(3)}%` }} />)}
+                    <col style={{ width: "7%" }} /><col style={{ width: "3%" }} /><col style={{ width: "5%" }} />
                   </colgroup>
                   <thead><tr>
                     <th>Élève</th>
-                    {group.map(subject => <th className="subject-heading" key={subject.id}>
-                      <span className="subject-label">{subject.name}</span>
+                    {primaryPrintSubjects.map(subject => <th className="subject-heading" key={subject.id}
+                      title={subject.name}>
+                      <span className="subject-label">{subject.shortName}</span>
+                      {subject.denominator !== null && <span className="subject-denominator">
+                        /{primaryMatrixNumber(subject.denominator)}
+                      </span>}
                     </th>)}
-                    {lastGroup && <><th>Moyenne</th><th>Rang</th><th>Statut</th></>}
+                    <th>Moy.</th><th>Rg</th><th>État</th>
                   </tr></thead>
                   <tbody>
                     {rows.map(entry => {
@@ -497,18 +552,16 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
                       const subjectProgram = entry.document[selectedTrack];
                       return <tr key={entry.studentId}>
                         <td className="student-name">{studentName(entry)}</td>
-                        {group.map(subject => {
+                        {primaryPrintSubjects.map(subject => {
                           const item = subjectProgram?.subjects.find(row => row.id === subject.id);
                           return <td key={subject.id}>
-                            {item?.average == null ? "" :
-                              formatScore(item.average, item.denominator ?? subjectProgram!.denominator)}
+                            {primaryMatrixPrintScore(item?.average,
+                              item?.denominator ?? subjectProgram?.denominator, subject.denominator)}
                           </td>;
                         })}
-                        {lastGroup && <>
-                          <td>{program ? formatScore(program.generalAverage, program.denominator) : ""}</td>
-                          <td>{program?.rank ?? ""}</td>
-                          <td>{program ? "Complet" : "En cours"}</td>
-                        </>}
+                        <td>{program ? formatScore(program.generalAverage, program.denominator) : ""}</td>
+                        <td>{program?.rank ?? ""}</td>
+                        <td>{program ? "OK" : "—"}</td>
                       </tr>;
                     })}
                   </tbody>
