@@ -137,3 +137,39 @@ test("matrices primaires : barèmes par matière sans toucher aux calculs du sec
   assert.match(source, /PRESCHOOL_QUALITATIVE_STORAGE_REQUIRED/);
   assert.match(source, /DOCUMENT DE TRAVAIL/);
 });
+
+
+test("EPC primaire : les notes publiées, y compris zéro, sont imprimables sans exiger 11 matières", () => {
+  const source = read("src/components/admin/SpecializedCorrespondentReports.tsx");
+  assert.match(source, /const primaryPrintHasMarks = isPrimaryTermMatrix && current\.some/);
+  assert.match(source, /typeof subject\.average === "number" && Number\.isFinite\(subject\.average\)/);
+  assert.match(source, /const printable = isPrimaryTermMatrix \? primaryPrintHasMarks/);
+  assert.match(source, /isAllComplete\(reports, selectedTrack\) && unique\.length > 0/, "les autres documents gardent leurs règles");
+  assert.match(source, /item\?\.average == null \? ""/, "une absence n'est pas une note zéro");
+  assert.match(source, /formatScore\(item\.average, item\.denominator \?\? subjectProgram!\.denominator\)/,
+    "ne jamais changer le barème réel de la matière");
+  assert.match(source, /program \? formatScore\(program\.generalAverage, program\.denominator\) : ""/,
+    "aucune moyenne non validée n'est ajoutée");
+  assert.match(source, /program\?\.rank \?\? ""/, "aucun rang non validé n'est inventé");
+  assert.match(source, /DOCUMENT DE TRAVAIL — NOTES PUBLIÉES/);
+  assert.doesNotMatch(source, /method:\s*["'](?:POST|PUT|PATCH|DELETE)["']/);
+});
+
+test("EPC primaire : l'impression passe en A4 paysage lisible et conserve les enseignements séparés", () => {
+  const source = read("src/components/admin/SpecializedCorrespondentReports.tsx");
+  const css = read("src/components/admin/SpecializedCorrespondentReports.print.css");
+  assert.match(source, /Array\.from\(\{ length: Math\.ceil\(subjects\.length \/ 6\) \}/,
+    "6 matières au maximum par tableau, sans diminuer la police");
+  assert.match(source, /primaryPrintGroups\.map\(\(group, index\)/);
+  assert.match(source, /selectedTrack === "arabic" \? "rtl" : undefined/,
+    "la matrice arabe garde son sens de lecture");
+  assert.match(source, /isPrimaryTermMatrix \? "specialized-term-report specialized-primary-matrix"/);
+  assert.match(css, /#specialized-correspondent-report\.specialized-primary-matrix \{\s*page: specializedMatrixLandscape;/);
+  assert.match(css, /@page specializedMatrixLandscape \{\s*size: A4 landscape;/);
+  assert.match(css, /specialized-primary-table \{[\s\S]*?font-size: 10\.5pt !important;/);
+  assert.match(css, /specialized-primary-sheet:last-child \{\s*break-after: auto;/);
+  assert.match(css, /display: table-header-group;/, "les en-têtes sont répétés sur les pages suivantes");
+  assert.match(source, /const institutionName = first\?\.documents\[0\]\?\.document\.school\?\.name/);
+  assert.match(source, /<DocumentDirectionSignatures/, "les signatures existantes sont conservées");
+  assert.match(source, /mode === "term" \? \(/, "le rendu antérieur ne change pas pour les autres modes");
+});

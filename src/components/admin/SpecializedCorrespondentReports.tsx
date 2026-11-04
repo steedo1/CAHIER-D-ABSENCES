@@ -263,7 +263,20 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
     const row = report.payload.documents.find(item => item.studentId === entry.studentId);
     return !!programFor(row, selectedTrack);
   }));
-  const printable = mode === "unclassified" ? reports.length > 0 :
+  // Une matrice primaire est un relevé des notes publiées, pas une obligation
+  // de saisir toutes les matières du programme avant de pouvoir imprimer.
+  // Les autres rapports conservent strictement leur règle de complétude.
+  const primaryPrintHasMarks = isPrimaryTermMatrix && current.some(entry =>
+    entry.document[selectedTrack]?.subjects.some(subject =>
+      typeof subject.average === "number" && Number.isFinite(subject.average)));
+  const primaryPrintIsPartial = isPrimaryTermMatrix && !isAllComplete(reports, selectedTrack);
+  const primaryPrintGroups = isPrimaryTermMatrix
+    ? Array.from({ length: Math.ceil(subjects.length / 6) },
+        (_, index) => subjects.slice(index * 6, index * 6 + 6))
+    : [];
+  const institutionName = first?.documents[0]?.document.school?.name || "Établissement scolaire";
+  const printable = isPrimaryTermMatrix ? primaryPrintHasMarks :
+    mode === "unclassified" ? reports.length > 0 :
     isAllComplete(reports, selectedTrack) && unique.length > 0 &&
     (mode !== "annual" || annualFullyCovered);
 
@@ -361,8 +374,8 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
           />
         </div>
       ) : null}
-      <div id="specialized-correspondent-report" className={`space-y-4 rounded-xl border bg-white p-4 sm:p-6 ${mode === "term" ? (subjects.length > 20 ? "specialized-term-report specialized-term-extra-wide" : subjects.length > 10 ? "specialized-term-report specialized-term-wide" : "specialized-term-report") : ""}`}>
-        <div className="border-b pb-3 text-center">
+      <div id="specialized-correspondent-report" className={`space-y-4 rounded-xl border bg-white p-4 sm:p-6 ${mode === "term" ? (isPrimaryTermMatrix ? "specialized-term-report specialized-primary-matrix" : subjects.length > 20 ? "specialized-term-report specialized-term-extra-wide" : subjects.length > 10 ? "specialized-term-report specialized-term-wide" : "specialized-term-report") : ""}`}>
+        <div className={`border-b pb-3 text-center ${isPrimaryTermMatrix ? "print:hidden" : ""}`}>
           <p className="text-sm font-semibold">RÉPUBLIQUE DE CÔTE D’IVOIRE</p>
           <p className="text-xs">Union - Discipline - Travail</p>
           <h2 className="mt-3 text-lg font-bold uppercase">{termTitle} · {TRACK_LABELS[selectedTrack]}</h2>
@@ -388,6 +401,12 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
           Cette liste est dérivée de la complétude des notes de {TRACK_LABELS[selectedTrack].toLowerCase()}.
           Elle n’enregistre aucune décision « non classé » de l’ancien cursus.
         </p>}
+        {isPrimaryTermMatrix && primaryPrintIsPartial && (
+          <p className="text-sm text-slate-700 print:hidden">
+            Les notes déjà publiées sont consultables et imprimables. Les cellules non renseignées restent vides à l'impression ;
+            aucune moyenne ni aucun rang non validé ne sera ajouté.
+          </p>
+        )}
         <div className={mode === "term" ? "overflow-x-auto print:hidden" : "overflow-x-auto"}>
           <table className="w-full border-collapse text-left text-xs sm:text-sm">
             <thead><tr className="border-b bg-slate-50">
@@ -436,56 +455,111 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
           </table>
           {!display.length && <p className="p-4 text-sm text-slate-500">Aucun élève correspondant à ce rapport.</p>}
         </div>
-        {mode === "term" && (
+
+        {isPrimaryTermMatrix && mode === "term" ? (
           <div className="specialized-term-pages hidden print:block">
-            <section className="specialized-term-sheet">
-              <h3>
-                {termTitle} · {TRACK_LABELS[selectedTrack]} · {chosenClass?.label} · {chosenPeriod?.label}
-              </h3>
-              <table className="specialized-term-table">
-                <colgroup>
-                  <col style={{ width: subjects.length > 10 ? "21%" : "28%" }} />
-                  {subjects.map(subject => <col key={subject.id} style={{ width: `${((subjects.length > 10 ? 61 : 50) / Math.max(1, subjects.length)).toFixed(3)}%` }} />)}
-                  <col style={{ width: subjects.length > 10 ? "7%" : "8%" }} />
-                  <col style={{ width: subjects.length > 10 ? "5%" : "6%" }} />
-                  <col style={{ width: subjects.length > 10 ? "6%" : "8%" }} />
-                </colgroup>
-                <thead><tr>
-                  <th>Élève</th>
-                  {subjects.map(subject => <th className="subject-heading" key={subject.id}><span className="subject-label">{subject.name}</span></th>)}
-                  <th>Moyenne</th><th>Rang</th><th>Statut</th>
-                </tr></thead>
-                <tbody>
-                  {display.map(entry => {
-                    const program = programFor(entry, selectedTrack);
-                    return <tr key={entry.studentId}>
-                      <td className="student-name">{studentName(entry)}</td>
-                      {subjects.map(subject => {
-                        // Les matières déjà publiées restent visibles dans un document de travail
-                    // même si la composition entière n'est pas encore complète.
-                    const subjectProgram = isPrimaryTermMatrix ? entry.document[selectedTrack] : program;
-                    const item = subjectProgram?.subjects.find(s => s.id === subject.id);
-                        return <td key={subject.id}>
-                          {item ? formatScore(item.average, isPrimaryTermMatrix ? item.denominator ?? subjectProgram!.denominator : subjectProgram!.denominator) : "—"}
-                        </td>;
-                      })}
-                      <td>{program ? formatScore(program.generalAverage, program.denominator) : "—"}</td>
-                      <td>{program?.rank ?? "—"}</td>
-                      <td>{program ? "Complet" : "Incomplet"}</td>
-                    </tr>;
-                  })}
-                </tbody>
-              </table>
-            </section>
+            {primaryPrintGroups.map((group, index) => {
+              const lastGroup = index === primaryPrintGroups.length - 1;
+              return <section key={index} className="specialized-term-sheet specialized-primary-sheet"
+                dir={selectedTrack === "arabic" ? "rtl" : undefined}>
+                <header className="specialized-primary-header">
+                  <p className="school-name">{institutionName}</p>
+                  <h3>{termTitle} · {TRACK_LABELS[selectedTrack]}</h3>
+                  <p>{chosenClass?.label} · {year} · {chosenPeriod?.label}</p>
+                  <p>DOCUMENT DE TRAVAIL — NOTES PUBLIÉES{primaryPrintIsPartial ? " — RÉSULTATS EN COURS" : ""}</p>
+                  <p>Matières {index * 6 + 1} à {index * 6 + group.length} sur {subjects.length}</p>
+                </header>
+                <table className="specialized-term-table specialized-primary-table">
+                  <colgroup>
+                    <col style={{ width: "25%" }} />
+                    {group.map(subject => <col key={subject.id}
+                      style={{ width: `${(lastGroup ? 55 : 75) / group.length}%` }} />)}
+                    {lastGroup && <><col style={{ width: "8%" }} /><col style={{ width: "5%" }} /><col style={{ width: "7%" }} /></>}
+                  </colgroup>
+                  <thead><tr>
+                    <th>Élève</th>
+                    {group.map(subject => <th className="subject-heading" key={subject.id}>
+                      <span className="subject-label">{subject.name}</span>
+                    </th>)}
+                    {lastGroup && <><th>Moyenne</th><th>Rang</th><th>Statut</th></>}
+                  </tr></thead>
+                  <tbody>
+                    {display.map(entry => {
+                      const program = programFor(entry, selectedTrack);
+                      const subjectProgram = entry.document[selectedTrack];
+                      return <tr key={entry.studentId}>
+                        <td className="student-name">{studentName(entry)}</td>
+                        {group.map(subject => {
+                          const item = subjectProgram?.subjects.find(row => row.id === subject.id);
+                          return <td key={subject.id}>
+                            {item?.average == null ? "" :
+                              formatScore(item.average, item.denominator ?? subjectProgram!.denominator)}
+                          </td>;
+                        })}
+                        {lastGroup && <>
+                          <td>{program ? formatScore(program.generalAverage, program.denominator) : ""}</td>
+                          <td>{program?.rank ?? ""}</td>
+                          <td>{program ? "Complet" : "En cours"}</td>
+                        </>}
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+              </section>;
+            })}
           </div>
-        )}
+        ) : mode === "term" ? (
+          <div className="specialized-term-pages hidden print:block">
+              <section className="specialized-term-sheet">
+                <h3>
+                  {termTitle} · {TRACK_LABELS[selectedTrack]} · {chosenClass?.label} · {chosenPeriod?.label}
+                </h3>
+                <table className="specialized-term-table">
+                  <colgroup>
+                    <col style={{ width: subjects.length > 10 ? "21%" : "28%" }} />
+                    {subjects.map(subject => <col key={subject.id} style={{ width: `${((subjects.length > 10 ? 61 : 50) / Math.max(1, subjects.length)).toFixed(3)}%` }} />)}
+                    <col style={{ width: subjects.length > 10 ? "7%" : "8%" }} />
+                    <col style={{ width: subjects.length > 10 ? "5%" : "6%" }} />
+                    <col style={{ width: subjects.length > 10 ? "6%" : "8%" }} />
+                  </colgroup>
+                  <thead><tr>
+                    <th>Élève</th>
+                    {subjects.map(subject => <th className="subject-heading" key={subject.id}><span className="subject-label">{subject.name}</span></th>)}
+                    <th>Moyenne</th><th>Rang</th><th>Statut</th>
+                  </tr></thead>
+                  <tbody>
+                    {display.map(entry => {
+                      const program = programFor(entry, selectedTrack);
+                      return <tr key={entry.studentId}>
+                        <td className="student-name">{studentName(entry)}</td>
+                        {subjects.map(subject => {
+                          // Les matières déjà publiées restent visibles dans un document de travail
+                      // même si la composition entière n'est pas encore complète.
+                      const subjectProgram = isPrimaryTermMatrix ? entry.document[selectedTrack] : program;
+                      const item = subjectProgram?.subjects.find(s => s.id === subject.id);
+                          return <td key={subject.id}>
+                            {item ? formatScore(item.average, isPrimaryTermMatrix ? item.denominator ?? subjectProgram!.denominator : subjectProgram!.denominator) : "—"}
+                          </td>;
+                        })}
+                        <td>{program ? formatScore(program.generalAverage, program.denominator) : "—"}</td>
+                        <td>{program?.rank ?? "—"}</td>
+                        <td>{program ? "Complet" : "Incomplet"}</td>
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+              </section>
+          </div>
+        ) : null}
         <DocumentDirectionSignatures className="mt-4" signatories={[{
           track: selectedTrack, title: "Directeur",
           name: reports.flatMap(report => report.payload.documents).find(entry =>
             entry.document[selectedTrack]?.directorName)?.document[selectedTrack]?.directorName || "Nom du directeur non renseigné",
         }]} />
         {!printable && mode !== "unclassified" && <p className="text-sm font-semibold text-rose-700 print:hidden">
-          Impression bloquée tant que certains résultats du programme sont incomplets.
+          {isPrimaryTermMatrix
+            ? "Aucune note publiée pour cet enseignement et cette évaluation : rien à imprimer."
+            : "Impression bloquée tant que certains résultats du programme sont incomplets."}
         </p>}
       </div>
     </div>}
