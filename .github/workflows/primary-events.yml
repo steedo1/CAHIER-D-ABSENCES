@@ -46,4 +46,6 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: node --test test/student-photo-compression-browser.test.mjs
       - run: npm run test:primary-events:browser
+      - name: EPC matrix A4 landscape print from mobile width
+        run: node --test test/epc-matrix-landscape-browser.test.mjs
       - run: npm run build
