@@ -147,8 +147,12 @@ test("EPC primaire : les notes publiées, y compris zéro, sont imprimables sans
   assert.match(source, /isAllComplete\(reports, selectedTrack\) && unique\.length > 0/, "les autres documents gardent leurs règles");
   assert.match(source, /primaryMatrixPrintScore\(item\?\.average/,
     "une absence n'est pas une note zéro et les cellules sont compactes");
-  assert.match(source, /formatScore\(item\.average, item\.denominator \?\? subjectProgram!\.denominator\)/,
-    "ne jamais changer le barème réel de la matière");
+  assert.match(source, /item\?\.denominator \?\? subjectProgram\?\.denominator/,
+    "le barème réel de chaque matière reste celui de l'établissement");
+  assert.match(source, /denominator: scales\.size === 1/,
+    "afficher le barème en en-tête seulement s'il est commun à la classe");
+  assert.match(source, /denominator !== headerDenominator/,
+    "un barème variable demeure visible dans la cellule");
   assert.match(source, /program \? formatScore\(program\.generalAverage, program\.denominator\) : ""/,
     "aucune moyenne non validée n'est ajoutée");
   assert.match(source, /program\?\.rank \?\? ""/, "aucun rang non validé n'est inventé");
