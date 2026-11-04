@@ -139,4 +139,57 @@
   .specialized-term-table td {
     padding: 2px 3px;
   }
+
+  /* EPC primaire : un A4 paysage lisible, sans agrandir en A3/A2.
+     On répartit les colonnes entre plusieurs tableaux, jamais les barèmes. */
+  #specialized-correspondent-report.specialized-primary-matrix {
+    page: specializedMatrixLandscape;
+  }
+
+  #specialized-correspondent-report.specialized-primary-matrix > .border-b {
+    display: none !important;
+  }
+
+  #specialized-correspondent-report .specialized-primary-sheet {
+    break-inside: auto;
+    break-after: page;
+    font-size: 10.5pt;
+  }
+
+  #specialized-correspondent-report .specialized-primary-sheet:last-child {
+    break-after: auto;
+  }
+
+  #specialized-correspondent-report .specialized-primary-header {
+    text-align: center;
+    margin-bottom: 8px;
+    break-after: avoid;
+    font-size: 10pt;
+  }
+
+  #specialized-correspondent-report .specialized-primary-header .school-name {
+    font-size: 11pt;
+    font-weight: 700;
+  }
+
+  #specialized-correspondent-report .specialized-primary-table {
+    width: 100%;
+    table-layout: fixed !important;
+    font-size: 10.5pt !important;
+  }
+
+  #specialized-correspondent-report .specialized-primary-table th {
+    font-size: 10pt !important;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  #specialized-correspondent-report .specialized-primary-table td {
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  #specialized-correspondent-report .specialized-primary-sheet[dir="rtl"] .student-name {
+    text-align: right;
+  }
 }
