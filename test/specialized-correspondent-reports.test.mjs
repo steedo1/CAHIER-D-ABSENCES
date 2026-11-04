@@ -160,7 +160,7 @@ test("EPC primaire : l'impression passe en A4 paysage lisible et conserve les en
   const css = read("src/components/admin/SpecializedCorrespondentReports.print.css");
   assert.match(source, /Array\.from\(\{ length: Math\.ceil\(subjects\.length \/ 6\) \}/,
     "6 matières au maximum par tableau, sans diminuer la police");
-  assert.match(source, /primaryPrintGroups\.map\(\(group, index\)/);
+  assert.match(source, /primaryPrintSheets\.map\(\(\{ group, groupIndex, rows, lastGroup \}, index\)/);
   assert.match(source, /selectedTrack === "arabic" \? "rtl" : undefined/,
     "la matrice arabe garde son sens de lecture");
   assert.match(source, /isPrimaryTermMatrix \? "specialized-term-report specialized-primary-matrix"/);
@@ -172,4 +172,15 @@ test("EPC primaire : l'impression passe en A4 paysage lisible et conserve les en
   assert.match(source, /const institutionName = first\?\.documents\[0\]\?\.document\.school\?\.name/);
   assert.match(source, /<DocumentDirectionSignatures/, "les signatures existantes sont conservées");
   assert.match(source, /mode === "term" \? \(/, "le rendu antérieur ne change pas pour les autres modes");
+});
+
+test("matrice A4 depuis téléphone : colonnes non contraintes par la largeur de la PWA", () => {
+  const source = read("src/components/admin/SpecializedCorrespondentReports.tsx");
+  const css = read("src/components/admin/SpecializedCorrespondentReports.print.css");
+  assert.match(source, /const primaryPrintSheets = primaryPrintGroups\.flatMap/);
+  assert.match(source, /display\.slice\(sheetIndex \* 24, sheetIndex \* 24 \+ 24\)/);
+  assert.match(css, /position: static !important;/);
+  assert.match(css, /display: contents !important;/);
+  assert.match(css, /width: 100% !important;/);
+  assert.match(css, /padding: 2px 4px !important;/);
 });
