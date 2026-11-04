@@ -146,6 +146,53 @@
     page: specializedMatrixLandscape;
   }
 
+  /* Comme les listes de classes EPC : les parents de l'aperçu peuvent
+     rester dimensionnés à la largeur du téléphone (environ 130 mm).
+     Les aplatir libère toute la largeur utile du vrai A4 paysage. */
+  html:has(#specialized-correspondent-report.specialized-primary-matrix),
+  body:has(#specialized-correspondent-report.specialized-primary-matrix) {
+    display: block !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  body:has(#specialized-correspondent-report.specialized-primary-matrix)
+  *:not(#specialized-correspondent-report.specialized-primary-matrix)
+   :not(#specialized-correspondent-report.specialized-primary-matrix *)
+   :not(:has(#specialized-correspondent-report.specialized-primary-matrix)) {
+    display: none !important;
+  }
+  body:has(#specialized-correspondent-report.specialized-primary-matrix)
+  *:has(#specialized-correspondent-report.specialized-primary-matrix) {
+    display: contents !important;
+  }
+  body:has(#specialized-correspondent-report.specialized-primary-matrix)
+  #specialized-correspondent-report.specialized-primary-matrix {
+    display: block !important;
+    position: static !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  body:has(#specialized-correspondent-report.specialized-primary-matrix)
+  .specialized-primary-sheet {
+    display: block !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
   #specialized-correspondent-report.specialized-primary-matrix > .border-b {
     display: none !important;
   }
