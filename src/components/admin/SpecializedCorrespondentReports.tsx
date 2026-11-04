@@ -274,6 +274,15 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
     ? Array.from({ length: Math.ceil(subjects.length / 6) },
         (_, index) => subjects.slice(index * 6, index * 6 + 6))
     : [];
+  // Comme les listes de classe EPC : un nombre défini d'élèves par feuille
+  // empêche une feuille presque vide après une première page surchargée.
+  const primaryPrintSheets = primaryPrintGroups.flatMap((group, groupIndex) => {
+    const pages = Math.max(1, Math.ceil(display.length / 24));
+    return Array.from({ length: pages }, (_, sheetIndex) => ({
+      group, groupIndex, rows: display.slice(sheetIndex * 24, sheetIndex * 24 + 24),
+      lastGroup: groupIndex === primaryPrintGroups.length - 1,
+    }));
+  });
   const institutionName = first?.documents[0]?.document.school?.name || "Établissement scolaire";
   const printable = isPrimaryTermMatrix ? primaryPrintHasMarks :
     mode === "unclassified" ? reports.length > 0 :
@@ -458,8 +467,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
 
         {isPrimaryTermMatrix && mode === "term" ? (
           <div className="specialized-term-pages hidden print:block">
-            {primaryPrintGroups.map((group, index) => {
-              const lastGroup = index === primaryPrintGroups.length - 1;
+            {primaryPrintSheets.map(({ group, groupIndex, rows, lastGroup }, index) => {
               return <section key={index} className="specialized-term-sheet specialized-primary-sheet"
                 dir={selectedTrack === "arabic" ? "rtl" : undefined}>
                 <header className="specialized-primary-header">
@@ -467,7 +475,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
                   <h3>{termTitle} · {TRACK_LABELS[selectedTrack]}</h3>
                   <p>{chosenClass?.label} · {year} · {chosenPeriod?.label}</p>
                   <p>DOCUMENT DE TRAVAIL — NOTES PUBLIÉES{primaryPrintIsPartial ? " — RÉSULTATS EN COURS" : ""}</p>
-                  <p>Matières {index * 6 + 1} à {index * 6 + group.length} sur {subjects.length}</p>
+                  <p>Matières {groupIndex * 6 + 1} à {groupIndex * 6 + group.length} sur {subjects.length}</p>
                 </header>
                 <table className="specialized-term-table specialized-primary-table">
                   <colgroup>
@@ -484,7 +492,7 @@ export default function SpecializedCorrespondentReports({ mode }: { mode: Mode }
                     {lastGroup && <><th>Moyenne</th><th>Rang</th><th>Statut</th></>}
                   </tr></thead>
                   <tbody>
-                    {display.map(entry => {
+                    {rows.map(entry => {
                       const program = programFor(entry, selectedTrack);
                       const subjectProgram = entry.document[selectedTrack];
                       return <tr key={entry.studentId}>
