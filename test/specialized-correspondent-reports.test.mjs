@@ -158,9 +158,16 @@ test("EPC primaire : les notes publiées, y compris zéro, sont imprimables sans
 test("EPC primaire : l'impression passe en A4 paysage lisible et conserve les enseignements séparés", () => {
   const source = read("src/components/admin/SpecializedCorrespondentReports.tsx");
   const css = read("src/components/admin/SpecializedCorrespondentReports.print.css");
-  assert.match(source, /Array\.from\(\{ length: Math\.ceil\(subjects\.length \/ 6\) \}/,
-    "6 matières au maximum par tableau, sans diminuer la police");
-  assert.match(source, /primaryPrintSheets\.map\(\(\{ group, groupIndex, rows, lastGroup \}, index\)/);
+  assert.match(source, /const primaryPrintSubjects = isPrimaryTermMatrix \? subjects\.map/,
+    "toutes les matières dans une seule grille");
+  assert.doesNotMatch(source, /subjects\.slice\(index \* 6/,
+    "aucun découpage horizontal des matières");
+  assert.match(source, /primaryPrintSheets\.map\(\(\{ rows \}, index\)/);
+  assert.match(source, /primaryPrintSubjects\.map\(subject => <th/,
+    "chaque matière a sa colonne, avec un intitulé abrégé");
+  assert.match(source, /primaryMatrixShortName\(subject\.name\)/);
+  assert.match(source, /primaryMatrixPrintScore\(item\?\.average/,
+    "les notes restent réelles, le barème est préservé");
   assert.match(source, /selectedTrack === "arabic" \? "rtl" : undefined/,
     "la matrice arabe garde son sens de lecture");
   assert.match(source, /isPrimaryTermMatrix \? "specialized-term-report specialized-primary-matrix"/);
@@ -177,7 +184,9 @@ test("EPC primaire : l'impression passe en A4 paysage lisible et conserve les en
 test("matrice A4 depuis téléphone : colonnes non contraintes par la largeur de la PWA", () => {
   const source = read("src/components/admin/SpecializedCorrespondentReports.tsx");
   const css = read("src/components/admin/SpecializedCorrespondentReports.print.css");
-  assert.match(source, /const primaryPrintSheets = primaryPrintGroups\.flatMap/);
+  assert.match(source, /const primaryPrintSheets = isPrimaryTermMatrix/);
+  assert.doesNotMatch(source, /primaryPrintGroups/,
+    "ne jamais reconstituer des groupes de matières");
   assert.match(source, /display\.slice\(sheetIndex \* 24, sheetIndex \* 24 \+ 24\)/);
   assert.match(css, /position: static !important;/);
   assert.match(css, /display: contents !important;/);
