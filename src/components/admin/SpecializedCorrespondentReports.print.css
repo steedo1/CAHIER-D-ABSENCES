@@ -223,6 +223,14 @@
     font-size: 10.5pt !important;
   }
 
+  /* Garde une vraie police de 10–10,5 pt, mais retire seulement le
+     rembourrage excessif qui provoquait une page supplémentaire de 1 élève. */
+  #specialized-correspondent-report .specialized-primary-table th,
+  #specialized-correspondent-report .specialized-primary-table td {
+    padding: 2px 4px !important;
+    line-height: 1.15 !important;
+  }
+
   #specialized-correspondent-report .specialized-primary-table th {
     font-size: 10pt !important;
     overflow-wrap: anywhere;
