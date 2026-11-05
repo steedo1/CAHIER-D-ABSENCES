@@ -16,6 +16,8 @@ assert(label && output, 'Supply label and output JSON path');
 const requests = Number(requestArg), concurrency = Number(concurrencyArg);
 const heapMiB = Number(process.env.MON_CAHIER_BENCH_HEAP_MIB || 4096);
 assert(Number.isInteger(heapMiB) && heapMiB >= 128 && heapMiB <= 4096);
+const semiMiB = process.env.MON_CAHIER_BENCH_SEMI_MIB ? Number(process.env.MON_CAHIER_BENCH_SEMI_MIB) : null;
+assert(semiMiB === null || (Number.isInteger(semiMiB) && semiMiB >= 2 && semiMiB <= 16));
 assert(Number.isInteger(requests) && requests > 0 && requests <= 100_000);
 assert(Number.isInteger(concurrency) && concurrency > 0 && concurrency <= 32);
 assert(['next', 'standalone', 'npm'].includes(mode));
@@ -41,6 +43,7 @@ const child = spawn(process.execPath, mode === 'npm' ? [
   process.env.MON_CAHIER_BENCH_NPM_CLI, 'run', 'start', '--', '--hostname', '127.0.0.1', '--port', String(port),
 ] : [
   `--max-old-space-size=${heapMiB}`,
+  ...(semiMiB === null ? [] : [`--max-semi-space-size=${semiMiB}`]),
   '--require', fileURLToPath(new URL('./runtime-memory-probe.cjs', import.meta.url)),
   ...(mode === 'standalone' ? ['server.js'] :
     ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', String(port)]),
@@ -117,6 +120,11 @@ try {
     await pause(100);
   }
   const readyMs = performance.now() - started;
+  const imageBudget = logs.match(/\[runtime-image-memory\] (\{[^\n]+\})/)?.[1];
+  if (process.env.MON_CAHIER_BENCH_VERIFY_INSTRUMENTATION === '1') {
+    assert.deepEqual(imageBudget && JSON.parse(imageBudget), { cacheMB: 8, concurrency: 1 });
+    assert(logs.includes('[runtime-memory]'), 'Production memory telemetry did not start');
+  }
   setPhase('idle'); await pause(5_000);
   setPhase('warmup');
   for (const route of paths) await request(...route);
@@ -162,9 +170,10 @@ try {
   const cpuSeconds = firstLoad && lastLoad ? ((lastLoad.cpu.user + lastLoad.cpu.system) - (firstLoad.cpu.user + firstLoad.cpu.system)) / 1e6 : null;
   const summary = {
     label, node: process.version, next: JSON.parse(await readFile(root + 'node_modules/next/package.json')).version,
-    mode, heapMiB: mode === 'npm' ? null : heapMiB, requests, concurrency, readyMs, loadMs, cpuSeconds,
+    mode, heapMiB: mode === 'npm' ? null : heapMiB, semiMiB, requests, concurrency, readyMs, loadMs, cpuSeconds,
     schoolFixture: school ? { classes: 20, students: school.studentCount, requests: school.counts } : null,
     totalCpuSeconds: (last.cpu.user + last.cpu.system) / 1e6,
+    imageMemoryBudget: imageBudget ? JSON.parse(imageBudget) : null,
     osPeakRssMiB: last.maxRssKiB / 1024,
     phases: Object.fromEntries(['idle', 'warmup', 'load', 'settled'].map(p => {
       const rows = samples.filter(s => s.phase === p);
