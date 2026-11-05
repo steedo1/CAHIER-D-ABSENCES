@@ -1,0 +1,321 @@
+{
+  "before": {
+    "label": "baseline-123a2d97",
+    "node": "v22.23.4",
+    "next": "15.5.28",
+    "mode": "next",
+    "heapMiB": 288,
+    "semiMiB": null,
+    "requests": 6000,
+    "concurrency": 8,
+    "readyMs": 515.2709140000001,
+    "loadMs": 22813.070125000002,
+    "cpuSeconds": 31.769351,
+    "schoolFixture": {
+      "classes": 20,
+      "students": 1200,
+      "requests": {
+        "/auth/v1/user": 1287,
+        "/rest/v1/user_roles": 858,
+        "/rest/v1/academic_years": 858,
+        "/rest/v1/classes": 445,
+        "/rest/v1/class_enrollments": 1287,
+        "/rest/v1/profiles": 858,
+        "/rest/v1/teacher_sessions": 429,
+        "/rest/v1/institutions": 429
+      }
+    },
+    "totalCpuSeconds": 37.18337,
+    "osPeakRssMiB": 421.01953125,
+    "phases": {
+      "idle": {
+        "count": 6,
+        "rssMiB": {
+          "min": 350.03125,
+          "median": 350.8125,
+          "p95": 350.8125,
+          "max": 350.8125
+        },
+        "heapMiB": {
+          "min": 224.15160369873047,
+          "median": 224.45037841796875,
+          "p95": 237.77535247802734,
+          "max": 237.77535247802734
+        },
+        "externalMiB": {
+          "min": 5.500056266784668,
+          "median": 5.500056266784668,
+          "p95": 5.500056266784668,
+          "max": 5.500056266784668
+        }
+      },
+      "warmup": {
+        "count": 1,
+        "rssMiB": {
+          "min": 356.19140625,
+          "median": 356.19140625,
+          "p95": 356.19140625,
+          "max": 356.19140625
+        },
+        "heapMiB": {
+          "min": 238.66133880615234,
+          "median": 238.66133880615234,
+          "p95": 238.66133880615234,
+          "max": 238.66133880615234
+        },
+        "externalMiB": {
+          "min": 6.273013114929199,
+          "median": 6.273013114929199,
+          "p95": 6.273013114929199,
+          "max": 6.273013114929199
+        }
+      },
+      "load": {
+        "count": 45,
+        "rssMiB": {
+          "min": 374.1328125,
+          "median": 415.390625,
+          "p95": 419.296875,
+          "max": 419.328125
+        },
+        "heapMiB": {
+          "min": 189.13868713378906,
+          "median": 209.53054809570312,
+          "p95": 239.64122772216797,
+          "max": 242.18311309814453
+        },
+        "externalMiB": {
+          "min": 9.178633689880371,
+          "median": 16.709627151489258,
+          "p95": 19.903210639953613,
+          "max": 25.481757164001465
+        }
+      },
+      "settled": {
+        "count": 20,
+        "rssMiB": {
+          "min": 418.015625,
+          "median": 418.015625,
+          "p95": 418.015625,
+          "max": 418.015625
+        },
+        "heapMiB": {
+          "min": 208.66146087646484,
+          "median": 209.7793960571289,
+          "p95": 210.69368743896484,
+          "max": 210.69368743896484
+        },
+        "externalMiB": {
+          "min": 24.195399284362793,
+          "median": 24.195399284362793,
+          "p95": 24.195399284362793,
+          "max": 24.195399284362793
+        }
+      }
+    },
+    "responseMs": {
+      "min": 1.1169770000014978,
+      "median": 22.095235000000685,
+      "p95": 75.24338199999875,
+      "max": 342.90236900000036
+    },
+    "last": {
+      "phase": "settled",
+      "type": "memory",
+      "at": 1793907715967,
+      "pid": 13,
+      "argv": [
+        "/root/.npm/_npx/361c55be1121897e/node_modules/node/bin/node",
+        "/workspace/scratch/a2f56af18e17/mon-cahier-ram/node_modules/next/dist/bin/next",
+        "start",
+        "--hostname",
+        "127.0.0.1",
+        "--port",
+        "3137"
+      ],
+      "execArgv": [
+        "--max-old-space-size=288",
+        "--require",
+        "/workspace/scratch/a2f56af18e17/mon-cahier-ram/scripts/runtime-memory-probe.cjs"
+      ],
+      "uptime": 38.397109847,
+      "rss": 438321152,
+      "heapTotal": 295739392,
+      "heapUsed": 220928344,
+      "external": 25370715,
+      "arrayBuffers": 10825133,
+      "maxRssKiB": 431124,
+      "cpu": {
+        "user": 35374302,
+        "system": 1809068
+      },
+      "heapLimit": 352321536,
+      "typescriptLoaded": false,
+      "swcLoaded": false,
+      "webpackLoaded": true
+    },
+    "allExpectedStatuses": true
+  },
+  "after": {
+    "label": "native-memory-candidate",
+    "node": "v22.23.4",
+    "next": "15.5.28",
+    "mode": "next",
+    "heapMiB": 288,
+    "semiMiB": 4,
+    "requests": 6000,
+    "concurrency": 8,
+    "readyMs": 617.3981239999999,
+    "loadMs": 29467.919084,
+    "cpuSeconds": 43.080651,
+    "schoolFixture": {
+      "classes": 20,
+      "students": 1200,
+      "requests": {
+        "/auth/v1/user": 1287,
+        "/rest/v1/user_roles": 858,
+        "/rest/v1/academic_years": 858,
+        "/rest/v1/classes": 449,
+        "/rest/v1/class_enrollments": 1287,
+        "/rest/v1/profiles": 858,
+        "/rest/v1/teacher_sessions": 429,
+        "/rest/v1/institutions": 429
+      }
+    },
+    "totalCpuSeconds": 49.067855,
+    "imageMemoryBudget": {
+      "cacheMB": 8,
+      "concurrency": 1
+    },
+    "osPeakRssMiB": 363.6953125,
+    "phases": {
+      "idle": {
+        "count": 5,
+        "rssMiB": {
+          "min": 318.0859375,
+          "median": 318.0859375,
+          "p95": 318.0859375,
+          "max": 318.0859375
+        },
+        "heapMiB": {
+          "min": 224.11389923095703,
+          "median": 224.36771392822266,
+          "p95": 224.57139587402344,
+          "max": 224.57139587402344
+        },
+        "externalMiB": {
+          "min": 5.491684913635254,
+          "median": 5.491684913635254,
+          "p95": 5.491684913635254,
+          "max": 5.491684913635254
+        }
+      },
+      "warmup": {
+        "count": 1,
+        "rssMiB": {
+          "min": 326.8359375,
+          "median": 326.8359375,
+          "p95": 326.8359375,
+          "max": 326.8359375
+        },
+        "heapMiB": {
+          "min": 233.78824615478516,
+          "median": 233.78824615478516,
+          "p95": 233.78824615478516,
+          "max": 233.78824615478516
+        },
+        "externalMiB": {
+          "min": 5.826595306396484,
+          "median": 5.826595306396484,
+          "p95": 5.826595306396484,
+          "max": 5.826595306396484
+        }
+      },
+      "load": {
+        "count": 58,
+        "rssMiB": {
+          "min": 338.015625,
+          "median": 354.8671875,
+          "p95": 360.45703125,
+          "max": 362.3203125
+        },
+        "heapMiB": {
+          "min": 183.37470245361328,
+          "median": 209.2796859741211,
+          "p95": 236.8220977783203,
+          "max": 252.20638275146484
+        },
+        "externalMiB": {
+          "min": 6.371018409729004,
+          "median": 9.396349906921387,
+          "p95": 14.728350639343262,
+          "max": 18.4209041595459
+        }
+      },
+      "settled": {
+        "count": 20,
+        "rssMiB": {
+          "min": 359.1875,
+          "median": 360.5625,
+          "p95": 360.5625,
+          "max": 360.5625
+        },
+        "heapMiB": {
+          "min": 206.09085083007812,
+          "median": 208.31159210205078,
+          "p95": 209.30467224121094,
+          "max": 209.30467224121094
+        },
+        "externalMiB": {
+          "min": 14.213788032531738,
+          "median": 14.213788032531738,
+          "p95": 14.213788032531738,
+          "max": 14.213788032531738
+        }
+      }
+    },
+    "responseMs": {
+      "min": 1.6823240000012447,
+      "median": 28.991487999999663,
+      "p95": 100.12300300000061,
+      "max": 200.62984499999948
+    },
+    "last": {
+      "phase": "settled",
+      "type": "memory",
+      "at": 1793907932263,
+      "pid": 13,
+      "argv": [
+        "/root/.npm/_npx/361c55be1121897e/node_modules/node/bin/node",
+        "/workspace/scratch/a2f56af18e17/mon-cahier-ram/node_modules/next/dist/bin/next",
+        "start",
+        "--hostname",
+        "127.0.0.1",
+        "--port",
+        "3137"
+      ],
+      "execArgv": [
+        "--max-old-space-size=288",
+        "--max-semi-space-size=4",
+        "--require",
+        "/workspace/scratch/a2f56af18e17/mon-cahier-ram/scripts/runtime-memory-probe.cjs"
+      ],
+      "uptime": 45.191780638,
+      "rss": 376635392,
+      "heapTotal": 254795776,
+      "heapUsed": 216938784,
+      "external": 14904237,
+      "arrayBuffers": 6142697,
+      "maxRssKiB": 372424,
+      "cpu": {
+        "user": 46444028,
+        "system": 2623827
+      },
+      "heapLimit": 314572800,
+      "typescriptLoaded": false,
+      "swcLoaded": false,
+      "webpackLoaded": true
+    },
+    "allExpectedStatuses": true
+  }
+}

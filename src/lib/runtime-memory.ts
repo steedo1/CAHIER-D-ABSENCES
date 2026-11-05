@@ -11,6 +11,7 @@ function cgroupBytes() {
 export function runtimeMemorySample() {
   return {
     uptimeSeconds: Math.round(process.uptime()),
+    nodeVersion: process.version,
     ...process.memoryUsage(), heapLimit: getHeapStatistics().heap_size_limit,
     cgroupBytes: cgroupBytes(),
     release: process.env.RENDER_GIT_COMMIT || process.env.NEXT_PUBLIC_MON_CAHIER_RELEASE || "development",
