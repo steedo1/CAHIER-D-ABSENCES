@@ -56,6 +56,7 @@ function database(seed, fail = () => false, before = async () => {}) {
         const clauses = expression.split(",").map((clause) => {
           const [key, op, ...rest] = clause.split("."); const expected = rest.join(".");
           return (row) => op === "is" ? value(row, key) == null
+            : op === "eq" ? value(row, key) === expected
             : op === "neq" ? value(row, key) != null && value(row, key) !== expected
             : op === "ilike" ? String(value(row, key) || "").toUpperCase().includes(expected.replaceAll("%", "").toUpperCase())
             : (() => { throw new Error(`Unsupported filter: ${clause}`); })();
@@ -186,6 +187,25 @@ test("unaccented identity search reads the existing class label column", async (
   const response = await search(handlers(db), { last_name: "KOUASSI", first_name: "Ange" });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).items[0].class_label, "2A1");
+});
+
+test("full name search offers a spelling variant without merging or auto-selecting pupils", async () => {
+  const db = database({ students: [
+    student("variant", { last_name: "TRAORA", first_name: "Mariam", matricule: "TEST001" }),
+    student("exact", { last_name: "TRAORE", first_name: "Nana Mariam", matricule: "TEST002" }),
+    student("wrong-given-name", { last_name: "TRAORE", first_name: "Awa" }),
+    student("foreign", { last_name: "TRAORE", first_name: "Mariam", institution_id: "school-b" }),
+  ], classes: [cls("CM1 Français")],
+  class_enrollments: [enrollment("variant-enrollment", "CM1 Français", "variant")] });
+  const { search: searchFullName } = handlers(db);
+  for (const full_name of ["Traoré Mariam", "Mariam Traoré"]) {
+    const response = await searchFullName(new Request(`https://example.test/search?${new URLSearchParams({ full_name, academic_year: year })}`));
+    assert.equal(response.status, 200);
+    const { items } = await response.json();
+    assert.deepEqual(items.map(({ id, matricule, class_label }) => [id, matricule, class_label]),
+      [["exact", "TEST002", null], ["variant", "TEST001", "CM1 Français"]]);
+  }
+  assert.equal(db.calls.every((call) => call.action === "read"), true);
 });
 
 test("identity search finds matches after the first 500 records and flags homonyms", async () => {

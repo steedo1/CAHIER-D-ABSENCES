@@ -31,6 +31,32 @@ export function studentMatchesIdentity(
   );
 }
 
+export function studentFullNameMatchRank(student: StudentIdentity, fullName: string): number {
+  const requested = studentIdentityWords(fullName);
+  const surname = studentIdentityWords(student.last_name);
+  const firstNames = new Set(studentIdentityWords(student.first_name));
+  if (!surname.length || requested.length <= surname.length) return 0;
+
+  const storedSurname = surname.join(" ");
+  let rank = 0;
+  for (const surnameFirst of [true, false]) {
+    const split = surnameFirst ? surname.length : requested.length - surname.length;
+    const requestedSurname = (surnameFirst ? requested.slice(0, split) : requested.slice(split)).join(" ");
+    const requestedFirstNames = surnameFirst ? requested.slice(split) : requested.slice(0, split);
+    if (!requestedFirstNames.every((name) => firstNames.has(name))) continue;
+    if (requestedSurname === storedSurname) return 2;
+    // Offer a possible spelling variant only with an exact given name.
+    if (Math.min(storedSurname.length, requestedSurname.length) < 5 ||
+        Math.abs(storedSurname.length - requestedSurname.length) > 1) continue;
+    let mismatch = 0;
+    while (mismatch < storedSurname.length && storedSurname[mismatch] === requestedSurname[mismatch]) mismatch++;
+    const storedSuffix = storedSurname.slice(mismatch + (storedSurname.length >= requestedSurname.length ? 1 : 0));
+    const requestedSuffix = requestedSurname.slice(mismatch + (requestedSurname.length >= storedSurname.length ? 1 : 0));
+    if (storedSuffix === requestedSuffix) rank = 1;
+  }
+  return rank;
+}
+
 // Une clé complète pour détecter un doublon potentiel, distincte de la
 // recherche partielle qui accepte un seul prénom.
 export function studentFullIdentityKey(value: string | null | undefined): string {

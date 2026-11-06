@@ -1,6 +1,7 @@
 // src/app/api/admin/students/search/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import {
+  studentFullNameMatchRank,
   studentIdentityWords,
   studentMatchesIdentity,
 } from "@/lib/student-class-membership";
@@ -31,6 +32,7 @@ export async function GET(req: NextRequest) {
   const qRaw = (url.searchParams.get("q") || "").trim();
   const lastNameRaw = (url.searchParams.get("last_name") || "").trim();
   const firstNameRaw = (url.searchParams.get("first_name") || "").trim();
+  const fullName = (url.searchParams.get("full_name") || "").trim();
   const identitySearch = Boolean(lastNameRaw || firstNameRaw);
   const requestedLimit = Number(url.searchParams.get("limit") || 20);
   const limit = Number.isFinite(requestedLimit)
@@ -49,7 +51,7 @@ export async function GET(req: NextRequest) {
         identity_ready: false,
       });
     }
-  } else if (qRaw.length < 2) {
+  } else if (fullName ? fullName.length > 150 || studentIdentityWords(fullName).length < 2 : qRaw.length < 2) {
     return NextResponse.json({ items: [] }); // on évite les requêtes trop vagues
   }
 
@@ -77,21 +79,31 @@ export async function GET(req: NextRequest) {
   let studs: StudentRow[] = [];
   let hasMore = false;
 
-  if (identitySearch) {
+  if (identitySearch || fullName) {
     // ILIKE ne retire pas les accents en base. Normaliser uniquement la saisie
     // excluait ÉLODIE avant même le contrôle d'identité. Parcourir les identités
     // de l'établissement par pages, puis limiter les correspondances exactes.
     const pageSize = 500;
+    const variants: StudentRow[] = [];
     for (let offset = 0; ; offset += pageSize) {
       const { data, error } = await studentsQuery().range(offset, offset + pageSize - 1);
       if (error) return NextResponse.json({ error: error.message }, { status: 400 });
       const candidates = (data ?? []) as StudentRow[];
-      studs.push(...candidates.filter((student) => studentMatchesIdentity(student, {
-        lastName: lastNameRaw,
-        firstName: firstNameRaw,
-      })));
+      if (identitySearch) {
+        studs.push(...candidates.filter((student) => studentMatchesIdentity(student, {
+          lastName: lastNameRaw,
+          firstName: firstNameRaw,
+        })));
+      } else {
+        for (const student of candidates) {
+          const rank = studentFullNameMatchRank(student, fullName);
+          if (rank === 2) studs.push(student);
+          else if (rank === 1 && variants.length <= limit) variants.push(student);
+        }
+      }
       if (studs.length > limit || candidates.length < pageSize) break;
     }
+    studs.push(...variants);
     hasMore = studs.length > limit;
     studs = studs.slice(0, limit);
   } else {

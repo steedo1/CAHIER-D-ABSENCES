@@ -44,6 +44,10 @@ export async function POST(request: NextRequest) {
   const classId = String(body.class_id || "").trim();
   const studentId = String(body.student_id || "").trim();
   const matricule = String(body.matricule || "").trim();
+  const action = body.action ?? "assign";
+  if (!["assign", "add_teaching", "transfer_teaching"].includes(action)) {
+    return reply({ error: "invalid_action" }, 400);
+  }
   if (!UUID.test(classId) || (!UUID.test(studentId) && !matricule) ||
     (studentId && !UUID.test(studentId)) || matricule.length > 100) {
     return reply({ error: "invalid_student_or_class" }, 400);
@@ -76,6 +80,7 @@ export async function POST(request: NextRequest) {
 
   const pupilQuery = srv.from("students")
     .select("id,first_name,last_name,matricule")
+    .or("lifecycle_status.is.null,lifecycle_status.eq.active")
     .eq("institution_id", institutionId);
   const { data: pupil, error: pupilError } = studentId
     ? await pupilQuery.eq("id", studentId).maybeSingle()
@@ -115,12 +120,18 @@ export async function POST(request: NextRequest) {
   if (links.includes(pupil.id)) return reply({ ok: true, already_present: true, student: pupil });
   if (links.length >= 700) return reply({ error: "arabic_class_full" }, 409);
 
-  // An Arabic-to-Arabic transfer moves the pedagogical link (not the home).
+  // Only an Arabic-to-Arabic transfer may move an existing pedagogical link.
   const oldIds = Object.entries(yearPolicy?.classes || {})
     .filter(([id, value]) => id !== classId && value.tracks.length === 1 &&
       value.tracks[0] === "arabic" && value.linkedStudentIds?.includes(pupil.id))
     .map(([id]) => id);
   if (oldIds.length > 1) return reply({ error: "multiple_arabic_links_require_review" }, 409);
+  if (oldIds.length && action === "add_teaching") {
+    return reply({ error: "arabic_enrollment_already_exists" }, 409);
+  }
+  if (!oldIds.length && action === "transfer_teaching") {
+    return reply({ error: "arabic_enrollment_required_for_transfer" }, 409);
+  }
   if (oldIds.length) {
     const { data: previous, error } = await srv.from("classes")
       .select("id,level,academic_year").eq("institution_id", institutionId)

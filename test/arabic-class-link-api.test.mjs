@@ -58,10 +58,10 @@ function setup() {
   return db;
 }
 
-const request = (classId, pupilId = studentId, matricule = "") => new NextRequest(baseUrl, {
+const request = (classId, pupilId = studentId, matricule = "", action) => new NextRequest(baseUrl, {
   method: "POST",
   headers: { "content-type": "application/json", origin: "https://example.invalid" },
-  body: JSON.stringify({ class_id: classId, student_id: pupilId, matricule }),
+  body: JSON.stringify({ class_id: classId, student_id: pupilId, matricule, action }),
 });
 
 test("Arabic add links an existing French pupil without an extra enrollment or finance mutation", async () => {
@@ -125,9 +125,9 @@ test("EPC: CP2 Arabic to CP1 Arabic preserves CP2 French and does not duplicate 
   db.tables.classes.find(row => row.id === arabicNextId).label = "CP1 — Arabe";
   const feeSnapshot = structuredClone(db.tables.school_fees || []);
   const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
-  const placed = await handler.POST(request(arabicId));
+  const placed = await handler.POST(request(arabicId, studentId, "", "add_teaching"));
   assert.equal(placed.status, 200, JSON.stringify(await placed.clone().json()));
-  const moved = await handler.POST(request(arabicNextId, "", "EPC260001"));
+  const moved = await handler.POST(request(arabicNextId, "", "EPC260001", "transfer_teaching"));
   assert.equal(moved.status, 200, JSON.stringify(await moved.clone().json()));
   const result = await moved.json();
   assert.equal(result.transferred, true);
@@ -140,6 +140,51 @@ test("EPC: CP2 Arabic to CP1 Arabic preserves CP2 French and does not duplicate 
   assert.equal(db.tables.class_enrollments.length, 1);
   assert.equal(db.tables.class_enrollments[0].class_id, homeId);
   assert.deepEqual(db.tables.school_fees || [], feeSnapshot);
+  assert.equal(db.calls.some(call => call.op !== "read" && call.table !== "institutions"), false);
+});
+
+test("EPC: CM1 French and 5e Arabic share one dossier and one general headcount", async () => {
+  const db = setup();
+  const settings = db.tables.institutions[0].settings_json;
+  settings.school_cycles_v1.enabledCycles.push("secondary");
+  settings.school_cycles_v1.teachingTracksByCycle.secondary = ["french", "arabic"];
+  const home = db.tables.classes.find(row => row.id === homeId);
+  const previous = db.tables.classes.find(row => row.id === arabicId);
+  const target = db.tables.classes.find(row => row.id === arabicNextId);
+  Object.assign(home, { level: "CM1", label: "CM1 — Français" });
+  Object.assign(previous, { level: "CM1", label: "CM1 — Arabe" });
+  Object.assign(target, { level: "5ème", label: "5ème — Arabe" });
+  db.tables.student_grades = [{ student_id: studentId, evaluation_id: "french-grade", score: 9 }];
+  const protectedTables = structuredClone({
+    enrollments: db.tables.class_enrollments, students: db.tables.students, grades: db.tables.student_grades,
+  });
+  const loader = createFixtureRouteLoader(db, db.legacyAdminId);
+  const handler = loader(routePath);
+  const transferWithoutArabicClass = await handler.POST(request(target.id, studentId, "", "transfer_teaching"));
+  assert.equal(transferWithoutArabicClass.status, 409);
+  assert.equal((await transferWithoutArabicClass.json()).error, "arabic_enrollment_required_for_transfer");
+  assert.equal((await handler.POST(request(previous.id, studentId, "", "add_teaching"))).status, 200);
+  const addWithExistingArabicClass = await handler.POST(request(target.id, studentId, "", "add_teaching"));
+  assert.equal(addWithExistingArabicClass.status, 409);
+  assert.equal((await addWithExistingArabicClass.json()).error, "arabic_enrollment_already_exists");
+  db.tables.student_grades.push({ student_id: studentId, evaluation_id: "old-arabic-grade", score: 8 });
+  protectedTables.grades.push({ student_id: studentId, evaluation_id: "old-arabic-grade", score: 8 });
+  const moved = await handler.POST(request(target.id, studentId, "", "transfer_teaching"));
+  assert.equal(moved.status, 200, JSON.stringify(await moved.clone().json()));
+  assert.equal((await moved.json()).cross_cycle, true);
+  const { loadLinkedClassEnrollments } = loader("src/lib/server/school-linked-class-roster.ts");
+  assert.deepEqual(await loadLinkedClassEnrollments(db.service, db.legacyId, previous, settings), []);
+  assert.deepEqual((await loadLinkedClassEnrollments(db.service, db.legacyId, target, settings)).map(row => row.student_id), [studentId]);
+  const { expandPedagogicalEnrollments, readStudentProgramSettings } = loader("src/lib/school-student-programs.ts");
+  const expanded = expandPedagogicalEnrollments(settings.school_cycles_v1,
+    readStudentProgramSettings(settings).years["2026-2027"],
+    [{ ...home, cycle: "primary" }, { ...previous, cycle: "primary" }, { ...target, cycle: "secondary" }],
+    db.tables.class_enrollments);
+  assert.deepEqual(expanded.map(row => row.class_id), [home.id, target.id]);
+  assert.equal(new Set(expanded.map(row => row.student_id)).size, 1);
+  assert.deepEqual({
+    enrollments: db.tables.class_enrollments, students: db.tables.students, grades: db.tables.student_grades,
+  }, protectedTables);
   assert.equal(db.calls.some(call => call.op !== "read" && call.table !== "institutions"), false);
 });
 
