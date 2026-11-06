@@ -406,7 +406,8 @@ for (const frenchLevel of ["CP1", "CP2", "6ème"]) test(`French ${frenchLevel} p
   db.tables.institutions[0].settings_json.school_student_programs_v1 = {
     version: 1, years: { "2026-2027": { classes: {
       [frenchClass]: { tracks: ["french"], students: {} },
-      [classId]: { tracks: ["arabic"], students: {}, linkedStudentIds: [virtualStudent] },
+      [classId]: { tracks: ["arabic"], students: {},
+        linkedStudentIds: [virtualStudent, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab"] },
     } } },
   };
   const response = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url());

@@ -87,7 +87,7 @@ export async function GET(req: NextRequest) {
     .select("settings_json").eq("id", inst).maybeSingle();
   if (institutionError) return NextResponse.json({ error: "school_configuration_unavailable" }, { status: 503 });
   let linked;
-  try { linked = await loadLinkedClassEnrollments(srv, inst, classRow, institution?.settings_json); }
+  try { linked = await loadLinkedClassEnrollments(srv, inst, classRow, institution?.settings_json, { tolerateStaleLinks: true }); }
   catch { return NextResponse.json({ error: "STUDENT_PROGRAM_LINK_STALE" }, { status: 409 }); }
   const ids = new Set((data || []).map((row: any) => row.student_id));
   const allEnrollments = [...(data || []), ...linked.filter(row => !ids.has(row.student_id))];

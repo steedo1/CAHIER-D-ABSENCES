@@ -18,6 +18,37 @@ const STUDENT_SEARCH_ROLES = [
   "finance",
 ] as const;
 
+// A one-letter spelling difference in a surname is a suggestion only.
+function similarSurname(requested: string, stored: string): boolean {
+  if (requested.length < 5 || stored.length < 5 || Math.abs(requested.length - stored.length) > 1) return false;
+  const [shorter, longer] = requested.length <= stored.length ? [requested, stored] : [stored, requested];
+  let index = 0;
+  while (index < shorter.length && shorter[index] === longer[index]) index++;
+  return shorter.slice(index + (shorter.length === longer.length ? 1 : 0)) === longer.slice(index + 1);
+}
+
+function matchFullName(student: StudentRow, words: string[]): "exact" | "similar" | null {
+  const surname = studentIdentityWords(student.last_name);
+  if (!surname.length || words.length <= surname.length) return null;
+  const firstNames = studentIdentityWords(student.first_name);
+  const matches = (name: string[], given: string[]) => {
+    if (!given.every(word => firstNames.includes(word))) return null;
+    if (surname.join(" ") === name.join(" ")) return "exact";
+    return similarSurname(name.join(" "), surname.join(" ")) ? "similar" : null;
+  };
+  const surnameFirst = matches(words.slice(0, surname.length), words.slice(surname.length));
+  const firstNameFirst = matches(words.slice(-surname.length), words.slice(0, -surname.length));
+  if (surnameFirst === "exact" || firstNameFirst === "exact") return "exact";
+  return surnameFirst || firstNameFirst;
+}
+
+type StudentRow = {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  matricule: string | null;
+};
+
 export async function GET(req: NextRequest) {
   const access = await requireInstitutionAccess({
     allowedRoles: STUDENT_SEARCH_ROLES,
@@ -31,7 +62,10 @@ export async function GET(req: NextRequest) {
   const qRaw = (url.searchParams.get("q") || "").trim();
   const lastNameRaw = (url.searchParams.get("last_name") || "").trim();
   const firstNameRaw = (url.searchParams.get("first_name") || "").trim();
-  const identitySearch = Boolean(lastNameRaw || firstNameRaw);
+  const fullNameSearch = url.searchParams.has("full_name");
+  const fullNameRaw = (url.searchParams.get("full_name") || "").trim();
+  const fullNameWords = studentIdentityWords(fullNameRaw);
+  const identitySearch = fullNameSearch || Boolean(lastNameRaw || firstNameRaw);
   const requestedLimit = Number(url.searchParams.get("limit") || 20);
   const limit = Number.isFinite(requestedLimit)
     ? Math.min(50, Math.max(1, Math.floor(requestedLimit)))
@@ -40,8 +74,9 @@ export async function GET(req: NextRequest) {
 
   if (identitySearch) {
     if (
-      studentIdentityWords(lastNameRaw).join("").length < 2 ||
-      studentIdentityWords(firstNameRaw).length === 0
+      fullNameSearch ? fullNameWords.length < 2 || fullNameRaw.length > 160 :
+        studentIdentityWords(lastNameRaw).join("").length < 2 ||
+        studentIdentityWords(firstNameRaw).length === 0
     ) {
       return NextResponse.json({
         items: [],
@@ -68,29 +103,34 @@ export async function GET(req: NextRequest) {
     .order("first_name", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true });
 
-  type StudentRow = {
-    id: string;
-    first_name: string | null;
-    last_name: string | null;
-    matricule: string | null;
-  };
   let studs: StudentRow[] = [];
   let hasMore = false;
+  let spellingSuggestions = false;
 
   if (identitySearch) {
     // ILIKE ne retire pas les accents en base. Normaliser uniquement la saisie
     // excluait ÉLODIE avant même le contrôle d'identité. Parcourir les identités
     // de l'établissement par pages, puis limiter les correspondances exactes.
     const pageSize = 500;
+    const similar: StudentRow[] = [];
     for (let offset = 0; ; offset += pageSize) {
       const { data, error } = await studentsQuery().range(offset, offset + pageSize - 1);
       if (error) return NextResponse.json({ error: error.message }, { status: 400 });
       const candidates = (data ?? []) as StudentRow[];
-      studs.push(...candidates.filter((student) => studentMatchesIdentity(student, {
-        lastName: lastNameRaw,
-        firstName: firstNameRaw,
-      })));
+      for (const student of candidates) {
+        if (fullNameSearch) {
+          const match = matchFullName(student, fullNameWords);
+          if (match === "exact") studs.push(student);
+          if (match === "similar" && similar.length <= limit) similar.push(student);
+        } else if (studentMatchesIdentity(student, { lastName: lastNameRaw, firstName: firstNameRaw })) {
+          studs.push(student);
+        }
+      }
       if (studs.length > limit || candidates.length < pageSize) break;
+    }
+    if (fullNameSearch && !studs.length && similar.length) {
+      studs = similar;
+      spellingSuggestions = true;
     }
     hasMore = studs.length > limit;
     studs = studs.slice(0, limit);
@@ -156,5 +196,6 @@ export async function GET(req: NextRequest) {
     identity_ready: identitySearch ? true : undefined,
     ambiguous: identitySearch ? items.length > 1 || hasMore : undefined,
     has_more: hasMore,
+    spelling_suggestions: spellingSuggestions || undefined,
   });
 }

@@ -182,9 +182,17 @@ test("linked Arabic pupil appears in the teacher and paper rosters and can be gr
   db.tables.classes[0].level = "6ème";
   settings.school_cycles_v1.classCycleById[cFr] = "secondary";
   const crossCycle = await teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cAr}`));
-  assert.equal(crossCycle.status, 409, "cross-cycle link remains unauthorized for teachers and grades");
+  assert.equal(crossCycle.status, 200);
+  assert.deepEqual((await crossCycle.json()).items, [], "a link to a disabled cycle is excluded");
+  const invalidCycleGrade = await scores.POST(req("/api/teacher/grades/scores/bulk", {
+    evaluation_id: created.item.id, items: [{ student_id: linkedId, score: 17 }],
+  }));
+  assert.equal(invalidCycleGrade.status, 403, "an excluded pupil cannot receive a grade");
   settings.school_cycles_v1.enabledCycles.push("secondary");
   settings.school_cycles_v1.teachingTracksByCycle.secondary = ["french"];
+  settings.school_student_programs_v1.years["2026-2027"].classes[cAr].linkedStudentIds.push(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+  );
   const enabled = await teacher("src/app/api/teacher/roster/route.ts").GET(req(`/api/teacher/roster?class_id=${cAr}`));
   assert.equal(enabled.status, 200, JSON.stringify(await enabled.clone().json()));
   assert.equal((await enabled.json()).items[0].id, linkedId);

@@ -124,6 +124,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: exErr.message }, { status: 400 });
 
       if (exist) {
+        if (body.create_only === true) {
+          return NextResponse.json({
+            error: STUDENT_IDENTITY_CONFLICT_MESSAGE,
+            code: "student_identity_exists",
+          }, { status: 409 });
+        }
         if (exist.lifecycle_status === "duplicate_merged") {
           return NextResponse.json({ error: "Cette ancienne fiche a déjà été fusionnée. Recherchez la fiche actuelle de l’élève.", code: "student_already_merged" }, { status: 409 });
         }

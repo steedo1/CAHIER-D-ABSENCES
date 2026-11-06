@@ -47,8 +47,9 @@ export async function loadLinkedClassEnrollments(service: SupabaseClient, instit
   }
   if (!allowed.length) return [];
   const { data: students, error: studentError } = await service.from("students")
-    .select("id,first_name,last_name,full_name,full_name_ar,matricule,gender,birthdate,birth_place,parent_names,parent_contact,nationality,is_repeater,lv2,is_affecte,is_boarder")
-    .eq("institution_id", institutionId).in("id", allowed).limit(701);
+    .select("id,institution_id,first_name,last_name,full_name,full_name_ar,matricule,gender,birthdate,birth_place,parent_names,parent_contact,nationality,is_repeater,lv2,is_affecte,is_boarder,photo_path,photo_updated_at")
+    .eq("institution_id", institutionId).in("id", allowed)
+    .or("lifecycle_status.is.null,lifecycle_status.eq.active").limit(701);
   if (studentError || !students) throw Error("STUDENT_SCOPE_INVALID");
   if (students.length !== allowed.length) {
     if (!options?.tolerateStaleLinks) throw Error("STUDENT_SCOPE_INVALID");
@@ -85,7 +86,7 @@ export async function specializedGradeStudentsAllowed(service: SupabaseClient, a
   const [enrolled, linked] = await Promise.all([
     service.from("class_enrollments").select("student_id").eq("institution_id", institutionId)
       .eq("class_id", classId).is("end_date", null).limit(1501),
-    loadLinkedClassEnrollments(service, institutionId, classroom.data, institution.settings_json),
+    loadLinkedClassEnrollments(service, institutionId, classroom.data, institution.settings_json, { tolerateStaleLinks: true }),
   ]);
   if (enrolled.error || !enrolled.data || enrolled.data.length >= 1501) return false;
   const school = parseSchoolCyclesSettings(institution.settings_json);

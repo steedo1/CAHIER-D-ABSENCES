@@ -41,6 +41,11 @@ export async function POST(request: NextRequest) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return reply({ error: "invalid_payload" }, 400);
   }
+  // Cached clients may still send the original combined operation.
+  const operation = body.operation;
+  if (operation !== undefined && operation !== "add" && operation !== "transfer") {
+    return reply({ error: "invalid_teaching_operation" }, 400);
+  }
   const classId = String(body.class_id || "").trim();
   const studentId = String(body.student_id || "").trim();
   const matricule = String(body.matricule || "").trim();
@@ -76,7 +81,8 @@ export async function POST(request: NextRequest) {
 
   const pupilQuery = srv.from("students")
     .select("id,first_name,last_name,matricule")
-    .eq("institution_id", institutionId);
+    .eq("institution_id", institutionId)
+    .or("lifecycle_status.is.null,lifecycle_status.eq.active");
   const { data: pupil, error: pupilError } = studentId
     ? await pupilQuery.eq("id", studentId).maybeSingle()
     : await pupilQuery.eq("matricule", matricule).maybeSingle();
@@ -121,6 +127,12 @@ export async function POST(request: NextRequest) {
       value.tracks[0] === "arabic" && value.linkedStudentIds?.includes(pupil.id))
     .map(([id]) => id);
   if (oldIds.length > 1) return reply({ error: "multiple_arabic_links_require_review" }, 409);
+  if (operation === "add" && oldIds.length) {
+    return reply({ error: "arabic_transfer_required" }, 409);
+  }
+  if (operation === "transfer" && !oldIds.length) {
+    return reply({ error: "arabic_add_required" }, 409);
+  }
   if (oldIds.length) {
     const { data: previous, error } = await srv.from("classes")
       .select("id,level,academic_year").eq("institution_id", institutionId)

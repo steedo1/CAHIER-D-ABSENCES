@@ -58,10 +58,10 @@ function setup() {
   return db;
 }
 
-const request = (classId, pupilId = studentId, matricule = "") => new NextRequest(baseUrl, {
+const request = (classId, pupilId = studentId, matricule = "", operation) => new NextRequest(baseUrl, {
   method: "POST",
   headers: { "content-type": "application/json", origin: "https://example.invalid" },
-  body: JSON.stringify({ class_id: classId, student_id: pupilId, matricule }),
+  body: JSON.stringify({ class_id: classId, student_id: pupilId, matricule, operation }),
 });
 
 test("Arabic add links an existing French pupil without an extra enrollment or finance mutation", async () => {
@@ -127,7 +127,7 @@ test("EPC: CP2 Arabic to CP1 Arabic preserves CP2 French and does not duplicate 
   const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
   const placed = await handler.POST(request(arabicId));
   assert.equal(placed.status, 200, JSON.stringify(await placed.clone().json()));
-  const moved = await handler.POST(request(arabicNextId, "", "EPC260001"));
+  const moved = await handler.POST(request(arabicNextId, "", "EPC260001", "transfer"));
   assert.equal(moved.status, 200, JSON.stringify(await moved.clone().json()));
   const result = await moved.json();
   assert.equal(result.transferred, true);
@@ -237,5 +237,88 @@ test("French and Arabic primary/secondary cycles are independent in both directi
     assert.deepEqual(db.tables.class_enrollments, enrollment);
     assert.deepEqual(db.tables.students, students);
     assert.equal(db.calls.some(call => call.op !== "read" && call.table !== "institutions"), false);
+  }
+});
+
+
+test("EPC: add CM1 French to 5e Arabic, with one profile and unchanged published marks", async () => {
+  const db = setup();
+  const settings = db.tables.institutions[0].settings_json;
+  settings.school_cycles_v1.enabledCycles.push("secondary");
+  settings.school_cycles_v1.teachingTracksByCycle.secondary = ["french", "arabic"];
+  db.tables.classes.find(row => row.id === homeId).level = "CM1";
+  db.tables.classes.find(row => row.id === arabicNextId).level = "5ème";
+  db.tables.grade_published_scores = [{ class_id: homeId, student_id: studentId, score: 8, scale: 10 }];
+  const before = structuredClone(db.tables);
+  const load = createFixtureRouteLoader(db, db.legacyAdminId);
+  const route = load(routePath);
+  const missingSource = await route.POST(request(arabicNextId, studentId, "", "transfer"));
+  assert.equal(missingSource.status, 409);
+  assert.equal((await missingSource.json()).error, "arabic_add_required");
+  const added = await route.POST(request(arabicNextId, studentId, "", "add"));
+  assert.equal(added.status, 200, JSON.stringify(await added.clone().json()));
+  assert.equal((await added.json()).cross_cycle, true);
+
+  const school = load("src/lib/school-cycles.ts").parseSchoolCyclesSettings(settings);
+  const programs = load("src/lib/school-student-programs.ts");
+  const year = programs.readStudentProgramSettings(settings).years["2026-2027"];
+  const classes = db.tables.classes.map(row => ({ ...row, cycle: row.id === arabicNextId ? "secondary" : "primary" }));
+  const memberships = programs.expandPedagogicalEnrollments(school, year, classes, db.tables.class_enrollments);
+  assert.deepEqual(memberships.map(row => [row.class_id, row.student_id]), [[homeId, studentId], [arabicNextId, studentId]]);
+  assert.equal(new Set(memberships.map(row => row.student_id)).size, 1);
+  assert.equal(programs.aggregateInstitutionProgramTotals(school, year, classes, db.tables.class_enrollments).arabic.students, 1);
+  assert.equal(programs.aggregateInstitutionProgramTotals(school, year, classes, db.tables.class_enrollments).french.students, 1);
+
+  const roster = await load("src/lib/server/school-linked-class-roster.ts")
+    .loadLinkedClassEnrollments(db.service, db.legacyId, classes.find(row => row.id === arabicNextId), settings);
+  assert.deepEqual(roster.map(row => row.student_id), [studentId]);
+  assert.deepEqual(db.tables.class_enrollments, before.class_enrollments);
+  assert.deepEqual(db.tables.grade_published_scores, before.grade_published_scores);
+  assert.deepEqual(db.tables.students, before.students);
+  assert.equal(db.calls.filter(call => call.op !== "read").length, 1);
+});
+
+test("EPC: add never moves an existing Arabic membership; transfer preserves French and Arabic marks", async () => {
+  const db = setup();
+  const settings = db.tables.institutions[0].settings_json;
+  const policies = settings.school_student_programs_v1.years["2026-2027"].classes;
+  policies[arabicId].linkedStudentIds = [studentId];
+  db.tables.classes.find(row => row.id === homeId).level = "CM1";
+  db.tables.classes.find(row => row.id === arabicId).level = "CM1";
+  db.tables.classes.find(row => row.id === arabicNextId).level = "5ème";
+  settings.school_cycles_v1.enabledCycles.push("secondary");
+  settings.school_cycles_v1.teachingTracksByCycle.secondary = ["french", "arabic"];
+  db.tables.student_grades = [{ evaluation_id: "CM1-AR-test", student_id: studentId, score: 9 }];
+  const before = structuredClone(db.tables);
+  const route = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+  const conflict = await route.POST(request(arabicNextId, studentId, "", "add"));
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).error, "arabic_transfer_required");
+  assert.deepEqual(db.tables, before);
+
+  const transfer = await route.POST(request(arabicNextId, "", "EPC260001", "transfer"));
+  assert.equal(transfer.status, 200, JSON.stringify(await transfer.clone().json()));
+  assert.equal((await transfer.json()).transferred, true);
+  const saved = settings.school_student_programs_v1.years["2026-2027"].classes;
+  assert.deepEqual(saved[arabicId].linkedStudentIds, []);
+  assert.deepEqual(saved[arabicNextId].linkedStudentIds, [studentId]);
+  assert.deepEqual(db.tables.student_grades, before.student_grades);
+  assert.deepEqual(db.tables.class_enrollments, before.class_enrollments);
+});
+
+
+test("CSCA Aboisso and Collège Privé Dieudonné configurations cannot invoke pedagogical assignment", async () => {
+  for (const school of ["CSCA Aboisso", "Collège Privé Dieudonné"]) {
+    const db = setup();
+    const institution = db.tables.institutions[0];
+    institution.name = school;
+    institution.settings_json = { finance: { preserved: true } };
+    const before = structuredClone(db.tables);
+    const response = await createFixtureRouteLoader(db, db.legacyAdminId)(routePath)
+      .POST(request(arabicNextId, studentId, "", "add"));
+    assert.equal(response.status, 404, school);
+    assert.equal((await response.json()).error, "not_bilingual_school");
+    assert.deepEqual(db.tables, before);
+    assert.equal(db.calls.some(call => call.op !== "read"), false);
   }
 });

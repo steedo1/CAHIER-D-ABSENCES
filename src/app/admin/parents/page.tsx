@@ -16,7 +16,7 @@ import { resolveAttestationSignatories } from "@/lib/franco-arabic-document-sign
 import { attestationPhotoUrlForCurrentOrigin } from "@/lib/attestation-photo-url";
 import { documentNationalEmblem } from "@/lib/document-national-emblem";
 import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
-import { isBilingualSchool } from "@/lib/school-student-programs";
+import { isBilingualSchool, readStudentProgramSettings } from "@/lib/school-student-programs";
 import { buildOrdinaryClassRosterCsv, ordinaryClassRosterCsvFilename } from "@/lib/class-roster-csv";
 import {
   DEFAULT_EDUCATION_SCOPE,
@@ -969,11 +969,14 @@ export default function AdminStudentsByClassPage() {
   // The official French enrollment is deliberately unique. Arabic classes have
   // a second, pedagogical roster resolved by the already-validated PDF API.
   const selectedClass = classes.find((row) => row.id === classId);
-  const isArabicClassSelection = Boolean(
-    selectedClass && /(?:^|[\s—-])(?:arabe|arabic|ar)(?:$|[\s—-])/i.test(
+  const classPrograms = useMemo(() =>
+    readStudentProgramSettings(cfg.settings_json).years[academicYear]?.classes, [cfg.settings_json, academicYear]);
+  const selectedTracks = classPrograms?.[classId]?.tracks;
+  const isArabicClassSelection = selectedTracks?.length
+    ? selectedTracks.length === 1 && selectedTracks[0] === "arabic"
+    : Boolean(selectedClass && /(?:^|[\s—-])(?:arabe|arabic|ar)(?:$|[\s—-])/i.test(
       String(selectedClass.name || selectedClass.label || ""),
-    ),
-  );
+    ));
   // Restrict the new CSV action to ordinary schools, not bilingual programs.
   // Wait for verified school settings rather than assuming a missing setting
   // means a school is ordinary during the initial loading state.
@@ -982,6 +985,10 @@ export default function AdminStudentsByClassPage() {
   const isPrimaryClassSelection = /^(?:MAT|CP[12]|CE[12]|CM[12])$/i.test(
     String(selectedClass?.level || level || "").trim(),
   );
+  const frenchClasses = isArabicClassSelection ? classes.filter(row => {
+    const tracks = classPrograms?.[row.id]?.tracks;
+    return tracks?.length === 1 && tracks[0] === "french";
+  }) : [];
   const [q, setQ] = useState("");
 
   const [page, setPage] = useState(1);
@@ -1006,8 +1013,9 @@ export default function AdminStudentsByClassPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const [assignOpen, setAssignOpen] = useState(false);
-  const [assignMode, setAssignMode] = useState<"new" | "transfer">("new");
+  const [assignMode, setAssignMode] = useState<"new" | "transfer" | "add">("new");
   const [assigning, setAssigning] = useState(false);
+  const [frenchClassId, setFrenchClassId] = useState("");
 
   const [form, setForm] = useState({
     new_last_name: "",
@@ -1022,10 +1030,15 @@ export default function AdminStudentsByClassPage() {
     last_name: "",
     first_name: "",
   });
+  const searchName = identitySearch.last_name.trim();
+  const searchGivenNames = identitySearch.first_name.trim();
+  const searchReady = isArabicClassSelection ? searchName.split(/\s+/).length >= 2 :
+    searchName.length >= 2 && Boolean(searchGivenNames);
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchAttempt, setSearchAttempt] = useState(0);
   const [searchHasMore, setSearchHasMore] = useState(false);
+  const [spellingSuggestions, setSpellingSuggestions] = useState(false);
   const [searchItems, setSearchItems] = useState<SearchStudentRow[]>([]);
   const [selectedStu, setSelectedStu] = useState<SearchStudentRow | null>(null);
 
@@ -1060,6 +1073,7 @@ export default function AdminStudentsByClassPage() {
   }, []);
 
   function resetAssign() {
+    setFrenchClassId("");
     setAssignMode(financeTransferOnly ? "transfer" : "new");
     setForm({
       new_last_name: "",
@@ -1219,6 +1233,7 @@ export default function AdminStudentsByClassPage() {
           ...student,
           class_id: classId,
           class_label: classLabel,
+          level: selectedClass ? getClassLevelCode(selectedClass) : null,
           pedagogical_link: true,
         }));
         if (!controller.signal.aborted) setArabicRoster({ classId, items: rows });
@@ -1231,8 +1246,7 @@ export default function AdminStudentsByClassPage() {
       }
     })();
     return () => controller.abort();
-    // selectedClass name is stable once the school class list is loaded.
-  }, [classId, isArabicClassSelection, arabicRosterRefresh]);
+  }, [classId, isArabicClassSelection, arabicRosterRefresh, selectedClass]);
 
   const classLevelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1325,14 +1339,13 @@ export default function AdminStudentsByClassPage() {
     setSearchError(null);
     setSearchItems([]);
     setSearchHasMore(false);
-    if (!assignOpen || assignMode !== "transfer") {
+    setSpellingSuggestions(false);
+    if (!assignOpen || assignMode === "new") {
       setSearchBusy(false);
       return;
     }
 
-    const lastName = identitySearch.last_name.trim();
-    const firstName = identitySearch.first_name.trim();
-    if (lastName.length < 2 || !firstName) {
+    if (!searchReady) {
       setSearchBusy(false);
       return;
     }
@@ -1343,18 +1356,22 @@ export default function AdminStudentsByClassPage() {
 
     const tid = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `/api/admin/students/search?last_name=${encodeURIComponent(
-            lastName,
-          )}&first_name=${encodeURIComponent(firstName)}&academic_year=${encodeURIComponent(academicYear)}&limit=50`,
-          { signal: ctrl.signal, cache: "no-store" }
-        );
+        const params = new URLSearchParams({ academic_year: academicYear, limit: "50" });
+        if (isArabicClassSelection) params.set("full_name", searchName);
+        else {
+          params.set("last_name", searchName);
+          params.set("first_name", searchGivenNames);
+        }
+        const res = await fetch(`/api/admin/students/search?${params}`, {
+          signal: ctrl.signal, cache: "no-store",
+        });
         const json = await res.json().catch(() => ({}));
         if (ctrl.signal.aborted) return;
 
         if (res.ok) {
           setSearchItems(Array.isArray(json?.items) ? json.items : []);
           setSearchHasMore(json?.has_more === true);
+          setSpellingSuggestions(json?.spelling_suggestions === true);
         } else {
           setSearchError(res.status === 401
             ? "Votre session a expiré. Reconnectez-vous pour rechercher un élève."
@@ -1373,7 +1390,7 @@ export default function AdminStudentsByClassPage() {
       clearTimeout(tid);
       ctrl.abort();
     };
-  }, [assignOpen, assignMode, identitySearch, academicYear, searchAttempt]);
+  }, [assignOpen, assignMode, searchName, searchGivenNames, searchReady, academicYear, searchAttempt, isArabicClassSelection]);
 
   function toggleStudentSelection(studentId: string, checked: boolean) {
     setSelectedIds((prev) => {
@@ -1618,11 +1635,6 @@ export default function AdminStudentsByClassPage() {
   }
 
   async function submitAssign() {
-    if (isArabicClassSelection && assignMode === "new") {
-      setAssignMode("transfer");
-      setMsg("Pour l'enseignement arabe, choisissez un élève déjà inscrit administrativement en français.");
-      return;
-    }
     if (!classId) {
       setMsg("Choisissez d'abord une classe.");
       return;
@@ -1639,18 +1651,24 @@ export default function AdminStudentsByClassPage() {
 
     try {
       let body: any;
+      const creatingFrenchHome = isArabicClassSelection && assignMode === "new";
+      const enrollmentClassId = creatingFrenchHome ? frenchClassId : classId;
 
       if (assignMode === "new") {
+        if (creatingFrenchHome && !frenchClasses.some(row => row.id === enrollmentClassId)) {
+          throw new Error("Choisissez la classe française pour ouvrir le dossier de l’élève.");
+        }
         const first_name = form.new_first_name.trim();
         const last_name = form.new_last_name.trim();
         const matricule = form.new_matricule.trim();
-        if (!first_name && !last_name) {
-          throw new Error("Renseignez au moins le nom ou les prenoms.");
+        if (!first_name || !last_name) {
+          throw new Error("Renseignez le nom et au moins un prénom.");
         }
 
         body = {
           action: "create_and_assign",
-          class_id: classId,
+          class_id: enrollmentClassId,
+          ...(creatingFrenchHome ? { create_only: true } : {}),
           first_name: first_name || null,
           last_name: last_name || null,
           matricule: matricule || null,
@@ -1664,30 +1682,20 @@ export default function AdminStudentsByClassPage() {
               : form.new_is_boarder === "true",
         };
       } else {
-        if (selectedStu?.id) {
-          body = {
-            action: "assign",
-            class_id: classId,
-            student_id: selectedStu.id,
-          };
-        } else {
-          const matr = form.transfer_matricule.trim();
-          if (!matr) {
-            throw new Error(
-              "Renseignez un matricule ou selectionnez un eleve dans la recherche."
-            );
-          }
-
-          body = {
-            action: "assign",
-            class_id: classId,
-            matricule: matr,
-          };
+        const matricule = form.transfer_matricule.trim();
+        if (!selectedStu?.id && !matricule) {
+          throw new Error("Renseignez un matricule ou sélectionnez un élève dans la recherche.");
         }
+        body = {
+          ...(isArabicClassSelection ? { operation: assignMode } : { action: "assign" }),
+          class_id: classId,
+          ...(selectedStu?.id ? { student_id: selectedStu.id } : { matricule }),
+        };
       }
 
+      const teachingOperation = isArabicClassSelection && !creatingFrenchHome;
       const res = await fetch(
-        isArabicClassSelection ? "/api/admin/classes/arabic-link" : "/api/admin/enrollments/assign",
+        teachingOperation ? "/api/admin/classes/arabic-link" : "/api/admin/enrollments/assign",
         {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1715,12 +1723,14 @@ export default function AdminStudentsByClassPage() {
           settings_changed_reload_required: "La répartition a changé : réessayez après actualisation.",
           save_failed: "Enregistrement impossible. Aucun rattachement nouveau n'a été confirmé. Réessayez après avoir vérifié la connexion.",
           arabic_class_full: "Cette classe arabe a atteint sa limite de rattachements.",
+          arabic_transfer_required: "Cet élève suit déjà l’enseignement arabe dans une autre classe. Choisissez « Transférer un élève ».",
+          arabic_add_required: "Cet élève suit actuellement le français seul. Choisissez « Ajouter à un autre enseignement ».",
           student_not_found: "Élève introuvable dans cet établissement.",
         };
         throw new Error(messages[String(json?.error)] || json?.error || "ASSIGN_FAILED");
       }
 
-      if (isArabicClassSelection) {
+      if (teachingOperation) {
         setArabicRosterRefresh((value) => value + 1);
         setAssignOpen(false);
         resetAssign();
@@ -1728,9 +1738,10 @@ export default function AdminStudentsByClassPage() {
           ? "Cet élève figure déjà dans cette classe arabe."
           : json?.transferred
             ? json?.cross_level || json?.cross_cycle
-              ? `Élève transféré vers ${json.arabic_level} arabe. Son inscription en ${json.french_level} français et les frais sont conservés.`
-              : "Élève transféré dans cette classe arabe. L'inscription française et les frais sont conservés."
-            : "Élève ajouté à l'enseignement arabe. L'inscription française et les frais sont conservés.");
+              ? `Élève transféré vers ${json.arabic_level} arabe. Il reste inscrit en ${json.french_level} français.`
+              : "Élève transféré dans cette classe arabe. Il reste inscrit dans sa classe française."
+            : "Élève ajouté à cette classe arabe. Il reste inscrit dans sa classe française.");
+        await loadInstitutionAndYears();
         return;
       }
 
@@ -1744,7 +1755,7 @@ export default function AdminStudentsByClassPage() {
 
       if (!stu?.id) throw new Error("Reponse incomplete: student manquant.");
 
-      const cls = classes.find((c) => c.id === classId);
+      const cls = classes.find((c) => c.id === enrollmentClassId);
       const full =
         [stu.last_name || "", stu.first_name || ""].filter(Boolean).join(" ").trim() ||
         "-";
@@ -1762,7 +1773,7 @@ export default function AdminStudentsByClassPage() {
                   first_name: stu.first_name || null,
                   last_name: stu.last_name || null,
                   full_name: full,
-                  class_id: classId,
+                  class_id: enrollmentClassId,
                   class_label,
                   matricule: stu.matricule,
                   photo_url: stu.photo_url || x.photo_url || null,
@@ -1779,7 +1790,7 @@ export default function AdminStudentsByClassPage() {
             first_name: stu.first_name || null,
             last_name: stu.last_name || null,
             full_name: full,
-            class_id: classId,
+            class_id: enrollmentClassId,
             class_label,
             matricule: stu.matricule,
             photo_url: stu.photo_url || null,
@@ -1788,6 +1799,17 @@ export default function AdminStudentsByClassPage() {
         ];
       });
 
+      if (creatingFrenchHome) {
+        resetAssign();
+        setAssignMode("add");
+        setSelectedStu({
+          ...stu,
+          class_id: enrollmentClassId,
+          class_label: cls?.name || cls?.label || null,
+        });
+        setMsg("Dossier créé dans la classe française. Confirmez maintenant l’ajout à la classe arabe.");
+        return;
+      }
       setAssignOpen(false);
       resetAssign();
 
@@ -1981,15 +2003,15 @@ export default function AdminStudentsByClassPage() {
               <Button
                 tone="slate"
                 onClick={() => {
-                  setAssignMode(financeTransferOnly || isArabicClassSelection ? "transfer" : "new");
+                  setAssignMode(isArabicClassSelection ? "add" : financeTransferOnly ? "transfer" : "new");
                   setMsg(null);
                   setAssignOpen(true);
                 }}
-                disabled={!classId || loading || (isArabicClassSelection && arabicRosterLoading)}
+                disabled={!classId || loading}
                 title={
                   classId
                     ? isArabicClassSelection
-                      ? "Associer ou transférer un élève déjà inscrit en français, sans changer son inscription administrative"
+                      ? "Gérer les inscriptions dans cette classe arabe"
                       : financeTransferOnly
                         ? "Transferer un eleve existant dans cette classe"
                         : "Ajouter ou transferer un eleve dans cette classe"
@@ -2227,7 +2249,7 @@ export default function AdminStudentsByClassPage() {
 
       {canTransferOrRemoveStudents && assignOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-2xl border bg-white p-5 shadow-xl">
+          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">
               <h3 className="text-base font-semibold">
                 {isArabicClassSelection
@@ -2244,13 +2266,38 @@ export default function AdminStudentsByClassPage() {
                 }}
                 className="text-slate-500 hover:text-slate-700"
                 aria-label="Fermer"
+                disabled={assigning}
               >
                 X
               </button>
             </div>
 
             <div className="mt-4">
-              {canCreateOrEditStudents && !isArabicClassSelection ? (
+              {isArabicClassSelection ? (
+                <>
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {canCreateOrEditStudents && (
+                      <Button tone={assignMode === "new" ? "emerald" : "white"}
+                        disabled={assigning} onClick={() => { setAssignMode("new"); setMsg(null); }}>
+                        Nouvel élève
+                      </Button>
+                    )}
+                    <Button tone={assignMode === "transfer" ? "emerald" : "white"}
+                      disabled={assigning} onClick={() => { setAssignMode("transfer"); setMsg(null); }}>
+                      Transférer un élève
+                    </Button>
+                    <Button tone={assignMode === "add" ? "emerald" : "white"}
+                      disabled={assigning} onClick={() => { setAssignMode("add"); setMsg(null); }}>
+                      Ajouter à un autre enseignement
+                    </Button>
+                  </div>
+                  <p className="mb-3 rounded-xl bg-sky-50 px-3 py-2 text-sm text-sky-900">
+                    {assignMode === "new" ? "Créez le dossier dans une classe française, puis ajoutez l’élève à cette classe arabe."
+                      : assignMode === "transfer" ? "Déplacez l’élève de sa classe arabe actuelle vers cette classe. Il conserve sa classe française."
+                        : "Ajoutez un élève déjà inscrit en français à cette classe arabe. Il figurera dans les deux listes."}
+                  </p>
+                </>
+              ) : canCreateOrEditStudents ? (
                 <div className="mb-3 grid grid-cols-2 gap-2">
                   <Button
                     tone={assignMode === "new" ? "emerald" : "white"}
@@ -2268,14 +2315,21 @@ export default function AdminStudentsByClassPage() {
                 </div>
               ) : (
                 <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
-                  {isArabicClassSelection
-                    ? "Choisissez un élève déjà inscrit en français. Son niveau et son cycle en arabe peuvent être différents (primaire ou secondaire). Seule sa classe arabe change : l'inscription française et les frais sont conservés."
-                    : "Selectionnez un eleve existant : sa classe et ses donnees financieres seront transferees vers la classe choisie."}
+                  Selectionnez un eleve existant : sa classe et ses donnees financieres seront transferees vers la classe choisie.
                 </div>
               )}
 
               {assignMode === "new" && canCreateOrEditStudents ? (
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {isArabicClassSelection && (
+                    <label className="text-xs text-slate-600 md:col-span-2">
+                      Classe française
+                      <Select value={frenchClassId} onChange={e => setFrenchClassId(e.target.value)}>
+                        <option value="">Choisir la classe française</option>
+                        {frenchClasses.map(row => <option key={row.id} value={row.id}>{row.name || row.label}</option>)}
+                      </Select>
+                    </label>
+                  )}
                   <div>
                     <div className="mb-1 text-xs text-slate-600">Nom</div>
                     <Input
@@ -2383,9 +2437,10 @@ export default function AdminStudentsByClassPage() {
                     <div className="mb-1 text-xs text-slate-600">
                       Ou rechercher par identité
                     </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className={isArabicClassSelection ? "" : "grid grid-cols-1 gap-2 sm:grid-cols-2"}>
                       <Input
                         value={identitySearch.last_name}
+                        maxLength={isArabicClassSelection ? 160 : undefined}
                         onChange={(e) => {
                           setIdentitySearch((current) => ({
                             ...current,
@@ -2397,10 +2452,10 @@ export default function AdminStudentsByClassPage() {
                             transfer_matricule: "",
                           }));
                         }}
-                        placeholder="Nom (ex : KOUASSI)"
-                        aria-label="Nom de l'élève à transférer"
+                        placeholder={isArabicClassSelection ? "Nom et prénom(s)" : "Nom (ex : KOUASSI)"}
+                        aria-label={isArabicClassSelection ? "Nom et prénom(s) de l’élève" : "Nom de l'élève à transférer"}
                       />
-                      <Input
+                      {!isArabicClassSelection && <Input
                         value={identitySearch.first_name}
                         onChange={(e) => {
                           setIdentitySearch((current) => ({
@@ -2415,11 +2470,11 @@ export default function AdminStudentsByClassPage() {
                         }}
                         placeholder="Au moins un prénom"
                         aria-label="Prénom de l'élève à transférer"
-                      />
+                      />}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
-                      Renseignez le nom exact et au moins un prénom, puis choisissez
-                      l'élève correspondant.
+                      {isArabicClassSelection ? "Saisissez le nom et au moins un prénom, puis vérifiez le matricule avant de choisir."
+                        : "Renseignez le nom exact et au moins un prénom, puis choisissez l’élève correspondant."}
                     </div>
 
                     <div className="mt-2 max-h-56 overflow-auto rounded-xl border">
@@ -2433,8 +2488,7 @@ export default function AdminStudentsByClassPage() {
                             Réessayer
                           </button>
                         </div>
-                      ) : identitySearch.last_name.trim().length < 2 ||
-                        !identitySearch.first_name.trim() ? (
+                      ) : !searchReady ? (
                         <div className="p-3 text-sm text-slate-500">
                           Saisissez le nom et au moins un prénom.
                         </div>
@@ -2444,6 +2498,11 @@ export default function AdminStudentsByClassPage() {
                         </div>
                       ) : (
                         <>
+                          {spellingSuggestions && (
+                            <div className="border-b border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                              Orthographe proche. Vérifiez l’identité et le matricule avant de choisir.
+                            </div>
+                          )}
                           {searchItems.length > 1 && (
                             <div className="border-b border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                               Plusieurs résultats correspondent au nom et au prénom saisis.
@@ -2461,6 +2520,8 @@ export default function AdminStudentsByClassPage() {
                               const fn = (it.first_name || "").trim();
                               const nm = [ln, fn].filter(Boolean).join(" ");
                               const isSelected = selectedStu?.id === it.id;
+                              const arabicClass = isArabicClassSelection && classes.find(row =>
+                                classPrograms?.[row.id]?.linkedStudentIds?.includes(it.id));
 
                               return (
                                 <li
@@ -2479,6 +2540,11 @@ export default function AdminStudentsByClassPage() {
                                         ? ` - Classe : ${it.class_label}`
                                         : ` - Non inscrit${academicYear ? ` en ${academicYear}` : " dans une classe active"}`}
                                     </div>
+                                    {arabicClass && (
+                                      <div className="text-xs text-slate-500">
+                                        Classe arabe actuelle · {arabicClass.name || arabicClass.label}
+                                      </div>
+                                    )}
                                   </div>
 
                                   <Button
@@ -2520,16 +2586,15 @@ export default function AdminStudentsByClassPage() {
                   disabled={
                     assigning ||
                     !classId ||
-                    (assignMode === "transfer" &&
-                      !selectedStu &&
-                      !form.transfer_matricule.trim())
+                    (assignMode === "new" && isArabicClassSelection && !frenchClassId) ||
+                    (assignMode !== "new" && !selectedStu && !form.transfer_matricule.trim())
                   }
                 >
                   {assigning
                     ? "Traitement..."
                     : assignMode === "new"
-                    ? "Ajouter dans la classe"
-                    : "Transferer vers la classe"}
+                      ? isArabicClassSelection ? "Inscrire en français" : "Ajouter dans la classe"
+                      : assignMode === "add" ? "Ajouter à la classe arabe" : "Transférer vers la classe"}
                 </Button>
 
                 <Button

@@ -56,6 +56,7 @@ function database(seed, fail = () => false, before = async () => {}) {
         const clauses = expression.split(",").map((clause) => {
           const [key, op, ...rest] = clause.split("."); const expected = rest.join(".");
           return (row) => op === "is" ? value(row, key) == null
+            : op === "eq" ? value(row, key) === expected
             : op === "neq" ? value(row, key) != null && value(row, key) !== expected
             : op === "ilike" ? String(value(row, key) || "").toUpperCase().includes(expected.replaceAll("%", "").toUpperCase())
             : (() => { throw new Error(`Unsupported filter: ${clause}`); })();
@@ -213,6 +214,26 @@ test("a limited homonym result still signals that more choices exist", async () 
   assert.equal(body.has_more, true);
 });
 
+test("EPC full-name search suggests the stored spelling and preserves exact matches", async () => {
+  const db = database({ students: [
+    student("epc", { last_name: "TRAORA", first_name: "Mariam", matricule: "EPC-TEST" }),
+    student("other", { last_name: "TRAORA", first_name: "Alimata" }),
+    student("foreign", { last_name: "TRAORÉ", first_name: "Mariam", institution_id: "school-b" }),
+  ], classes: [cls("CM1 Français")], class_enrollments: [enrollment("home", "CM1 Français", "epc")] });
+  const h = handlers(db);
+  for (const full_name of ["Traoré Mariam", "Mariam Traoré"]) {
+    const result = await (await search(h, { last_name: "", first_name: "", full_name })).json();
+    assert.equal(result.spelling_suggestions, true);
+    assert.deepEqual(result.items.map(row => [row.id, row.class_label, row.matricule]),
+      [["epc", "CM1 Français", "EPC-TEST"]]);
+  }
+  const exact = await (await search(h, { full_name: "Mariam Traora" })).json();
+  assert.deepEqual(exact.items.map(row => row.id), ["epc"]);
+  assert.equal(exact.spelling_suggestions, undefined);
+  const none = await (await search(h, { full_name: "Traoré Awa" })).json();
+  assert.deepEqual(none.items, []);
+});
+
 test("database errors and forbidden access never become successful empty searches", async () => {
   const db = database({ students: [student("one")] }, (q) => q.table === "class_enrollments");
   assert.equal((await search(handlers(db))).status, 400);
@@ -309,6 +330,20 @@ test("create-and-assign also refuses a merged record found by matricule before u
   const response = await assign(handlers(db), { action: "create_and_assign", last_name: "Nom", first_name: "Prénom", matricule: "TEST123" });
   assert.equal(response.status, 409);
   assert.equal(db.calls.some((call) => call.action !== "read"), false);
+});
+
+test("a new pupil from the Arabic modal cannot reuse an existing matricule or trigger fees", async () => {
+  const seed = transferFixture();
+  seed.students[0].matricule = "EPC-TEST";
+  const db = database(seed);
+  const h = handlers(db);
+  const response = await assign(h, {
+    action: "create_and_assign", create_only: true, last_name: "Nom", first_name: "Prénom", matricule: "EPC-TEST",
+  });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, "student_identity_exists");
+  assert.equal(db.calls.some(call => call.action !== "read"), false);
+  assert.equal(h.financeCalls.length, 0);
 });
 
 test("creation without matricule catches punctuation/accent variants before any write", async () => {
