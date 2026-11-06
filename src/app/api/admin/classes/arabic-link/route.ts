@@ -3,6 +3,7 @@ import { requireInstitutionAccess } from "@/app/api/admin/_helpers/institutionAc
 import { parseSchoolCyclesSettings, inferSchoolCycleFromLevel } from "@/lib/school-cycles";
 import { sameSchoolLevel } from "@/lib/school-levels";
 import {
+  EPC_DIMBOKRO_CODE,
   SCHOOL_STUDENT_PROGRAMS_KEY,
   isBilingualSchool,
   programsForStudent,
@@ -58,7 +59,7 @@ export async function POST(request: NextRequest) {
   const [targetResult, institutionResult] = await Promise.all([
     srv.from("classes").select("id,label,level,academic_year,institution_id")
       .eq("institution_id", institutionId).eq("id", classId).maybeSingle(),
-    srv.from("institutions").select("settings_json").eq("id", institutionId).maybeSingle(),
+    srv.from("institutions").select("code_unique,settings_json").eq("id", institutionId).maybeSingle(),
   ]);
   const target = targetResult.data;
   const rawSettings = institutionResult.data?.settings_json;
@@ -114,6 +115,14 @@ export async function POST(request: NextRequest) {
   const homeTracks = programsForStudent(
     yearPolicy?.classes[source.id], pupil.id, school.teachingTracksByCycle[sourceCycle] || [],
   );
+  if (operation === "transfer" && institutionResult.data.code_unique === EPC_DIMBOKRO_CODE &&
+    homeTracks.length === 1 && homeTracks[0] === "arabic") {
+    return reply({
+      error: "arabic_administrative_transfer_required",
+      student_id: pupil.id,
+      source_class_id: source.id,
+    }, 409);
+  }
   if (homeTracks.length !== 1 || homeTracks[0] !== "french") {
     return reply({ error: "french_home_not_configured" }, 409);
   }

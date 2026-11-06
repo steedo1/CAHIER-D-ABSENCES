@@ -154,6 +154,7 @@ type InstitutionSettings = {
   country_motto?: string | null;
   ministry_name?: string | null;
   institution_code?: string | null;
+  arabic_direct_enrollment?: boolean;
 };
 
 type SearchStudentRow = {
@@ -966,8 +967,7 @@ export default function AdminStudentsByClassPage() {
   );
   const level = educationScope.levelCode;
   const classId = educationScope.classId;
-  // The official French enrollment is deliberately unique. Arabic classes have
-  // a second, pedagogical roster resolved by the already-validated PDF API.
+  // Arabic lists combine administrative enrollments and verified teaching links.
   const selectedClass = classes.find((row) => row.id === classId);
   const classPrograms = useMemo(() =>
     readStudentProgramSettings(cfg.settings_json).years[academicYear]?.classes, [cfg.settings_json, academicYear]);
@@ -985,6 +985,7 @@ export default function AdminStudentsByClassPage() {
   const isPrimaryClassSelection = /^(?:MAT|CP[12]|CE[12]|CM[12])$/i.test(
     String(selectedClass?.level || level || "").trim(),
   );
+  const canEnrollArabicOnly = cfg.arabic_direct_enrollment === true;
   const frenchClasses = isArabicClassSelection ? classes.filter(row => {
     const tracks = classPrograms?.[row.id]?.tracks;
     return tracks?.length === 1 && tracks[0] === "french";
@@ -1124,6 +1125,7 @@ export default function AdminStudentsByClassPage() {
           country_motto: settingsJson?.country_motto ?? "",
           ministry_name: settingsJson?.ministry_name ?? "",
           institution_code: settingsJson?.institution_code ?? "",
+          arabic_direct_enrollment: settingsJson?.arabic_direct_enrollment === true,
         });
       }
 
@@ -1650,8 +1652,9 @@ export default function AdminStudentsByClassPage() {
     setMsg(null);
 
     try {
-      let body: any;
-      const creatingFrenchHome = isArabicClassSelection && assignMode === "new";
+      let body: unknown;
+      const creatingArabicStudent = isArabicClassSelection && assignMode === "new";
+      const creatingFrenchHome = creatingArabicStudent && (!canEnrollArabicOnly || Boolean(frenchClassId));
       const enrollmentClassId = creatingFrenchHome ? frenchClassId : classId;
 
       if (assignMode === "new") {
@@ -1666,7 +1669,7 @@ export default function AdminStudentsByClassPage() {
         }
 
         body = {
-          action: "create_and_assign",
+          action: creatingArabicStudent && !creatingFrenchHome ? "create_arabic" : "create_and_assign",
           class_id: enrollmentClassId,
           ...(creatingFrenchHome ? { create_only: true } : {}),
           first_name: first_name || null,
@@ -1693,16 +1696,28 @@ export default function AdminStudentsByClassPage() {
         };
       }
 
-      const teachingOperation = isArabicClassSelection && !creatingFrenchHome;
-      const res = await fetch(
-        teachingOperation ? "/api/admin/classes/arabic-link" : "/api/admin/enrollments/assign",
-        {
+      const teachingOperation = isArabicClassSelection && assignMode !== "new";
+      const post = (path: string, payload: unknown) => fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
       });
-
-      const json = await res.json().catch(() => ({}));
+      let res = await post(
+        teachingOperation ? "/api/admin/classes/arabic-link" : "/api/admin/enrollments/assign",
+        body,
+      );
+      let json = await res.json().catch(() => ({}));
+      const administrativeTransfer = canEnrollArabicOnly && teachingOperation && assignMode === "transfer" && res.status === 409 &&
+        json?.error === "arabic_administrative_transfer_required";
+      if (administrativeTransfer) {
+        res = await post("/api/admin/enrollments/assign", {
+          action: "assign_arabic",
+          class_id: classId,
+          student_id: json.student_id,
+          source_class_id: json.source_class_id,
+        });
+        json = await res.json().catch(() => ({}));
+      }
 
       if (res.status === 401) {
         setAuthErr(true);
@@ -1725,12 +1740,13 @@ export default function AdminStudentsByClassPage() {
           arabic_class_full: "Cette classe arabe a atteint sa limite de rattachements.",
           arabic_transfer_required: "Cet élève suit déjà l’enseignement arabe dans une autre classe. Choisissez « Transférer un élève ».",
           arabic_add_required: "Cet élève suit actuellement le français seul. Choisissez « Ajouter à un autre enseignement ».",
+          arabic_administrative_source_required: "La classe arabe d’origine a changé. Vérifiez l’inscription de l’élève avant de réessayer.",
           student_not_found: "Élève introuvable dans cet établissement.",
         };
         throw new Error(messages[String(json?.error)] || json?.error || "ASSIGN_FAILED");
       }
 
-      if (teachingOperation) {
+      if (teachingOperation && !administrativeTransfer) {
         setArabicRosterRefresh((value) => value + 1);
         setAssignOpen(false);
         resetAssign();
@@ -1812,6 +1828,11 @@ export default function AdminStudentsByClassPage() {
       }
       setAssignOpen(false);
       resetAssign();
+      if (creatingArabicStudent || administrativeTransfer) {
+        setArabicRosterRefresh((value) => value + 1);
+        setMsg(creatingArabicStudent ? "Élève inscrit dans la classe arabe." : "Élève transféré dans la classe arabe.");
+        return;
+      }
 
       const financeTransfer = json?.finance_transfer as
         | {
@@ -2292,8 +2313,10 @@ export default function AdminStudentsByClassPage() {
                     </Button>
                   </div>
                   <p className="mb-3 rounded-xl bg-sky-50 px-3 py-2 text-sm text-sky-900">
-                    {assignMode === "new" ? "Créez le dossier dans une classe française, puis ajoutez l’élève à cette classe arabe."
-                      : assignMode === "transfer" ? "Déplacez l’élève de sa classe arabe actuelle vers cette classe. Il conserve sa classe française."
+                    {assignMode === "new" ? canEnrollArabicOnly
+                      ? "Inscrivez l’élève directement dans cette classe arabe. S’il suit aussi le français, vous pouvez choisir sa classe française."
+                      : "Créez le dossier dans une classe française, puis ajoutez l’élève à cette classe arabe."
+                      : assignMode === "transfer" ? "Déplacez l’élève de sa classe arabe actuelle vers cette classe. Il conserve sa classe française s’il en a une."
                         : "Ajoutez un élève déjà inscrit en français à cette classe arabe. Il figurera dans les deux listes."}
                   </p>
                 </>
@@ -2323,9 +2346,9 @@ export default function AdminStudentsByClassPage() {
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   {isArabicClassSelection && (
                     <label className="text-xs text-slate-600 md:col-span-2">
-                      Classe française
+                      {canEnrollArabicOnly ? "Classe française (si l’élève suit aussi le français)" : "Classe française"}
                       <Select value={frenchClassId} onChange={e => setFrenchClassId(e.target.value)}>
-                        <option value="">Choisir la classe française</option>
+                        <option value="">{canEnrollArabicOnly ? "Arabe uniquement" : "Choisir la classe française"}</option>
                         {frenchClasses.map(row => <option key={row.id} value={row.id}>{row.name || row.label}</option>)}
                       </Select>
                     </label>
@@ -2586,14 +2609,16 @@ export default function AdminStudentsByClassPage() {
                   disabled={
                     assigning ||
                     !classId ||
-                    (assignMode === "new" && isArabicClassSelection && !frenchClassId) ||
+                    (assignMode === "new" && isArabicClassSelection && !canEnrollArabicOnly && !frenchClassId) ||
                     (assignMode !== "new" && !selectedStu && !form.transfer_matricule.trim())
                   }
                 >
                   {assigning
                     ? "Traitement..."
                     : assignMode === "new"
-                      ? isArabicClassSelection ? "Inscrire en français" : "Ajouter dans la classe"
+                      ? isArabicClassSelection
+                        ? canEnrollArabicOnly && !frenchClassId ? "Inscrire en arabe" : "Inscrire en français"
+                        : "Ajouter dans la classe"
                       : assignMode === "add" ? "Ajouter à la classe arabe" : "Transférer vers la classe"}
                 </Button>
 

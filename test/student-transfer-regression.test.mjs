@@ -450,3 +450,107 @@ test("forbidden roster requests read no class data", async () => {
   assert.equal(response.status, 403);
   assert.equal(db.calls.some((q) => ["classes", "class_enrollments", "institutions"].includes(q.table)), false);
 });
+
+const arabicTarget = "11111111-1111-4111-8111-111111111111";
+const arabicSource = "22222222-2222-4222-8222-222222222222";
+
+function arabicEnrollmentFixture() {
+  const seed = transferFixture();
+  seed.classes.push(
+    cls(arabicTarget, { code: "CP1-AR", label: "CP1 — Arabe", level: "CP1" }),
+    cls(arabicSource, { code: "CP2-AR", label: "CP2 — Arabe", level: "CP2" }),
+  );
+  seed.institutions = [{ id: inst, code_unique: "E020684", settings_json: {
+    school_cycles_v1: { version: 1, enabled: true, enabledCycles: ["primary"],
+      teachingTracksByCycle: { primary: ["french", "arabic"] } },
+    school_student_programs_v1: { version: 1, years: { [year]: { classes: {
+      [arabicTarget]: { tracks: ["arabic"], students: {} },
+      [arabicSource]: { tracks: ["arabic"], students: {} },
+    } } } },
+  } }];
+  return seed;
+}
+
+test("EPC enrolls a new Arabic-only pupil in exactly one Arabic class with no Finance call", async () => {
+  const db = database(arabicEnrollmentFixture());
+  const h = handlers(db);
+  const payload = {
+    action: "create_arabic", class_id: arabicTarget, student_id: null,
+    last_name: "كوني", first_name: "مريم",
+  };
+  const response = await assign(h, payload);
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  const body = await response.json();
+  const pupilId = body.student.id;
+  assert.equal(db.tables.students.filter(row => row.id === pupilId).length, 1);
+  assert.deepEqual(db.tables.class_enrollments.filter(row => row.student_id === pupilId)
+    .map(row => [row.class_id, row.end_date]), [[arabicTarget, null]]);
+  assert.deepEqual(db.tables.student_year_profiles.filter(row => row.student_id === pupilId)
+    .map(row => row.class_id), [arabicTarget]);
+  assert.equal(body.finance_sync, null);
+  assert.equal(body.finance_transfer, null);
+  assert.equal(h.financeCalls.length, 0);
+  assert.ok(db.calls.filter(call => call.action !== "read")
+    .every(call => ["students", "class_enrollments", "student_year_profiles"].includes(call.table)));
+
+  const retry = await assign(h, { ...payload, first_name: "مَرْيَم" });
+  assert.equal(retry.status, 409);
+  assert.equal((await retry.json()).code, "student_identity_exists");
+  assert.equal(db.tables.students.length, 2);
+  assert.equal(db.tables.class_enrollments.length, 2);
+
+  const legacy = await assign(h, { ...payload, action: "create_and_assign", last_name: "Autre", first_name: "Élève" });
+  assert.equal(legacy.status, 200, JSON.stringify(await legacy.clone().json()));
+  assert.equal(h.financeCalls.length, 1, "the ordinary route invokes the financial synchronizer");
+});
+
+test("EPC direct Arabic creation refuses a French target and rolls back a failed enrollment", async () => {
+  const db = database(arabicEnrollmentFixture(), q => q.table === "class_enrollments" && q.action === "insert");
+  const h = handlers(db);
+  const payload = { action: "create_arabic", last_name: "Autre", first_name: "Élève" };
+  const denied = await assign(h, payload);
+  assert.equal(denied.status, 409);
+  assert.equal((await denied.json()).error, "arabic_class_not_configured");
+  assert.equal(db.calls.some(call => call.action !== "read"), false);
+  const response = await assign(h, { ...payload, class_id: arabicTarget });
+  assert.equal(response.status, 409);
+  assert.equal(db.tables.students.length, 1);
+  assert.equal(db.tables.class_enrollments.length, 1);
+  assert.equal(h.financeCalls.length, 0);
+});
+
+test("EPC transfers an Arabic-only pupil through the same Arabic roster without Finance", async () => {
+  const seed = arabicEnrollmentFixture();
+  seed.class_enrollments[0].class_id = arabicSource;
+  const db = database(seed);
+  const h = handlers(db);
+  const payload = { action: "assign_arabic", class_id: arabicTarget, student_id: "one" };
+  const stale = await assign(h, { ...payload, source_class_id: "source" });
+  assert.equal(stale.status, 409);
+  assert.equal((await stale.json()).error, "arabic_administrative_source_required");
+  const moved = await assign(h, { ...payload, source_class_id: arabicSource });
+  assert.equal(moved.status, 200, JSON.stringify(await moved.clone().json()));
+  assert.deepEqual(db.tables.class_enrollments.filter(row => row.end_date === null)
+    .map(row => [row.class_id, row.student_id]), [[arabicTarget, "one"]]);
+  assert.equal(h.financeCalls.length, 0);
+});
+
+test("concurrent Arabic-only creations with no matricule leave at most one profile", async () => {
+  let arrivals = 0;
+  let releaseInserts;
+  const insertsReady = new Promise(resolve => { releaseInserts = resolve; });
+  const db = database(arabicEnrollmentFixture(), () => false, async query => {
+    if (query.table !== "students" || query.action !== "insert" || arrivals >= 2) return;
+    if (++arrivals === 2) releaseInserts();
+    await insertsReady;
+  });
+  const h = handlers(db);
+  const payload = { action: "create_arabic", class_id: arabicTarget, last_name: "Autre", first_name: "Élève" };
+  const results = await Promise.all([assign(h, payload), assign(h, payload)]);
+  assert.ok(results.every(response => [200, 409].includes(response.status)));
+  assert.ok(db.tables.students.length <= 2);
+  if (db.tables.students.length === 1) assert.equal((await assign(h, payload)).status, 200);
+  assert.equal(db.tables.students.length, 2);
+  assert.equal(db.tables.class_enrollments.filter(row => row.class_id === arabicTarget).length, 1);
+  assert.equal(h.financeCalls.length, 0);
+});

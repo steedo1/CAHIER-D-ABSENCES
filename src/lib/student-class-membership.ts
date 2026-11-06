@@ -6,9 +6,9 @@ export type StudentIdentity = {
 export function studentIdentityWords(value: string | null | undefined): string[] {
   return String(value ?? "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\p{M}/gu, "")
     .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
     .split(/\s+/)
     .filter(Boolean);

@@ -47,10 +47,12 @@ export async function hasStudentIdentityConflict(
   lastName: string,
   firstName: string,
   matricule: string | null,
+  excludeStudentId?: string,
 ): Promise<boolean> {
   const candidates = await findStudentIdentityCandidates(srv, institutionId, [`${lastName} ${firstName}`]);
   const incoming = String(matricule || "").trim().toUpperCase();
   return candidates.some((row) => {
+    if (row.id === excludeStudentId) return false;
     const stored = String(row.matricule || "").trim().toUpperCase();
     return !incoming || !stored || stored === incoming;
   });

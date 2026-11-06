@@ -1,6 +1,9 @@
 // src/app/api/admin/enrollments/assign/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
+import { inferSchoolCycleFromLevel, parseSchoolCyclesSettings } from "@/lib/school-cycles";
+import { EPC_DIMBOKRO_CODE, readStudentProgramSettings } from "@/lib/school-student-programs";
+import { isTrustedAppOrigin } from "@/lib/request-origin";
 import { safeEnrollmentEndDate } from "@/lib/student-class-membership";
 import { findStudentIdentityCandidates, hasStudentIdentityConflict, STUDENT_IDENTITY_CONFLICT_MESSAGE } from "@/lib/student-identity-conflicts";
 import {
@@ -10,8 +13,6 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type Action = "create_and_assign" | "assign";
 
 const ENROLLMENT_MANAGE_ROLES = [
   "admin",
@@ -54,7 +55,11 @@ export async function POST(req: NextRequest) {
   const { srv, user, roles } = access;
   const inst = access.institutionId;
   const body = await req.json().catch(() => ({}));
-  const action: Action = (body?.action || "").trim();
+  const requestedAction = String(body?.action || "").trim();
+  const arabicCreation = requestedAction === "create_arabic";
+  const arabicTransfer = requestedAction === "assign_arabic";
+  const arabicAdministrative = arabicCreation || arabicTransfer;
+  const action = arabicCreation ? "create_and_assign" : arabicTransfer ? "assign" : requestedAction;
   const class_id: string = String(body?.class_id || "");
 
   if (!action || (action !== "create_and_assign" && action !== "assign")) {
@@ -81,6 +86,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: clsErr.message }, { status: 400 });
   if (!cls || (cls as any).institution_id !== inst) {
     return NextResponse.json({ error: "invalid_class" }, { status: 400 });
+  }
+
+  // The request selects a school operation. Only the verified class configuration
+  // can authorize an Arabic administrative enrollment outside the fee workflow.
+  let arabicClassIds: Set<string> | undefined;
+  if (arabicAdministrative) {
+    if (!isTrustedAppOrigin(req)) {
+      return NextResponse.json({ error: "invalid_origin" }, { status: 403 });
+    }
+    const { data: institution, error } = await srv.from("institutions")
+      .select("code_unique,settings_json").eq("id", inst).maybeSingle();
+    if (error || !institution) {
+      return NextResponse.json({ error: "school_configuration_unavailable" }, { status: 503 });
+    }
+    const school = parseSchoolCyclesSettings(institution.settings_json);
+    const cycle = school.classCycleById[class_id] || inferSchoolCycleFromLevel(cls.level);
+    const policies = readStudentProgramSettings(institution.settings_json).years[cls.academic_year]?.classes;
+    arabicClassIds = new Set(Object.entries(policies || {}).filter(([, policy]) =>
+      policy.tracks.length === 1 && policy.tracks[0] === "arabic").map(([id]) => id));
+    if (institution.code_unique !== EPC_DIMBOKRO_CODE || !school.enabled || !cycle || !school.enabledCycles.includes(cycle) ||
+      !school.teachingTracksByCycle[cycle]?.includes("arabic") || !arabicClassIds.has(class_id)) {
+      return NextResponse.json({ error: "arabic_class_not_configured" }, { status: 409 });
+    }
   }
 
   let studentId: string | null = null;
@@ -124,7 +152,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: exErr.message }, { status: 400 });
 
       if (exist) {
-        if (body.create_only === true) {
+        if (arabicCreation || body.create_only === true) {
           return NextResponse.json({
             error: STUDENT_IDENTITY_CONFLICT_MESSAGE,
             code: "student_identity_exists",
@@ -512,6 +540,20 @@ export async function POST(req: NextRequest) {
     }
   };
 
+  if (arabicCreation) {
+    // Recheck after insertion so concurrent requests without matricules
+    // cannot both keep their provisional records.
+    try {
+      if (await hasStudentIdentityConflict(srv, inst, studentLast!, studentFirst!, studentMatricule, studentId)) {
+        await rollbackPreparedStudent();
+        return NextResponse.json({ error: STUDENT_IDENTITY_CONFLICT_MESSAGE, code: "student_identity_exists" }, { status: 409 });
+      }
+    } catch (error) {
+      await rollbackPreparedStudent();
+      return NextResponse.json({ error: error instanceof Error ? error.message : "Impossible de vérifier l’identité." }, { status: 400 });
+    }
+  }
+
   const { data: studentLifecycleBefore, error: studentLifecycleError } = await srv
     .from("students")
     .select("lifecycle_status,exit_date,exit_reason")
@@ -676,25 +718,33 @@ export async function POST(req: NextRequest) {
     ),
   );
 
-  let financeTransfer: AppliedStudentFinanceSynchronization;
+  if (arabicTransfer && (!sourceEnrollments?.length || sourceEnrollments.length !== 1 ||
+    sourceClassIds.length !== 1 || sourceClassIds[0] !== body?.source_class_id ||
+    !arabicClassIds?.has(sourceClassIds[0]))) {
+    return NextResponse.json({ error: "arabic_administrative_source_required" }, { status: 409 });
+  }
+
+  let financeTransfer: AppliedStudentFinanceSynchronization | undefined;
 
   try {
-    financeTransfer = await synchronizeStudentFinance({
-      srv,
-      institutionId: inst,
-      userId: user.id,
-      studentId,
-      sourceClassIds,
-      targetClass: {
-        id: String((cls as any).id),
-        label: (cls as any).label ?? null,
-        code: (cls as any).code ?? null,
-        level: (cls as any).level ?? null,
-        academic_year: (cls as any).academic_year ?? null,
-        official_track_code: (cls as any).official_track_code ?? null,
-        institution_id: inst,
-      },
-    });
+    if (!arabicAdministrative) {
+      financeTransfer = await synchronizeStudentFinance({
+        srv,
+        institutionId: inst,
+        userId: user.id,
+        studentId,
+        sourceClassIds,
+        targetClass: {
+          id: String((cls as any).id),
+          label: (cls as any).label ?? null,
+          code: (cls as any).code ?? null,
+          level: (cls as any).level ?? null,
+          academic_year: (cls as any).academic_year ?? null,
+          official_track_code: (cls as any).official_track_code ?? null,
+          institution_id: inst,
+        },
+      });
+    }
   } catch (financeError) {
     await rollbackPreparedStudent();
     return NextResponse.json(
@@ -835,7 +885,7 @@ export async function POST(req: NextRequest) {
   } catch (enrollmentError) {
     const rollbackResults = await Promise.allSettled([
       rollbackEnrollment(),
-      financeTransfer.rollback(),
+      financeTransfer?.rollback(),
     ]);
     const studentRollbackResult = await Promise.allSettled([
       rollbackPreparedStudent(),
@@ -871,7 +921,7 @@ export async function POST(req: NextRequest) {
   if (lifecycleReactivateError) {
     await Promise.allSettled([
       rollbackEnrollment(),
-      financeTransfer.rollback(),
+      financeTransfer?.rollback(),
       rollbackPreparedStudent(),
       rollbackLifecycle(),
     ]);
@@ -887,7 +937,7 @@ export async function POST(req: NextRequest) {
   if (targetAcademicYearId) {
     const { data: finalStudent, error: finalStudentError } = await srv
       .from("students")
-      .select("id,is_affecte,is_boarder")
+      .select("id,is_affecte,is_boarder,matricule")
       .eq("institution_id", inst)
       .eq("id", studentId)
       .maybeSingle();
@@ -895,7 +945,7 @@ export async function POST(req: NextRequest) {
     if (finalStudentError) {
       await Promise.allSettled([
         rollbackEnrollment(),
-        financeTransfer.rollback(),
+        financeTransfer?.rollback(),
         rollbackPreparedStudent(),
         rollbackLifecycle(),
       ]);
@@ -909,6 +959,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (finalStudent) {
+      if (arabicCreation) studentMatricule = finalStudent.matricule ?? studentMatricule;
       const affecte =
         typeof (finalStudent as any).is_affecte === "boolean"
           ? (finalStudent as any).is_affecte
@@ -948,7 +999,7 @@ export async function POST(req: NextRequest) {
       if (yearProfileError) {
         await Promise.allSettled([
           rollbackEnrollment(),
-          financeTransfer.rollback(),
+          financeTransfer?.rollback(),
           rollbackPreparedStudent(),
           rollbackLifecycle(),
         ]);
@@ -974,7 +1025,7 @@ export async function POST(req: NextRequest) {
     closed_old_enrollments: closedCount,
     reactivated_in_target: reactivatedCount,
     inserted_in_target: insertedCount,
-    finance_transfer: financeTransfer.transfer,
-    finance_sync: financeTransfer.reconciliation,
+    finance_transfer: financeTransfer?.transfer ?? null,
+    finance_sync: financeTransfer?.reconciliation ?? null,
   });
 }

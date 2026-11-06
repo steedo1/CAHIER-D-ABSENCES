@@ -1,3 +1,4 @@
+import { EPC_DIMBOKRO_CODE } from "@/lib/school-student-programs";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
 //src/app/api/admin/institution/settings/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -31,6 +32,7 @@ type InstitutionSettingsRow = {
   country_motto: string | null;
   ministry_name: string | null;
   code: string | null; // code MEN / établissement
+  code_unique: string | null;
 
   // ✅ option signatures numérisées (niveau établissement)
   bulletin_signatures_enabled: boolean | null;
@@ -90,6 +92,7 @@ export async function GET() {
         "country_motto",
         "ministry_name",
         "code",
+        "code_unique",
         "bulletin_signatures_enabled",
         "settings_json",
       ].join(",")
@@ -133,6 +136,7 @@ export async function GET() {
     country_motto: row.country_motto ?? "",
     ministry_name: row.ministry_name ?? "",
     institution_code: row.code ?? "",
+    arabic_direct_enrollment: row.code_unique === EPC_DIMBOKRO_CODE,
 
     // ✅ toggle signatures bulletin (niveau établissement)
     bulletin_signatures_enabled: signaturesEnabled,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { Window } from "happy-dom";
+import { createFixtureRouteLoader, createMulticycleFixture } from "./helpers/multicycle-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const home = "11111111-1111-4111-8111-111111111111";
@@ -29,11 +30,34 @@ test("the Arabic roster uses its own level and its three operations use the inte
   ];
   const student = { id: pupil, last_name: "DEMO", first_name: "Mariam", full_name: "DEMO Mariam",
     matricule: "EPC-TEST", class_id: home, class_label: classes[0].name, level: "CM1" };
+  const db = createMulticycleFixture();
+  const settings = {
+    school_cycles_v1: { version: 1, enabled: true, enabledCycles: ["primary", "secondary"],
+      teachingTracksByCycle: { primary: ["french"], secondary: ["arabic"] } },
+    school_student_programs_v1: { version: 1, years: { "2026-2027": { classes: {
+      [home]: { tracks: ["french"], students: {} },
+      [target]: { tracks: ["arabic"], students: {} },
+    } } } },
+  };
+  Object.assign(db.tables.institutions[0], { code_unique: "E020684", settings_json: settings });
+  db.tables.classes.push(...classes.map(row => ({ ...row, label: row.name,
+    institution_id: db.legacyId, academic_year: "2026-2027" })));
+  db.tables.academic_years.push({ id: "year", code: "2026-2027",
+    institution_id: db.legacyId, is_current: true, start_date: "2026-09-14" });
+  const load = createFixtureRouteLoader(db, db.legacyAdminId, new Map([
+    ["src/lib/finance/student-finance-sync.ts",
+      'export async function synchronizeStudentFinance() { throw new Error("Unexpected Finance call"); }'],
+  ]));
+  const assignRoute = load("src/app/api/admin/enrollments/assign/route.ts");
   const posts = [];
   globalThis.fetch = async (input, options) => {
     const url = new URL(String(input), window.location.href);
     if (options?.method === "POST") {
-      posts.push([url.pathname, JSON.parse(options.body)]);
+      const payload = JSON.parse(options.body);
+      posts.push([url.pathname, payload]);
+      if (payload.action === "create_arabic") {
+        return assignRoute.POST(new Request(url, { method: "POST", body: options.body }));
+      }
       return Response.json({ ok: true, student, transferred: posts.at(-1)[1].operation === "transfer" });
     }
     if (url.pathname === "/api/auth/role") return Response.json({ role: "admin" });
@@ -45,16 +69,13 @@ test("the Arabic roster uses its own level and its three operations use the inte
     }
     if (url.pathname.endsWith("/roster")) return Response.json({
       class: { label: classes[1].name, teaching_track: "arabic" },
-      students: [{ id: pupil, full_name: student.full_name, matricule: student.matricule }],
+      students: [{ id: pupil, full_name: student.full_name, matricule: student.matricule },
+        ...db.tables.class_enrollments.filter(row => row.class_id === target).map(row => {
+          const record = db.tables.students.find(entry => entry.id === row.student_id);
+          return { id: record.id, full_name: [record.last_name, record.first_name].join(" "), matricule: record.matricule };
+        })],
     });
-    if (url.pathname.endsWith("/settings")) return Response.json({ settings_json: {
-      school_cycles_v1: { version: 1, enabled: true, enabledCycles: ["primary", "secondary"],
-        teachingTracksByCycle: { primary: ["french"], secondary: ["arabic"] } },
-      school_student_programs_v1: { version: 1, years: { "2026-2027": { classes: {
-        [home]: { tracks: ["french"], students: {} },
-        [target]: { tracks: ["arabic"], students: {} },
-      } } } },
-    } });
+    if (url.pathname.endsWith("/settings")) return Response.json({ settings_json: settings, arabic_direct_enrollment: true });
     if (url.pathname.endsWith("/academic-years")) return Response.json({ ok: true,
       items: [{ code: "2026-2027", is_current: true }] });
     return Response.json({ ok: true, items: [] });
@@ -105,14 +126,29 @@ test("the Arabic roster uses its own level and its three operations use the inte
 
     await click("Ajouter / Transférer");
     await click("Nouvel élève");
+    assert.ok(button("Inscrire en arabe"), "Arabic-only enrollment is available without a French class");
+    await input('input[placeholder="Ex : AMON"]', "Exclusif");
+    await input('input[placeholder="Ex : ANGE ARISTIDE"]', "Élève");
+    await click("Inscrire en arabe");
+    assert.equal(posts.length, 3);
+    assert.equal(posts[2][0], "/api/admin/enrollments/assign");
+    assert.equal(posts[2][1].class_id, target);
+    assert.equal(posts[2][1].action, "create_arabic");
+    assert.match(host.textContent, /Élève inscrit dans la classe arabe/);
+    assert.match(host.querySelector("tbody").textContent, /EXCLUSIF Élève/);
+    assert.equal(db.tables.students.length, 1);
+    assert.deepEqual(db.tables.class_enrollments.map(row => row.class_id), [target]);
+
+    await click("Ajouter / Transférer");
+    await click("Nouvel élève");
     await select(home);
     await input('input[placeholder="Ex : AMON"]', "Autre");
     await input('input[placeholder="Ex : ANGE ARISTIDE"]', "Élève");
     await click("Inscrire en français");
-    assert.equal(posts.length, 3);
-    assert.equal(posts[2][0], "/api/admin/enrollments/assign");
-    assert.equal(posts[2][1].class_id, home);
-    assert.equal(posts[2][1].create_only, true);
+    assert.equal(posts.length, 4);
+    assert.equal(posts[3][0], "/api/admin/enrollments/assign");
+    assert.equal(posts[3][1].class_id, home);
+    assert.equal(posts[3][1].create_only, true);
     assert.ok(button("Ajouter à la classe arabe"));
   } finally {
     await React.act(async () => root.unmount());

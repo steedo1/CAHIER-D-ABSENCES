@@ -6,6 +6,7 @@ import {
 } from "./school-cycles";
 import { sameSchoolLevel } from "./school-levels";
 
+export const EPC_DIMBOKRO_CODE = "E020684";
 export const SCHOOL_STUDENT_PROGRAMS_KEY = "school_student_programs_v1" as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const asRecord = (value: unknown): Record<string, unknown> | null =>

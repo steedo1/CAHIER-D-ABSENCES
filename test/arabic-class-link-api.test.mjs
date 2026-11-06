@@ -322,3 +322,18 @@ test("CSCA Aboisso and Collège Privé Dieudonné configurations cannot invoke p
     assert.equal(db.calls.some(call => call.op !== "read"), false);
   }
 });
+
+test("transfer identifies an Arabic-only pupil's administrative source without changing links", async () => {
+  const db = setup();
+  db.tables.institutions[0].code_unique = "E020684";
+  db.tables.class_enrollments[0].class_id = arabicId;
+  const before = structuredClone(db.tables);
+  const route = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+  const response = await route.POST(request(arabicNextId, studentId, "", "transfer"));
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: "arabic_administrative_transfer_required", student_id: studentId, source_class_id: arabicId,
+  });
+  assert.deepEqual(db.tables, before);
+  assert.equal(db.calls.some(call => call.op !== "read"), false);
+});
