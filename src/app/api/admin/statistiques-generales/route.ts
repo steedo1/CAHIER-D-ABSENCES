@@ -302,12 +302,13 @@ export async function GET() {
           : typeof student?.is_boarder === "boolean"
             ? student.is_boarder
             : null,
+      // Le statut actuel modifié dans la fiche élève est la référence pour
+      // l'année scolaire courante. Le profil annuel n'est qu'un secours.
+      // Aucun recalcul ni écriture des données financières.
       is_affecte:
-        annualAffectation !== null
-          ? annualAffectation
-          : typeof student?.is_affecte === "boolean"
-            ? student.is_affecte
-            : null,
+        typeof student?.is_affecte === "boolean"
+          ? student.is_affecte
+          : annualAffectation,
       is_scholarship: annualScholarship,
       regime: clean(student?.regime) || null,
     });
