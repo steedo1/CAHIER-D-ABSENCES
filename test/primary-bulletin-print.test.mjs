@@ -77,3 +77,33 @@ test("primary bulletins print the school logo and real metadata on one A4 per pu
     });
   } finally { await browser.close(); }
 });
+
+
+test("EPC primary bulletin mobile preview fits screen and A4 print skips incomplete pupils", async () => {
+  const load = createFixtureRouteLoader(createMulticycleFixture(), null);
+  const Component = load("src/components/bulletins/FrancoArabicBulletin.tsx").default;
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CLASS_LIST_CHROMIUM_EXECUTABLE || undefined,
+    args: ["--no-sandbox", "--disable-gpu", "--no-zygote"] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 840 } });
+    const html = [0, 1].map((index) => '<div class="specialized-document ' +
+      (index === 0 ? 'specialized-last-printable' : 'specialized-print-excluded') + '">' +
+      renderToStaticMarkup(React.createElement(Component, { model: model(index), variant: "french" })) +
+      '</div>').join("");
+    await page.setContent(`<!doctype html><html><meta charset="utf-8"><style>${css}</style><body style="margin:0;padding:10px">
+      <div class="fa-report-print-root specialized-print-root">${html}</div></body></html>`);
+    const screen = await page.locator(".specialized-document").first().evaluate(node => ({
+      width: node.querySelector("article").getBoundingClientRect().width,
+      left: node.querySelector("article").getBoundingClientRect().left,
+    }));
+    assert.ok(screen.width > 240 && screen.width <= 370, "A4 preview fits a narrow Android screen");
+    assert.ok(screen.left >= 0, "A4 starts inside the viewport");
+    await page.emulateMedia({ media: "print" });
+    const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
+    const parser = new PDFParse({ data: pdf }); const report = await parser.getText(); await parser.destroy();
+    assert.equal(report.pages.length, 1, "only the ready pupil is printed");
+    assert.match(report.text, /ÉLÈVE0/);
+    assert.doesNotMatch(report.text, /ÉLÈVE1/);
+    await page.close();
+  } finally { await browser.close(); }
+});
