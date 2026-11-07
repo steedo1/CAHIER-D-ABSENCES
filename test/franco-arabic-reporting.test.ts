@@ -156,3 +156,40 @@ test("new cycle rules permit primary barèmes but forbid primary coefficients an
   // Existing legacy policies may be retained unchanged, but the new UI cannot edit them.
   assert.equal(validateNewCycleScoringRules(primaryWithCoefficient, primaryWithCoefficient), "ok");
 });
+
+
+test("secondary Arabic coefficients save without forcing a grading scale; primary rules remain strict", () => {
+  const subjectId = "22222222-2222-4222-8222-222222222222";
+  const coefficient = {
+    cycle: "secondary", level: "6e", track: "arabic",
+    subjectId, coefficient: 5, includeInAverage: true,
+  } as const;
+  const saved = validateFrancoArabicReportsInput({
+    enabled: true, format: "separate", scales: [], coefficients: [coefficient],
+  });
+  assert.ok(saved);
+  assert.deepEqual(saved.scales, []);
+  assert.equal(getConfiguredScoringScale(saved, "secondary", "6e", "arabic"), null);
+  assert.equal(getConfiguredSubjectCoefficients(saved, "secondary", "6e", "arabic")[0]?.coefficient, 5);
+  assert.equal(validateNewCycleScoringRules(defaultFrancoArabicReportsSettings(), saved), "ok");
+
+  const restored = parseFrancoArabicReportsSettings({ [FRANCO_ARABIC_REPORTS_SETTINGS_KEY]: saved });
+  assert.equal(restored.enabled, true);
+  assert.equal(getConfiguredSubjectCoefficients(restored, "secondary", "6e", "arabic").length, 1);
+
+  // Existing confirmed scales are preserved when present, but never required.
+  const withExistingScale = validateFrancoArabicReportsInput({
+    ...saved,
+    scales: [{ cycle: "secondary", level: "6e", track: "arabic", maxScore: 20 }],
+  });
+  assert.ok(withExistingScale);
+  assert.equal(getConfiguredScoringScale(withExistingScale, "secondary", "6e", "arabic"), 20);
+
+  // Primary component scales are still mandatory; invalid coefficients still fail.
+  assert.equal(validateFrancoArabicReportsInput({
+    ...saved, coefficients: [{ ...coefficient, cycle: "primary", level: "CP1" }],
+  }), null);
+  assert.equal(validateFrancoArabicReportsInput({
+    ...saved, coefficients: [{ ...coefficient, coefficient: 0 }],
+  }), null);
+});
