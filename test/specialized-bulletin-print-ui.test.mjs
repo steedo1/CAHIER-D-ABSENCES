@@ -64,3 +64,57 @@ test("existing Correspondant bulletin screen routes specialized data to its real
   assert.match(page, /!items\.length && !specializedBulletins && !bulletinLoading/);
   assert.match(page, /canConfigureBulletins && <div className="flex items-center justify-end gap-2">/);
 });
+
+
+test("a ready primary bulletin remains printable when another pupil is incomplete", async () => {
+  const win = new Window({ url: "https://fixture.invalid" });
+  const descriptors = new Map(["window", "document", "navigator", "IS_REACT_ACT_ENVIRONMENT"]
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries({
+    window: win, document: win.document, navigator: win.navigator, IS_REACT_ACT_ENVIRONMENT: true,
+  })) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const container = win.document.createElement("div"); win.document.body.append(container);
+  const root = createRoot(container);
+  try {
+    const db = createPedagogicalFixture();
+    const load = createFixtureRouteLoader(db, db.legacyAdminId);
+    const response = await load("src/app/api/admin/grades/bulletin/route.ts").GET(
+      new NextRequest("https://fixture.invalid/api/admin/grades/bulletin?class_id=33333333-3333-4333-8333-333333333333&from=2026-09-01&to=2026-12-15&academic_year=2026-2027"));
+    const { specialized: data } = await response.json();
+    const source = data.documents.find(row => row.programReadiness?.french === true);
+    assert.ok(source, "fixture has a ready French pupil");
+    const incomplete = {
+      ...source, studentId: "another-incomplete-student", ready: false,
+      document: { ...source.document, student: { ...source.document.student,
+        id: "another-incomplete-student", lastName: "INCOMPLET" },
+        french: { ...source.document.french, generalAverage: null } },
+      programReadiness: { ...source.programReadiness, french: false },
+      problemsByProgram: { french: ["included_subject_without_score"] },
+    };
+    let prints = 0;
+    const Panel = load("src/components/bulletins/SpecializedBulletinPanel.tsx").default;
+    await act(async () => root.render(React.createElement(Panel, {
+      data: { ...data, programs: ["french"], documents: [source, incomplete] },
+      onBack() {}, onPrint: async () => { prints++; },
+    })));
+    const btn = [...container.querySelectorAll("button")].find(b => b.textContent.includes("Imprimer"));
+    assert.ok(btn); assert.equal(btn.disabled, false);
+    assert.match(btn.textContent, /Imprimer 1 bulletin prêt/);
+    assert.match(container.textContent, /1 en attente/);
+    assert.equal(container.querySelectorAll(".specialized-document").length, 2);
+    assert.equal(container.querySelectorAll(".specialized-print-excluded").length, 1);
+    assert.equal(container.querySelectorAll(".specialized-last-printable").length, 1);
+    assert.match(container.textContent, /BROUILLON · NON VALIDÉ/);
+    const summary = container.querySelector("summary");
+    assert.match(summary?.textContent || "", /non imprimables/);
+    assert.match(container.textContent, /Notes publiées manquantes/);
+    await act(async () => btn.click());
+    assert.equal(prints, 1, "print action remains available for the ready pupil");
+  } finally {
+    await act(async () => root.unmount());
+    await win.happyDOM.close();
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
+    }
+  }
+});
