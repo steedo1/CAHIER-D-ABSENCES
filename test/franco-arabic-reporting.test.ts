@@ -193,3 +193,22 @@ test("secondary Arabic coefficients save without forcing a grading scale; primar
     ...saved, coefficients: [{ ...coefficient, coefficient: 0 }],
   }), null);
 });
+
+test("secondary Arabic zero means excluded while primary zero remains invalid", () => {
+  const coefficient = {
+    cycle: "secondary", level: "6e", track: "arabic",
+    subjectId: "88888888-8888-4888-8888-888888888888",
+    coefficient: 0, includeInAverage: false,
+  } as const;
+  const input = { enabled: true, format: "separate", scales: [], coefficients: [coefficient] };
+  const valid = validateFrancoArabicReportsInput(input);
+  assert.ok(valid);
+  assert.equal(valid.coefficients[0].coefficient, 0);
+  assert.equal(valid.coefficients[0].includeInAverage, false);
+  assert.equal(validateFrancoArabicReportsInput({
+    ...input, coefficients: [{ ...coefficient, includeInAverage: true }],
+  }), null);
+  assert.equal(validateFrancoArabicReportsInput({
+    ...input, coefficients: [{ ...coefficient, cycle: "primary", level: "CP1" }],
+  }), null);
+});
