@@ -68,6 +68,8 @@ export type BulletinProgram = {
   period: string;
   denominator: number;
   ciPrimaryFrench?: boolean;
+  /** Internal level assessments may be printed with blank, unpublished marks. */
+  isInternalEvaluation?: boolean;
   primarySubjectScores?: boolean;
   teacherName?: string | null;
   subjects: BulletinSubject[];
@@ -264,8 +266,8 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
         <td className={styles.markCell}>{(program.primarySubjectScores || program.ciPrimaryFrench)
           ? (row.average === null ? "" : `${number(row.average)}/${row.denominator || program.denominator}`)
           : number(row.average)}</td>
-        {!compact && <td>{number(row.classAverage)}</td>}
-        {!compact && <td className={styles.observation}>{row.observation || (program.ciPrimaryFrench ? ciPrimaryFrenchAppreciation(row.average, row.denominator || program.denominator) : null) || "—"}</td>}
+        {!compact && <td>{program.isInternalEvaluation && row.classAverage == null ? "" : number(row.classAverage)}</td>}
+        {!compact && <td className={styles.observation}>{row.observation || (program.ciPrimaryFrench ? ciPrimaryFrenchAppreciation(row.average, row.denominator || program.denominator) : null) || (program.isInternalEvaluation ? "" : "—")}</td>}
       </tr>
       {secondary && (row.components || []).map(component => (
           <tr key={`component-${row.id}-${component.id}`} className={styles.subjectComponentRow}>
@@ -282,26 +284,26 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
 }
 
 function Summary({ program, compact, ordinary }: { program: BulletinProgram; compact: boolean; ordinary: boolean }) {
-  const score = number(program.generalAverage);
+  const score = program.isInternalEvaluation && program.generalAverage === null ? "" : number(program.generalAverage);
   const graded = program.primarySubjectScores || program.ciPrimaryFrench
     ? program.subjects.filter(row => row.average !== null && row.denominator != null)
     : [];
   const totalPoints = graded.reduce((sum, row) => sum + row.average!, 0);
   const totalBarèmes = graded.reduce((sum, row) => sum + row.denominator!, 0);
   const rank = program.rank != null && program.classSize != null
-    ? `${program.rank} / ${program.classSize}` : "—";
+    ? `${program.rank} / ${program.classSize}` : program.isInternalEvaluation ? "" : "—";
   return <div className={`${styles.summary} ${compact ? styles.compactSummary : ""}`}>
     {(program.primarySubjectScores || program.ciPrimaryFrench) && <div className={styles.summaryMetric}>
       <span>{program.track === "arabic"
         ? <ArabicFrench arabic="مجموع نقط الامتحانات" french="Total des compositions" />
         : "Total des compositions"}</span>
-      <strong>{totalBarèmes > 0 ? `${number(totalPoints)}/${totalBarèmes}` : "—"}</strong>
+      <strong>{totalBarèmes > 0 ? `${number(totalPoints)}/${totalBarèmes}` : program.isInternalEvaluation ? "" : "—"}</strong>
     </div>}
     <div className={styles.summaryMetric}>
       <span>{program.track === "arabic"
         ? <ArabicFrench arabic="المعدل العام" french="Moyenne arabe" />
         : ordinary ? "Moyenne générale" : "Moyenne française"}</span>
-      <strong>{program.allowHistoricalNc && program.generalAverage === null ? "NC" : score}<small> / {program.denominator > 0 ? program.denominator : "—"}</small></strong>
+      <strong>{program.allowHistoricalNc && program.generalAverage === null ? "NC" : score}{score && <small> / {program.denominator > 0 ? program.denominator : "—"}</small>}</strong>
     </div>
     <div className={styles.summaryMetric}><span>{program.track === "arabic"
       ? <ArabicFrench arabic="الرتبة" french="Rang" /> : "Rang"}</span><strong>{rank}</strong></div>
@@ -379,7 +381,7 @@ function Panel({ program, compact, ordinary }: { program: BulletinProgram; compa
     </div>}
     <div className={styles.appreciation}>
       <span>{label("التقدير العام", "Appréciation générale")}</span>
-      <p>{program.appreciation || (program.ciPrimaryFrench ? ciPrimaryFrenchAppreciation(program.generalAverage, program.denominator) : null) || "—"}</p>
+      <p>{program.appreciation || (program.ciPrimaryFrench ? ciPrimaryFrenchAppreciation(program.generalAverage, program.denominator) : null) || (program.isInternalEvaluation ? "" : "—")}</p>
     </div>
   </section>;
 }
