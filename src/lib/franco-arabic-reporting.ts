@@ -162,7 +162,8 @@ export function validateFrancoArabicReportsInput(
         typeof entry.includeInAverage !== "boolean" ||
         typeof entry.coefficient !== "number" ||
         !Number.isFinite(entry.coefficient) ||
-        entry.coefficient <= 0 || entry.coefficient > 100) return null;
+        (entry.coefficient < 0 || entry.coefficient > 100 ||
+          (entry.coefficient === 0 && (entry.cycle !== "secondary" || entry.includeInAverage)))) return null;
     const level = normalizedLevel(entry.level, entry.cycle);
     if (!level) return null;
     const scalePresent = scales.some((scale) =>
