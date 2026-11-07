@@ -53,7 +53,12 @@ test("un clic d'enregistrement arabe ne touche JAMAIS aux coefficients historiqu
   })) Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: v });
   const requests = [];
   const revisions = { current: "rev1" };
-  let savedSettings = { ...reporting };
+  const unfilledArabicSubject = "33333333-3333-4333-8333-333333333333";
+  const previousArabic = {
+    cycle: "secondary", track: "arabic", level: "5e",
+    subjectId: subjectArabic, coefficient: 2, includeInAverage: true,
+  };
+  let savedSettings = { ...reporting, coefficients: [previousArabic] };
   Object.defineProperty(globalThis, "fetch", { configurable: true, writable: true,
     value: async (uri, args = {}) => {
       const url = String(uri), method = args.method || "GET";
@@ -68,13 +73,19 @@ test("un clic d'enregistrement arabe ne touche JAMAIS aux coefficients historiqu
         return payload({ ok: true, items: [] });
       }
       if (url === "/api/admin/bulletin-templates") {
-        return payload({ ok: true, configuration, reporting: savedSettings,
-          subjects: names, revision: revisions.current });
+        return payload({ ok: true,
+          configuration: { ...configuration, subjectTracksByCycle: { secondary: {
+            ...configuration.subjectTracksByCycle.secondary,
+            [unfilledArabicSubject]: ["arabic"],
+          } } },
+          reporting: savedSettings,
+          subjects: [...names, { id: unfilledArabicSubject, name: "Écriture et dictée" }],
+          revision: revisions.current });
       }
       if (url.startsWith("/api/admin/school-class-subjects?")) {
         const classId = new URL(url, "https://fixture.invalid").searchParams.get("class_id");
         return payload({ ok: true, classes, selectedClassId: classId,
-          selectedSubjectIds: classId === idFrench ? [subjectFrench] : [subjectArabic] });
+          selectedSubjectIds: classId === idFrench ? [subjectFrench] : [subjectArabic, unfilledArabicSubject] });
       }
       if (url === "/api/admin/school-class-subjects") return payload({ ok: true, classes });
       if (url === "/api/admin/institution/subject-coeffs") {
@@ -102,6 +113,7 @@ test("un clic d'enregistrement arabe ne touche JAMAIS aux coefficients historiqu
     assert.ok(container.querySelector('input[aria-label="Coefficient Arabe"]'));
     assert.equal(container.querySelector('input[aria-label="Coefficient Français"]'), null);
     assert.equal(container.querySelector('input[aria-label="Barème des notes"]'), null);
+    assert.equal(container.querySelector('input[aria-label="Coefficient Écriture et dictée"]').value, "");
     await changeValue(win, container.querySelector('input[aria-label="Coefficient Arabe"]'), "5");
     const save = [...container.querySelectorAll("button")].find(b => /Enregistrer les coefficients/.test(b.textContent));
     assert.ok(save);
@@ -121,7 +133,7 @@ test("un clic d'enregistrement arabe ne touche JAMAIS aux coefficients historiqu
     assert.equal(data.enabled, true);
     assert.equal(data.engine, "specialized");
     assert.equal(data.coefficientSource, "program");
-    assert.deepEqual(data.coefficients, [{
+    assert.deepEqual(data.coefficients, [previousArabic, {
       cycle: "secondary", track: "arabic", level: "6e", subjectId: subjectArabic,
       coefficient: 5, includeInAverage: true,
     }]);
