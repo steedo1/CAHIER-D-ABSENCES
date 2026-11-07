@@ -149,6 +149,17 @@ test("un clic d'enregistrement arabe ne touche JAMAIS aux coefficients historiqu
     assert.equal(data.revision, "rev1");
     // Coefficients can be saved without inventing a /10 or /20 grading scale.
     assert.deepEqual(data.scales, []);
+
+    // Zero is an explicit exclusion (not an empty field); other policies remain.
+    await changeValue(win, container.querySelector('input[aria-label="Coefficient Arabe"]'), "0");
+    await act(async () => { save.click(); });
+    await flush(); await flush();
+    const secondSave = requests.filter(req => req.url === "/api/admin/bulletin-templates" && req.method === "PUT");
+    assert.equal(secondSave.length, 2);
+    assert.deepEqual(secondSave[1].body.coefficients, [previousArabic, previousSameLevel, {
+      cycle: "secondary", track: "arabic", level: "6e", subjectId: subjectArabic,
+      coefficient: 0, includeInAverage: false,
+    }]);
   } finally {
     await act(async () => root.unmount());
     await win.happyDOM.close();
