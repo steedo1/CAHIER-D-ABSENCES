@@ -52,6 +52,7 @@ export function isSpecializedBulletinPrintable(
   },
   readiness: Partial<Record<PrintableTeachingTrack, boolean>> = {},
   variant: PrintableBulletinVariant,
+  allowInternalEmptyAverage = false,
 ): boolean {
   const programs = selectPrintablePrograms(model, variant);
   return !model.sample && !model.draft && !!programs?.length && programs.every(program =>
@@ -59,5 +60,6 @@ export function isSpecializedBulletinPrintable(
     ((program.generalAverage !== null && Number.isFinite(program.generalAverage) &&
       program.generalAverage >= 0 && program.generalAverage <= program.denominator) ||
       (("allowHistoricalNc" in program) && program.allowHistoricalNc === true &&
-        program.generalAverage === null)));
+        program.generalAverage === null) ||
+      (allowInternalEmptyAverage && program.generalAverage === null)));
 }
