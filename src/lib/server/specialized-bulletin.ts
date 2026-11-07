@@ -464,9 +464,9 @@ export async function loadSpecializedBulletin(input: {
           // An internal level evaluation is a simple school report, not an
           // official composition. Missing marks remain blank without a warning
           // added to the pupil's document.
-          appreciation: primaryEvent?.kind === "internal" || draft.status === "ready"
-            ? null : "Résultats incomplets — configuration ou notes à vérifier.",
-          isInternalEvaluation: primaryEvent?.kind === "internal",
+          appreciation: (input.institutionCode === "E020684" && primaryEvent?.kind === "internal") ||
+            draft.status === "ready" ? null : "Résultats incomplets — configuration ou notes à vérifier.",
+          isInternalEvaluation: input.institutionCode === "E020684" && primaryEvent?.kind === "internal",
           directorName: signatories[draft.track]?.name || (!isBilingualSchool(school) ? input.institutionHeadName : null) || null,
         };
         document[draft.track] = program;
@@ -478,7 +478,8 @@ export async function loadSpecializedBulletin(input: {
           // Only internal level evaluations explicitly enabled for bulletin
           // printing may omit unpublished subjects. Hard errors in scales,
           // ownership, publication versions or grade integrity still block.
-          const internalGapsAllowed = primaryEvent?.kind === "internal" && primaryEvent.printBulletin === true &&
+          const internalGapsAllowed = input.institutionCode === "E020684" &&
+            primaryEvent?.kind === "internal" && primaryEvent.printBulletin === true &&
             draft.maximumScore !== null && draft.maximumScore > 0 &&
             draft.subjects.length > 0 &&
             draft.problems.every(problem => [
@@ -505,7 +506,8 @@ export async function loadSpecializedBulletin(input: {
       period: { from: period.start_date, to: period.end_date, label: period.label, academic_year: year },
       subjects: [], items: [], specialized: { engine: "specialized", cycle, format: selectedBulletinFormat(reports, cycle),
         coefficientSource: reports.coefficientSource === "program" ? "program" : "institution", programs, documents,
-        internalEvaluationPrintAllowed: cycle === "primary" && primaryEvent?.kind === "internal" &&
+        internalEvaluationPrintAllowed: input.institutionCode === "E020684" &&
+          cycle === "primary" && primaryEvent?.kind === "internal" &&
           primaryEvent.printBulletin === true,
         school: { ...input.schoolDetails, name: input.institutionName || "", code: input.institutionCode,
           isFrancoArabic: isBilingualSchool(school), generalDirectorName: input.institutionHeadName,
