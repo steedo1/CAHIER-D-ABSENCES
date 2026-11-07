@@ -169,7 +169,10 @@ export function validateFrancoArabicReportsInput(
       scale.cycle === entry.cycle &&
       scale.track === entry.track &&
       schoolLevelKey(scale.level, entry.cycle as SchoolCycle) === schoolLevelKey(level, entry.cycle as SchoolCycle));
-    if (!scalePresent) return null;
+    // Secondary subject coefficients are independent of the mark scale.
+    // Keep primary scale requirements intact; never fabricate a /10 or /20
+    // secondary scale merely to save coefficients.
+    if (entry.cycle !== "secondary" && !scalePresent) return null;
     const key = [entry.cycle, schoolLevelKey(level, entry.cycle), entry.track, entry.subjectId].join("|");
     if (policySeen.has(key)) return null;
     policySeen.add(key);
