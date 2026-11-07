@@ -214,3 +214,65 @@ test("classic schools retain their existing RLS-authorized grade-write rights", 
   assert.equal(await helper.specializedGradeStudentsAllowed(db.service, teacherFr, cFr, ["student-0"], teacherAr), false);
 });
 
+
+
+test("EPC CE1 level evaluation prints published marks with empty draft subjects and no bulletin warning", async () => {
+  const db = setup("CE1");
+  db.tables.institutions[0].code_unique = "E020684";
+  const day = "2026-10-22", code = "LEVEL1";
+  const settings = db.tables.institutions[0].settings_json;
+  settings.primary_evaluation_events_v1 = { version: 1, years: { "2026-2027": { events: [{
+    code, kind: "internal", date: day, label: "Évaluation de niveau", tracks: ["french"],
+    levels: ["CE1"], printBulletin: true,
+  }] } } };
+  db.tables.grade_evaluations = [
+    { id: "level-math", class_id: cFr, subject_id: subjectId(7), eval_date: day, eval_kind: "devoir",
+      title: "MCPE:I:LEVEL1:french:S30", is_published: true, publication_status: "published",
+      publication_version: 1, grading_period_id: null, subject_component_id: null },
+    { id: "level-expression", class_id: cFr, subject_id: subjectId(4), eval_date: day, eval_kind: "devoir",
+      title: "MCPE:I:LEVEL1:french:S30", is_published: false, publication_status: "draft",
+      publication_version: 0, grading_period_id: null, subject_component_id: null },
+  ];
+  db.tables.grade_published_scores = [
+    { id: "level-score", institution_id: db.legacyId, class_id: cFr,
+      student_id: "student-0", evaluation_id: "level-math", subject_id: subjectId(7),
+      eval_date: day, score: 7, scale: 30, coeff: 1, is_current: true, publication_version: 1 },
+  ];
+  const load = createFixtureRouteLoader(db, db.legacyAdminId);
+  const response = await load("src/app/api/admin/grades/bulletin/route.ts")
+    .GET(req(`/api/admin/grades/bulletin?class_id=${cFr}&academic_year=2026-2027&primary_event_code=LEVEL1`));
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  const data = body.specialized, row = data.documents[0];
+  assert.equal(data.internalEvaluationPrintAllowed, true);
+  assert.equal(row.programReadiness.french, true, "internal level evaluations can print safely with missing marks");
+  assert.equal(row.document.french.generalAverage, null, "no invented average from incomplete evaluation");
+  assert.equal(row.document.french.rank, null, "no ranking from incomplete evaluation");
+  assert.equal(row.document.french.isInternalEvaluation, true);
+  assert.equal(row.document.french.appreciation, null, "no extra warning on the paper bulletin");
+  const published = row.document.french.subjects.find(s => s.id === subjectId(7));
+  const unscored = row.document.french.subjects.find(s => s.id === subjectId(4));
+  assert.equal(published?.average, 7);
+  assert.equal(published?.denominator, 30);
+  assert.equal(unscored?.average, null);
+  const Panel = load("src/components/bulletins/SpecializedBulletinPanel.tsx").default;
+  const html = renderToStaticMarkup(React.createElement(Panel, { data,
+    onBack() {}, onPrint: async () => {} }));
+  assert.match(html, /Imprimer les bulletins/);
+  assert.doesNotMatch(html, /disabled=""[^>]*>Imprimer les bulletins/);
+  assert.doesNotMatch(html, /Résultats provisoires|Résultats incomplets|BROUILLON · NON VALIDÉ|bulletins non imprimables/);
+  assert.match(html, /7,00\/30/);
+  assert.equal((html.match(/Évaluation de niveau/g) || []).length >= 1, true);
+
+  // Same incomplete marks in an official composition remain non-printable.
+  settings.primary_evaluation_events_v1.years["2026-2027"].events[0].kind = "official";
+  for (const evaluation of db.tables.grade_evaluations) evaluation.title =
+    evaluation.title.replace("MCPE:I:", "MCPE:O:");
+  const officialResponse = await load("src/app/api/admin/grades/bulletin/route.ts")
+    .GET(req(`/api/admin/grades/bulletin?class_id=${cFr}&academic_year=2026-2027&primary_event_code=LEVEL1`));
+  const officialBody = await officialResponse.json();
+  assert.equal(officialResponse.status, 200, JSON.stringify(officialBody));
+  assert.equal(officialBody.specialized.internalEvaluationPrintAllowed, false);
+  assert.equal(officialBody.specialized.documents[0].programReadiness.french, false);
+  assert.equal(officialBody.specialized.documents[0].document.french.generalAverage, null);
+});

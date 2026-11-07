@@ -23,6 +23,8 @@ import { createSchoolSubjectResolver } from "@/lib/school-subject-identifiers";
 export type SpecializedBulletinPayload = {
   engine: "specialized"; cycle: SchoolCycle; format: "separate" | "combined" | "both";
   coefficientSource: "institution" | "program"; programs: TeachingTrack[];
+  /** Server-approved internal primary event; partial published marks may be printed with blank fields. */
+  internalEvaluationPrintAllowed?: boolean;
   /** Shared once: an inline school logo can be several hundred kilobytes. */
   school?: BulletinSchool;
   documents: Array<{ studentId: string; document: BulletinDocument; ready: boolean;
@@ -459,7 +461,12 @@ export async function loadSpecializedBulletin(input: {
           ...(passageMode ? { primaryAnnual: { ordinary: annualOrdinary,
             ordinaryAverage: annualComplete ? Math.round((annualOrdinary.reduce((sum, item) => sum + (item.average as number), 0) / annualOrdinary.length) * 100) / 100 : null,
             passageAverage: draft.generalAverage, annualAverage, decision: annualDecision } } : {}),
-          appreciation: draft.status === "ready" ? null : "Résultats incomplets — configuration ou notes à vérifier.",
+          // An internal level evaluation is a simple school report, not an
+          // official composition. Missing marks remain blank without a warning
+          // added to the pupil's document.
+          appreciation: (input.institutionCode === "E020684" && primaryEvent?.kind === "internal") ||
+            draft.status === "ready" ? null : "Résultats incomplets — configuration ou notes à vérifier.",
+          isInternalEvaluation: input.institutionCode === "E020684" && primaryEvent?.kind === "internal",
           directorName: signatories[draft.track]?.name || (!isBilingualSchool(school) ? input.institutionHeadName : null) || null,
         };
         document[draft.track] = program;
@@ -468,7 +475,18 @@ export async function loadSpecializedBulletin(input: {
         Object.fromEntries(drafts.map(draft => {
           const program = document[draft.track];
           const annualReady = !passageMode || (program?.primaryAnnual?.annualAverage != null);
-          return [draft.track, draft.status === "ready" && annualReady];
+          // Only internal level evaluations explicitly enabled for bulletin
+          // printing may omit unpublished subjects. Hard errors in scales,
+          // ownership, publication versions or grade integrity still block.
+          const internalGapsAllowed = input.institutionCode === "E020684" &&
+            primaryEvent?.kind === "internal" && primaryEvent.printBulletin === true &&
+            draft.maximumScore !== null && draft.maximumScore > 0 &&
+            draft.subjects.length > 0 &&
+            draft.problems.every(problem => [
+              "primary_event_unpublished_evaluation", "no_subject_in_average",
+              "included_subject_without_score",
+            ].includes(problem));
+          return [draft.track, (draft.status === "ready" || internalGapsAllowed) && annualReady];
         }));
       if (useHistoricalFrench) readiness.french = historicalFrench != null && missingHistoricalSubjects.length === 0;
       const errors = [...drafts.flatMap(row => row.problems)];
@@ -488,6 +506,9 @@ export async function loadSpecializedBulletin(input: {
       period: { from: period.start_date, to: period.end_date, label: period.label, academic_year: year },
       subjects: [], items: [], specialized: { engine: "specialized", cycle, format: selectedBulletinFormat(reports, cycle),
         coefficientSource: reports.coefficientSource === "program" ? "program" : "institution", programs, documents,
+        internalEvaluationPrintAllowed: input.institutionCode === "E020684" &&
+          cycle === "primary" && primaryEvent?.kind === "internal" &&
+          primaryEvent.printBulletin === true,
         school: { ...input.schoolDetails, name: input.institutionName || "", code: input.institutionCode,
           isFrancoArabic: isBilingualSchool(school), generalDirectorName: input.institutionHeadName,
           generalDirectorTitle: input.institutionHeadTitle } },
