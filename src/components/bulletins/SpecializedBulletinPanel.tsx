@@ -72,7 +72,7 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
         className="rounded-lg bg-slate-900 px-3 py-2 text-white disabled:opacity-40"
       >{printPreparing ? "Préparation…" : printLabel}</button>
     </div>
-    {!simpleInternal && <div id="specialized-print-status" className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm print:hidden">
+    {(!simpleInternal || blockedDocuments.length > 0) && <div id="specialized-print-status" className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm print:hidden">
       <p>{readyDocuments.length} bulletin{readyDocuments.length > 1 ? "s" : ""} prêt{readyDocuments.length > 1 ? "s" : ""} à imprimer
         {blockedDocuments.length ? ` · ${blockedDocuments.length} en attente de notes ou de configuration` : ""}.
       </p>
