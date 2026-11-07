@@ -278,3 +278,44 @@
     font-size: 8px !important;
   }
 }
+
+/* EPC Dimbokro only: keep long bilingual identity and class metadata within
+   separate grid tracks in PDF output. Do not shrink all schools' typography. */
+@media print {
+  body .class-list-print-root.epc-dimbokro-class-list .official-header {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) !important;
+    column-gap: 4mm !important;
+    row-gap: 2mm !important;
+    align-items: start !important;
+  }
+  body .class-list-print-root.epc-dimbokro-class-list .school-block,
+  body .class-list-print-root.epc-dimbokro-class-list .school-block > div,
+  body .class-list-print-root.epc-dimbokro-class-list .right-meta,
+  body .class-list-print-root.epc-dimbokro-class-list .class-list-title-block {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+  body .class-list-print-root.epc-dimbokro-class-list .school-name {
+    overflow-wrap: anywhere !important;
+    word-break: normal !important;
+    line-height: 1.2 !important;
+  }
+  body .class-list-print-root.epc-dimbokro-class-list .right-meta {
+    overflow-wrap: anywhere !important;
+    white-space: normal !important;
+    text-align: right !important;
+  }
+  body .class-list-print-root.epc-dimbokro-class-list .right-meta .year-line,
+  body .class-list-print-root.epc-dimbokro-class-list .right-meta .class-line {
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+  }
+  body .class-list-print-root.epc-dimbokro-class-list .class-list-title-block {
+    grid-column: 1 / -1 !important;
+    grid-row: 2 !important;
+  }
+  body .primary-class-list.epc-dimbokro-class-list .school-name {
+    font-size: 12px !important;
+  }
+}

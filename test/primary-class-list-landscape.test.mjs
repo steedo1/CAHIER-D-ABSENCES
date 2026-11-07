@@ -115,3 +115,50 @@ test("secondary class list remains A4 portrait with four generic note columns", 
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+
+test("EPC long name, logo and bilingual class/year header do not overlap in screen or printed A4", async () => {
+  const { server, url } = await startClassListFixture();
+  const browser = await playwright.chromium.launch(browserOptions).catch(async err => {
+    await new Promise(resolve => server.close(resolve)); throw err;
+  });
+  try {
+    for (const arabic of [false, true]) {
+      const page = await browser.newPage({ viewport: { width: 390, height: 840 } });
+      await page.goto(`${url}?epc=1&primary=1&level=CP1&count=12${arabic ? "&arabic=1" : ""}`);
+      await page.getByRole("button", { name: "Liste de classe", exact: true }).waitFor();
+      const verify = async () => page.locator(".class-list-sheet").first().evaluate(sheet => {
+        const rect = selector => {
+          const element = sheet.querySelector(selector);
+          if (!element) return null;
+          const box = element.getBoundingClientRect();
+          return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width };
+        };
+        const school = rect(".school-block"), meta = rect(".right-meta"),
+          title = rect(".class-list-title-block"), header = rect(".official-header");
+        return { school, meta, title, header,
+          name: sheet.querySelector(".school-name")?.textContent || "",
+          logoVisible: !!sheet.querySelector(".school-logo"),
+        };
+      });
+      const mobile = await verify();
+      assert.match(mobile.name, /EPC Markaz At-Talim Al-Islami de Dimbokro/);
+      assert.ok(mobile.logoVisible, "EPC logo is shown");
+      assert.ok(mobile.meta.top >= mobile.school.bottom - 2, "mobile class/year metadata below institution");
+      assert.ok(mobile.title.top >= mobile.meta.bottom - 2, "mobile list title below metadata");
+      await page.emulateMedia({ media: "print" });
+      const printed = await verify();
+      assert.ok(printed.meta.left >= printed.school.right - 2,
+        "PDF class/year metadata must never enter the long school-name column");
+      assert.ok(printed.title.top >= Math.max(printed.school.bottom, printed.meta.bottom) - 2,
+        "PDF list title must stay below the complete institution and year blocks");
+      const pdf = await pdfDetails(await page.pdf({ preferCSSPageSize: true, printBackground: true }));
+      assert.ok(pdf.boxes[0].width > pdf.boxes[0].height, "EPC primary A4 is landscape");
+      assert.equal(pdf.pages.length, 1, "no extra page due to long EPC header");
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+    await new Promise(resolve => server.close(resolve));
+  }
+});

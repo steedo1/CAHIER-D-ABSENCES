@@ -67,7 +67,7 @@ window.fetch = async (input, init) => {
       academic_year: "2026-2027", education_type: "general_secondary" },
     academic_year: { label: "2026-2027" }, can_edit: !arabicRoster,
     can_edit_arabic_names: arabicRoster,
-    institution: { name: "COLLÈGE PRIVÉ DE DÉMONSTRATION DE YAMOUSSOUKRO", code: "000000",
+    institution: { name: params.has("epc") ? "EPC Markaz At-Talim Al-Islami de Dimbokro" : "COLLÈGE PRIVÉ DE DÉMONSTRATION DE YAMOUSSOUKRO", code: params.has("epc") ? "E020684" : "000000",
       logo_url: params.has("noLogo") ? null : logo, email: "college.demonstration@example.invalid",
       regional_direction: "DRENA YAMOUSSOUKRO", status: "private", head_name: "KESSIE DÉSIRÉ OLIVIER",
       ...(teaching ? { document_signatories: resolveTeachingDocumentSignatories(signatureSettings, {
