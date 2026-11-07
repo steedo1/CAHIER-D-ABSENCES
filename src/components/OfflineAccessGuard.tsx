@@ -17,6 +17,7 @@ import {
 } from "@/lib/offline-auth-contract";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import { assertOfflineFunctionPrepared } from "@/lib/offline-auth-readiness";
+import { isParentConnectRoute } from "@/lib/parent-connect/navigation";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/recover", "/redirect"]);
 const CLIENT_PROTECTED_PREFIXES = [
@@ -73,7 +74,7 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
-      if (!pathname || PUBLIC_PATHS.has(pathname)) {
+      if (!pathname || PUBLIC_PATHS.has(pathname) || isParentConnectRoute(pathname)) {
         if (!cancelled) setState({ status: "allowed" });
         // Le worker ramène le démarrage / de la PWA vers le login préparé
         // quand le Cloud ne répond pas, même si le Wi-Fi paraît connecté.
@@ -196,6 +197,11 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
     relayEnabled,
     session,
   ]);
+
+  // Parent Connect has its own matricule/device-cookie session. Its APIs enforce
+  // student linkage and subscription; Supabase offline grants do not apply here.
+  // Do not wait for a school staff session before rendering the parent portal.
+  if (pathname && isParentConnectRoute(pathname)) return children;
 
   if (loading || state.status === "checking") {
     if (!pathname || !isClientProtectedPath(pathname)) return children;
