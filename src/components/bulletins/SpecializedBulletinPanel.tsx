@@ -26,12 +26,13 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
   // One incomplete pupil must not block every other eligible pupil. The
   // printed DOM contains ONLY documents authorized by the server-calculated
   // per-program readiness and the existing printable policy.
+  const simpleInternal = data.cycle === "primary" && data.internalEvaluationPrintAllowed === true;
   const readyDocuments = visibleDocuments.filter(row =>
-    isSpecializedBulletinPrintable(row.document, row.programReadiness, selected));
+    isSpecializedBulletinPrintable(row.document, row.programReadiness, selected, simpleInternal));
   const blockedDocuments = visibleDocuments.filter(row => !readyDocuments.includes(row));
   const printable = readyDocuments.length > 0;
   const lastReadyId = readyDocuments.at(-1)?.studentId;
-  const printLabel = blockedDocuments.length
+  const printLabel = !simpleInternal && blockedDocuments.length
     ? `Imprimer ${readyDocuments.length} bulletin${readyDocuments.length > 1 ? "s" : ""} prêt${readyDocuments.length > 1 ? "s" : ""}`
     : "Imprimer les bulletins";
   const selectedTracks = selected === "combined" ? ["french", "arabic"] :
@@ -67,11 +68,11 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
         {choices.map(choice => <option key={choice} value={choice}>{choice === "combined" ? "Français et arabe — résultats séparés" : choice === "arabic" ? "Arabe" : choice === "ordinary" ? "Bulletin scolaire" : "Français"}</option>)}
       </select>
       <button type="button" disabled={!printable || printPreparing} onClick={() => void onPrint()}
-        aria-describedby="specialized-print-status"
+        aria-describedby={simpleInternal ? undefined : "specialized-print-status"}
         className="rounded-lg bg-slate-900 px-3 py-2 text-white disabled:opacity-40"
       >{printPreparing ? "Préparation…" : printLabel}</button>
     </div>
-    <div id="specialized-print-status" className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm print:hidden">
+    {!simpleInternal && <div id="specialized-print-status" className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm print:hidden">
       <p>{readyDocuments.length} bulletin{readyDocuments.length > 1 ? "s" : ""} prêt{readyDocuments.length > 1 ? "s" : ""} à imprimer
         {blockedDocuments.length ? ` · ${blockedDocuments.length} en attente de notes ou de configuration` : ""}.
       </p>
@@ -90,7 +91,7 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
           {blockedDocuments.length > 12 && <li>Et {blockedDocuments.length - 12} autre(s) bulletin(s).</li>}
         </ul>
       </details>}
-    </div>
+    </div>}
     {error && <p role="alert" className="text-red-700 print:hidden">{error}</p>}
     <div className="specialized-print-denied" role="status">Impression indisponible : aucun bulletin validé dans la sélection. Vérifiez la configuration et les notes publiées dans Mon Cahier.</div>
     <div className={`fa-report-print-root specialized-print-root ${!printable || printPreparing || error ? "specialized-print-blocked" : ""} space-y-6 overflow-x-auto print:overflow-visible`}>
