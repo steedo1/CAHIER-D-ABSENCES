@@ -7,6 +7,17 @@
   margin: 0;
 }
 .specialized-print-denied { display: none; }
+/* A4 remains at full physical size on paper. On small screens only,
+ * zoom the document (and its layout footprint) to avoid horizontal clipping. */
+@media screen and (max-width: 450px) {
+  .specialized-print-root > .specialized-document { zoom: .43; }
+}
+@media screen and (min-width: 451px) and (max-width: 650px) {
+  .specialized-print-root > .specialized-document { zoom: .68; }
+}
+@media screen and (min-width: 651px) and (max-width: 850px) {
+  .specialized-print-root > .specialized-document { zoom: .84; }
+}
 @media print {
   body:has(.fa-report-print-root),
   html:has(.fa-report-print-root) {
@@ -32,12 +43,19 @@
     width: 210mm !important;
     box-shadow: none !important;
   }
-  .specialized-print-root > article {
+  .specialized-print-root > article,
+  .specialized-print-root > .specialized-document {
     break-after: page;
     page-break-after: always;
     margin: 0 !important;
+    width: 210mm !important;
+    zoom: 1 !important;
   }
-  .specialized-print-root > article:last-child {
+  .specialized-print-root > .specialized-document.specialized-print-excluded {
+    display: none !important;
+  }
+  .specialized-print-root > article:last-child,
+  .specialized-print-root > .specialized-document.specialized-last-printable {
     break-after: auto;
     page-break-after: auto;
   }
