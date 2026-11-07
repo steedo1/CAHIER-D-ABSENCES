@@ -907,6 +907,34 @@ export default function ClassListPrintPage() {
           min-width: 0;
         }
 
+        /* EPC's long institutional name must never collide with class/year
+           metadata, including the narrow on-phone preview. */
+        .epc-dimbokro-class-list .official-header {
+          grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+        }
+        .epc-dimbokro-class-list .school-block > div,
+        .epc-dimbokro-class-list .right-meta {
+          min-width: 0;
+          max-width: 100%;
+        }
+        .epc-dimbokro-class-list .right-meta {
+          overflow-wrap: anywhere;
+          white-space: normal;
+        }
+        @media screen and (max-width: 640px) {
+          .epc-dimbokro-class-list .official-header {
+            grid-template-columns: minmax(0, 1fr);
+          }
+          .epc-dimbokro-class-list .right-meta {
+            grid-column: 1;
+            grid-row: 2;
+            text-align: left;
+          }
+          .epc-dimbokro-class-list .class-list-title-block {
+            grid-row: 3;
+          }
+        }
+
         .school-logo {
           width: 52px;
           height: 52px;
@@ -1598,7 +1626,7 @@ export default function ClassListPrintPage() {
           </button>
         </div>
       ) : data ? (
-        <section className={`class-list-print-root ${primaryList ? "primary-class-list" : ""} ${arabicList ? "arabic-class-list" : ""}`}>
+        <section className={`class-list-print-root ${primaryList ? "primary-class-list" : ""} ${arabicList ? "arabic-class-list" : ""} ${data.institution.code === "E020684" ? "epc-dimbokro-class-list" : ""}`}>
           {printedPages.map(({ students: pageStudents, startIndex }, pageIndex) => (
           <article
             className={`class-list-sheet ${primaryList
