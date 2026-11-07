@@ -458,3 +458,123 @@ test("a class explicitly missing its curriculum never produces an official-looki
   assert.equal(data.specialized.documents[0].document.french.generalAverage, null);
   assert.ok(data.specialized.documents[0].problems.includes("class_curriculum_not_configured"));
 });
+
+const fr = "11111111-1111-4111-8111-111111111111";
+const ar = "22222222-2222-4222-8222-222222222222";
+const target = "33333333-3333-4333-8333-333333333333";
+const home = "77777777-7777-4777-8777-777777777777";
+const pupil = "88888888-8888-4888-8888-888888888888";
+const path = "src/app/api/admin/grades/bulletin/route.ts";
+const request = () => new NextRequest(`https://example.invalid/api/admin/grades/bulletin?class_id=${target}&from=2026-09-01&to=2026-12-15&academic_year=2026-2027`);
+
+function membershipBulletinFixture(level, teaching, secondary = false) {
+  const db = setup({ count: 1 });
+  const settings = db.tables.institutions[0].settings_json;
+  const cycle = secondary ? "secondary" : "primary";
+  db.tables.institutions[0].code_unique = "E020684";
+  settings.school_cycles_v1.enabledCycles = ["primary", "secondary"];
+  settings.school_cycles_v1.teachingTracksByCycle = {
+    primary: ["french", "arabic"], secondary: ["french", "arabic"],
+  };
+  settings.school_cycles_v1.subjectTracksByCycle.secondary = { [fr]: ["french"], [ar]: ["arabic"] };
+  settings.franco_arabic_reports_v1.scales = ["french", "arabic"].map(track => ({
+    cycle, level, track, maxScore: secondary ? 20 : 10,
+  }));
+  db.tables.classes[0].level = level;
+  db.tables.institution_level_subjects.forEach(row => { row.level_code = level; });
+  db.tables.institution_subject_coeffs.forEach(row => { row.level = level; });
+  const student = db.tables.class_enrollments[0].students;
+  Object.assign(student, { id: pupil, matricule: "EPC-FICTIF", lifecycle_status: "active" });
+  db.tables.students = [structuredClone(student)];
+  Object.assign(db.tables.class_enrollments[0], { class_id: home, student_id: pupil,
+    classes: { academic_year: "2026-2027" } });
+  db.tables.classes.push({ id: home, institution_id: db.legacyId, academic_year: "2026-2027",
+    level: "CP2", label: "Classe administrative", education_type: "general_secondary" });
+  settings.school_student_programs_v1 = { version: 1, years: { "2026-2027": { classes: {
+    [home]: { tracks: [teaching === "french" ? "arabic" : "french"], students: {} },
+    [target]: { tracks: [teaching], students: {}, linkedStudentIds: [pupil],
+      ...(teaching === "french" ? { independentFrenchLevels: true } : {}) },
+  } } } };
+  db.tables.grade_published_scores.forEach(row => {
+    row.student_id = pupil;
+    if (row.subject_id === ar && !secondary) { row.score = 6; row.scale = 10; }
+  });
+  db.tables.grade_evaluations.filter(row => row.subject_id === ar && !secondary)
+    .forEach(row => { row.scale = 10; });
+  return db;
+}
+
+for (const level of ["CP1", "CP2", "CE1", "CE2", "CM1", "CM2"]) {
+  for (const teaching of ["french", "arabic"]) {
+    test(`EPC ${level} ${teaching}: linked pupil enters the correct bulletin and independent ranking`, async () => {
+      const db = membershipBulletinFixture(level, teaching);
+      const before = structuredClone(db.tables);
+      const response = await createFixtureRouteLoader(db, db.legacyAdminId)(path).GET(request());
+      assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+      const payload = (await response.json()).specialized;
+      assert.deepEqual(payload.programs, [teaching]);
+      assert.equal(payload.documents.length, 1);
+      const doc = payload.documents[0];
+      assert.equal(doc.studentId, pupil);
+      assert.equal(doc.document[teaching].denominator, 10);
+      assert.equal(doc.document[teaching].generalAverage, teaching === "french" ? 8 : 6);
+      assert.equal(doc.document[teaching].rank, 1);
+      assert.equal(doc.document[teaching].classSize, 1);
+      assert.equal(doc.document[teaching === "french" ? "arabic" : "french"], undefined);
+      assert.deepEqual(db.tables, before);
+      assert.equal(db.calls.some(call => call.op !== "read"), false);
+    });
+  }
+}
+
+test("EPC secondary French: Arabic-home pupil reaches the historical French bulletin", async () => {
+  const db = membershipBulletinFixture("6ème", "french", true);
+  const before = structuredClone(db.tables);
+  const response = await createFixtureRouteLoader(db, db.legacyAdminId)(path).GET(request());
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  const payload = (await response.json()).specialized;
+  assert.equal(payload.documents.length, 1);
+  const doc = payload.documents[0].document.french;
+  assert.equal(doc.generalAverage, 16);
+  assert.equal(doc.denominator, 20);
+  assert.equal(doc.rank, 1);
+  assert.equal(doc.classSize, 1);
+  for (const [table, rows] of Object.entries(before)) assert.deepEqual(db.tables[table], rows);
+  assert.equal(db.calls.some(call => call.op !== "read"), false);
+});
+
+for (const [level, secondary] of [["CP1", false], ["6ème", true]]) {
+test(`EPC ${level}: a stale French link must not hide valid French bulletin pupils`, async () => {
+  const db = membershipBulletinFixture(level, "french", secondary);
+  db.tables.institutions[0].settings_json.school_student_programs_v1
+    .years["2026-2027"].classes[target].linkedStudentIds.push("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab");
+  const response = await createFixtureRouteLoader(db, db.legacyAdminId)(path).GET(request());
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  const documents = (await response.json()).specialized.documents;
+  assert.equal(documents.length, 1);
+  assert.equal(documents[0].studentId, pupil);
+  assert.equal(documents[0].document.french.classSize, 1);
+});
+}
+
+test("EPC: moving the French administrative class retains the Arabic bulletin marks and ranking", async () => {
+  const db = membershipBulletinFixture("CP1", "arabic");
+  const next = "99999999-9999-4999-8999-999999999999";
+  const settings = db.tables.institutions[0].settings_json;
+  db.tables.classes.push({ id: next, institution_id: db.legacyId, academic_year: "2026-2027",
+    level: "CE1", label: "Nouvelle classe française", education_type: "general_secondary" });
+  settings.school_student_programs_v1.years["2026-2027"].classes[next] = { tracks: ["french"], students: {} };
+  const before = structuredClone(db.tables.grade_published_scores);
+  const load = createFixtureRouteLoader(db, db.legacyAdminId, new Map([["src/lib/finance/student-finance-sync.ts",
+    'export async function synchronizeStudentFinance() { return { rollback:async()=>{},transfer:null,reconciliation:null }; }']]));
+  const first = await (await load(path).GET(request())).json();
+  const transfer = await load("src/app/api/admin/enrollments/assign/route.ts").POST(new NextRequest("https://example.invalid/assign", {
+    method: "POST", body: JSON.stringify({ action: "assign", student_id: pupil, class_id: next, source_class_id: home }),
+  }));
+  assert.equal(transfer.status, 200, JSON.stringify(await transfer.clone().json()));
+  const result = await load(path).GET(request());
+  assert.equal(result.status, 200, JSON.stringify(await result.clone().json()));
+  const after = await result.json();
+  assert.deepEqual(after.specialized.documents, first.specialized.documents);
+  assert.deepEqual(db.tables.grade_published_scores, before);
+});

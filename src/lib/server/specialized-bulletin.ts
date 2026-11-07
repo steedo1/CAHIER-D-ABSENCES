@@ -132,12 +132,14 @@ export async function loadSpecializedBulletin(input: {
     ]);
     // The bulletin uses the same verified class membership as the class lists.
     const links = classPolicy?.linkedStudentIds || [];
+    let verifiedLinkedStudentIds: string[] = [];
     if (links.length) {
       if (classPolicy?.tracks.length !== 1) {
         return json({ ok: false, error: "CLASS_TEACHING_LINK_INVALID" }, 409);
       }
       const linked = await loadLinkedClassEnrollments(service, institutionId, schoolClass, input.settingsJson,
-        { tolerateStaleLinks: classPolicy.tracks[0] === "arabic" });
+        { tolerateStaleLinks: true });
+      verifiedLinkedStudentIds = linked.map(row => row.student_id);
       enrollments.push(...linked);
     }
     const students = new Map<string, Student>();
@@ -237,7 +239,7 @@ export async function loadSpecializedBulletin(input: {
     let historicalHeadTeacher: unknown = null;
     if (useHistoricalFrench) {
       const history = await input.loadHistoricalFrench({ from: String(period.start_date),
-        to: String(period.end_date), academicYear: String(year), verifiedLinkedStudentIds: links });
+        to: String(period.end_date), academicYear: String(year), verifiedLinkedStudentIds });
       if (history.status !== 200) return json({
         ok: false, error: "SECONDARY_FRENCH_HISTORICAL_ENGINE_UNAVAILABLE",
         historicalStatus: history.status,
