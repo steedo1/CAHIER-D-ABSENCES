@@ -350,8 +350,9 @@ export default function SchoolCoefficientsClassicWorkflow() {
           const untouched = old.coefficients.filter(row => !(row.cycle === cycle && row.track === track &&
             sameSchoolLevel(row.level, level, cycle) && touchedIds.has(row.subjectId)));
           next = { ...next,
-            coefficients: [...untouched, ...edited.filter(row => row.value > 0).map(({ subject, value }) => ({
-              cycle, track, level, subjectId: subject.id, coefficient: value, includeInAverage: true,
+            coefficients: [...untouched, ...edited.map(({ subject, value }) => ({
+              cycle, track, level, subjectId: subject.id, coefficient: value,
+              includeInAverage: value > 0,
             }))] };
         }
       }
