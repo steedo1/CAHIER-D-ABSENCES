@@ -318,7 +318,11 @@ export default function SchoolCoefficientsClassicWorkflow() {
         const numbers = configuredSubjects.map(subject => ({ subject,
           value: Number(coeffFor(subject.id)), raw: coeffFor(subject.id).trim() }));
         for (const { subject, value, raw } of numbers) {
-          if (!raw || !Number.isFinite(value) || value < 0 || value > 99)
+          // French secondary keeps its historical complete-table workflow.
+          // Arabic secondary accepts partial entry: blank cells are not zero
+          // and must never silently remove previously confirmed coefficients.
+          if ((frenchSecondary || raw) &&
+              (!raw || !Number.isFinite(value) || value < 0 || value > 99))
             throw new Error("Vérifiez le coefficient de " + subject.name + ".");
         }
         if (frenchSecondary) {
@@ -335,12 +339,20 @@ export default function SchoolCoefficientsClassicWorkflow() {
         } else {
           // The historical table does NOT contain a teaching track: Arabic
           // coefficients must NEVER be written there.
+          // A visible saved value is not an edit. Apply only values the
+          // administrator actually changed, preserving existing flags.
+          const edited = numbers.filter(row => row.raw !== "" &&
+            Object.hasOwn(changes, levelKey(cycle, track, level) + "|" + row.subject.id));
+          // Only explicitly supplied rows replace previous values. Unfilled
+          // subjects and other levels/teachings remain unchanged. An explicit
+          // zero removes that subject from the average, as in ordinary schools.
+          const touchedIds = new Set(edited.map(row => row.subject.id));
           const untouched = old.coefficients.filter(row => !(row.cycle === cycle && row.track === track &&
-            sameSchoolLevel(row.level, level, cycle) &&
-            configuredSubjects.some(subject => subject.id === row.subjectId)));
+            sameSchoolLevel(row.level, level, cycle) && touchedIds.has(row.subjectId)));
           next = { ...next,
-            coefficients: [...untouched, ...numbers.filter(row => row.value > 0).map(({ subject, value }) => ({
-              cycle, track, level, subjectId: subject.id, coefficient: value, includeInAverage: true,
+            coefficients: [...untouched, ...edited.map(({ subject, value }) => ({
+              cycle, track, level, subjectId: subject.id, coefficient: value,
+              includeInAverage: value > 0,
             }))] };
         }
       }
@@ -557,6 +569,10 @@ export default function SchoolCoefficientsClassicWorkflow() {
               </tbody>
             </table>
           </div>}
+        {configuredSubjects.length > 0 && !isLoadingSubjects && showCoefficients && !frenchSecondary &&
+          <p className="text-xs text-slate-600">
+            Renseignez seulement les coefficients confirmés. Une case vide reste inchangée ; 0 exclut la matière de la moyenne.
+          </p>}
         {configuredSubjects.length > 0 && !isLoadingSubjects &&
           <div className="flex justify-end"><button type="button" disabled={saving}
             onClick={() => void save()} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
