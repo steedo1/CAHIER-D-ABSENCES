@@ -218,6 +218,7 @@ test("classic schools retain their existing RLS-authorized grade-write rights", 
 
 test("EPC CE1 level evaluation prints published marks with empty draft subjects and no bulletin warning", async () => {
   const db = setup("CE1");
+  db.tables.institutions[0].code_unique = "E020684";
   const day = "2026-10-22", code = "LEVEL1";
   const settings = db.tables.institutions[0].settings_json;
   settings.primary_evaluation_events_v1 = { version: 1, years: { "2026-2027": { events: [{
