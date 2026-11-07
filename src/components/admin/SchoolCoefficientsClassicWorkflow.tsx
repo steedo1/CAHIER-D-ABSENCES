@@ -339,7 +339,10 @@ export default function SchoolCoefficientsClassicWorkflow() {
         } else {
           // The historical table does NOT contain a teaching track: Arabic
           // coefficients must NEVER be written there.
-          const edited = numbers.filter(row => row.raw !== "");
+          // A visible saved value is not an edit. Apply only values the
+          // administrator actually changed, preserving existing flags.
+          const edited = numbers.filter(row => row.raw !== "" &&
+            Object.hasOwn(changes, levelKey(cycle, track, level) + "|" + row.subject.id));
           // Only explicitly supplied rows replace previous values. Unfilled
           // subjects and other levels/teachings remain unchanged. An explicit
           // zero removes that subject from the average, as in ordinary schools.
