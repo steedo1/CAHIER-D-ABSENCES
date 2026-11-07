@@ -592,11 +592,9 @@ export async function GET(
   ).years[String((cls as any).academic_year || "")]?.classes[classId]?.tracks || [];
   const isArabicClass = configuredTracks.length === 1 && configuredTracks[0] === "arabic";
 
-  // An Arabic class may contain only pedagogically linked pupils: they
-  // keep their ONE active administrative enrollment in the French class.
-  // The primary helper already resolves this; the secondary path was missing.
+  // A class can include pupils enrolled administratively in the other teaching.
   let linkedEnrollments = primaryRoster?.linkedEnrollments || [];
-  if (!primaryRoster && isArabicClass) {
+  if (!primaryRoster && configuredTracks.length === 1) {
     try {
       linkedEnrollments = await loadLinkedClassEnrollments(
         srv, institutionId, cls as any,
@@ -621,6 +619,7 @@ export async function GET(
         matricule: s.matricule ? String(s.matricule) : null,
         full_name: name,
         full_name_ar: s.full_name_ar ?? null,
+        pedagogical_link: !currentIds.has(sid),
         first_name: s.first_name ?? null,
         last_name: s.last_name ?? null,
         gender: s.gender ?? null,
@@ -663,7 +662,7 @@ export async function GET(
 
   return respond({
     ok: true,
-    can_edit: canWrite && !linkedEnrollments.length,
+    can_edit: canWrite && (!isArabicClass || !linkedEnrollments.length),
     can_edit_arabic_names: canWrite && isArabicClass,
     ...(primaryRoster ? { school_cycle: "primary", mark_subjects: primaryRoster.subjects } : {}),
     class: {

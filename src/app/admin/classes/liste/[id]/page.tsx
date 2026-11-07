@@ -30,6 +30,7 @@ type StudentRow = {
   matricule: string | null;
   full_name: string;
   full_name_ar?: string | null;
+  pedagogical_link?: boolean;
   first_name?: string | null;
   last_name?: string | null;
   gender: string | null;
@@ -1311,7 +1312,7 @@ export default function ClassListPrintPage() {
                 </tr>
               </thead>
               <tbody>
-                {students.map((student) => {
+                {students.filter(student => !student.pedagogical_link).map((student) => {
                   const row = editable[student.id] || { id: student.id };
                   return (
                     <tr key={student.id} className="border-t">

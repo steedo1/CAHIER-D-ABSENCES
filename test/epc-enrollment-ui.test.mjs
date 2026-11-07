@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { Window } from "happy-dom";
+import { NextRequest } from "next/server.js";
 import { createFixtureRouteLoader, createMulticycleFixture } from "./helpers/multicycle-fixture.mjs";
 
 const require = createRequire(import.meta.url);
@@ -49,6 +50,14 @@ test("the Arabic roster uses its own level and its three operations use the inte
       'export async function synchronizeStudentFinance() { throw new Error("Unexpected Finance call"); }'],
   ]));
   const assignRoute = load("src/app/api/admin/enrollments/assign/route.ts");
+  const linkRoute = load("src/app/api/admin/classes/arabic-link/route.ts");
+  const loadLinked = load("src/lib/server/school-linked-class-roster.ts").loadLinkedClassEnrollments;
+  db.service.rpc = async (name, args) => {
+    assert.equal(name, "cas_school_student_programs_v1");
+    assert.deepEqual(settings.school_student_programs_v1, args.p_previous);
+    settings.school_student_programs_v1 = structuredClone(args.p_next);
+    return { data: true, error: null };
+  };
   const posts = [];
   globalThis.fetch = async (input, options) => {
     const url = new URL(String(input), window.location.href);
@@ -58,14 +67,28 @@ test("the Arabic roster uses its own level and its three operations use the inte
       if (payload.action === "create_arabic") {
         return assignRoute.POST(new Request(url, { method: "POST", body: options.body }));
       }
+      if (payload.teaching === "french") {
+        return linkRoute.POST(new NextRequest(url, { method: "POST", body: options.body, headers: options.headers }));
+      }
       return Response.json({ ok: true, student, transferred: posts.at(-1)[1].operation === "transfer" });
     }
     if (url.pathname === "/api/auth/role") return Response.json({ role: "admin" });
     if (url.pathname === "/api/admin/classes") return Response.json({ items: classes });
     if (url.pathname === "/api/admin/students") return Response.json({ items: [student] });
     if (url.pathname === "/api/admin/students/search") {
-      assert.equal(url.searchParams.get("full_name"), "DÉMO MARIAM");
-      return Response.json({ items: [student], spelling_suggestions: true });
+      if (url.searchParams.get("full_name") === "DÉMO MARIAM") {
+        return Response.json({ items: [student], spelling_suggestions: true });
+      }
+      assert.equal(url.searchParams.get("full_name"), "EXCLUSIF ÉLÈVE");
+      return Response.json({ items: db.tables.students.map(record => ({ ...record, class_label: classes[1].name })) });
+    }
+    if (url.pathname.endsWith(`/${home}/roster`)) {
+      const linked = await loadLinked(db.service, db.legacyId, db.tables.classes[0], settings);
+      return Response.json({
+        class: { label: classes[0].name, teaching_track: "french" },
+        students: linked.map(row => ({ ...row.students, pedagogical_link: true,
+          full_name: [row.students.last_name, row.students.first_name].join(" ") })),
+      });
     }
     if (url.pathname.endsWith("/roster")) return Response.json({
       class: { label: classes[1].name, teaching_track: "arabic" },
@@ -150,6 +173,22 @@ test("the Arabic roster uses its own level and its three operations use the inte
     assert.equal(posts[3][1].class_id, home);
     assert.equal(posts[3][1].create_only, true);
     assert.ok(button("Ajouter à la classe arabe"));
+    await click("Annuler");
+
+    await select("CM1");
+    await select(home);
+    await click("Ajouter / Transférer");
+    await click("Ajouter à un autre enseignement");
+    await input('input[placeholder="Nom et prénom(s)"]', "Exclusif Élève");
+    await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+    await click("Choisir");
+    await click("Ajouter à la classe française");
+    assert.deepEqual(posts[4], ["/api/admin/classes/arabic-link", {
+      class_id: home, student_id: db.tables.students[0].id, teaching: "french", operation: "add",
+    }]);
+    assert.match(host.querySelector("tbody").textContent, /EXCLUSIF Élève/);
+    assert.deepEqual(db.tables.class_enrollments.map(row => row.class_id), [target]);
+    assert.equal(db.tables.students.length, 1);
   } finally {
     await React.act(async () => root.unmount());
     await window.happyDOM.close();

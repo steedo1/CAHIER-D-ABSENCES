@@ -93,10 +93,11 @@ async function eligibleHomeStudents(
   selected: SchoolChoice,
   choices: SchoolChoice[],
   teaching: TeachingTrack,
+  independentFrenchLevels = false,
 ) {
   if (!selected.level?.trim()) return { candidates: [] };
   const siblingIds = choices.filter(row =>
-    row.id !== selected.id && canLinkTeachingClass(row, selected, teaching))
+    row.id !== selected.id && canLinkTeachingClass(row, selected, teaching, independentFrenchLevels))
     .map(row => row.id);
   const candidates: Array<{ student_id: string; class_id: string }> = [];
   if (!siblingIds.length) return { candidates };
@@ -159,6 +160,7 @@ export async function GET(request: NextRequest) {
       (!selectedTracks?.length || selectedTracks.length === 1 && selectedTracks[0] === "arabic");
     const nearby = selected.cycle ? await eligibleHomeStudents(
       service, institutionId, selected, choices, targetIsArabic ? "arabic" : "french",
+      stored.years[year]?.classes[selected.id]?.independentFrenchLevels,
     ) : { candidates: [] as Array<{ class_id: string; student_id: string }> };
     if ("error" in nearby) return json({ error: nearby.error }, 503);
     const nearbyStudents = nearby.candidates.filter(row => !studentIds.includes(row.student_id));
@@ -256,7 +258,10 @@ export async function PUT(request: NextRequest) {
   }
 
   const existing = readStudentProgramSettings(rawSettings);
-  const previousLinks = existing.years[year]?.classes[classId]?.linkedStudentIds || [];
+  const previousPolicy = existing.years[year]?.classes[classId];
+  const previousLinks = previousPolicy?.linkedStudentIds || [];
+  const independentFrenchLevels = defaultTracks.length === 1 && defaultTracks[0] === "french" &&
+    previousPolicy?.independentFrenchLevels === true;
   const inputLinks: unknown = body.linkedStudentIds === undefined ? previousLinks : body.linkedStudentIds;
   if (!Array.isArray(inputLinks) || inputLinks.length > 700 ||
     inputLinks.some(id => typeof id !== "string" || !UUID.test(id)) ||
@@ -284,7 +289,7 @@ export async function PUT(request: NextRequest) {
     const target = choices.find(row => row.id === classId);
     if (!target) return json({ error: "class_not_found" }, 404);
     const eligibleHome = await eligibleHomeStudents(
-      service, institutionId, target, choices, defaultTracks[0],
+      service, institutionId, target, choices, defaultTracks[0], independentFrenchLevels,
     );
     if ("error" in eligibleHome) return json({ error: eligibleHome.error }, 503);
     const homeByStudent = new Map(eligibleHome.candidates.map(row => [row.student_id, row.class_id]));
@@ -305,8 +310,8 @@ export async function PUT(request: NextRequest) {
         if (otherId === classId || !policy.linkedStudentIds?.includes(id) ||
           !policy.tracks.includes(defaultTracks[0])) continue;
         const otherClass = choices.find(row => row.id === otherId);
-        if (otherClass && (defaultTracks[0] === "arabic" ||
-          canLinkTeachingClass(otherClass, target, defaultTracks[0]))) {
+        if (otherClass && (defaultTracks[0] === "arabic" || independentFrenchLevels ||
+          policy.independentFrenchLevels || canLinkTeachingClass(otherClass, target, defaultTracks[0]))) {
           return json({ error: "duplicate_teaching_class" }, 409);
         }
       }
@@ -321,6 +326,7 @@ export async function PUT(request: NextRequest) {
   else classes[classId] = {
     tracks: defaultTracks, students: overrides,
     ...(linkedStudentIds.length ? { linkedStudentIds } : {}),
+    ...(linkedStudentIds.length && independentFrenchLevels ? { independentFrenchLevels: true } : {}),
   };
   const next = {
     ...asSettingsObject(rawSettings),

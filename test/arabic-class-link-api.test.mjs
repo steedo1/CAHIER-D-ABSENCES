@@ -58,10 +58,10 @@ function setup() {
   return db;
 }
 
-const request = (classId, pupilId = studentId, matricule = "", operation) => new NextRequest(baseUrl, {
+const request = (classId, pupilId = studentId, matricule = "", operation, teaching) => new NextRequest(baseUrl, {
   method: "POST",
   headers: { "content-type": "application/json", origin: "https://example.invalid" },
-  body: JSON.stringify({ class_id: classId, student_id: pupilId, matricule, operation }),
+  body: JSON.stringify({ class_id: classId, student_id: pupilId, matricule, operation, teaching }),
 });
 
 test("Arabic add links an existing French pupil without an extra enrollment or finance mutation", async () => {
@@ -334,6 +334,119 @@ test("transfer identifies an Arabic-only pupil's administrative source without c
   assert.deepEqual(await response.json(), {
     error: "arabic_administrative_transfer_required", student_id: studentId, source_class_id: arabicId,
   });
+  assert.deepEqual(db.tables, before);
+  assert.equal(db.calls.some(call => call.op !== "read"), false);
+});
+
+test("EPC: Arabic-only pupil joins a French class without moving the administrative enrollment", async () => {
+  const db = setup();
+  db.tables.institutions[0].code_unique = "E020684";
+  db.tables.class_enrollments[0].class_id = arabicId;
+  db.tables.classes.find(row => row.id === arabicId).level = "CP2";
+  db.tables.student_grades = [{ student_id: studentId, evaluation_id: "arabic", score: 9 }];
+  const before = structuredClone(db.tables);
+  const load = createFixtureRouteLoader(db, db.legacyAdminId);
+  const response = await load(routePath).POST(request(homeId, studentId, "", "add", "french"));
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  assert.equal((await response.json()).student.matricule, "EPC260001");
+  const settings = db.tables.institutions[0].settings_json;
+  const policy = settings.school_student_programs_v1.years["2026-2027"].classes[homeId];
+  assert.deepEqual(policy.linkedStudentIds, [studentId]);
+  const roster = await load("src/lib/server/school-linked-class-roster.ts")
+    .loadLinkedClassEnrollments(db.service, db.legacyId, db.tables.classes[0], settings);
+  assert.deepEqual(roster.map(row => row.student_id), [studentId]);
+  for (const table of ["students", "class_enrollments", "student_grades"]) {
+    assert.deepEqual(db.tables[table], before[table]);
+  }
+  assert.deepEqual(db.calls.filter(call => call.op !== "read").map(call => call.table), ["institutions"]);
+});
+
+test("EPC: a French administrative transfer closes the old French class and retains the Arabic link and grades", async () => {
+  const db = setup();
+  const institution = db.tables.institutions[0];
+  institution.code_unique = "E020684";
+  const year = "2026-2027";
+  const policies = institution.settings_json.school_student_programs_v1.years[year].classes;
+  policies[arabicId].linkedStudentIds = [studentId];
+  policies[arabicNextId].tracks = ["french"];
+  db.tables.classes.find(row => row.id === arabicNextId).level = "CP2";
+  Object.assign(db.tables.class_enrollments[0], { start_date: "2026-09-14", classes: { academic_year: year } });
+  db.tables.academic_years.push({ id: "year", institution_id: db.legacyId, code: year, start_date: "2026-09-14" });
+  db.tables.student_grades = [
+    { student_id: studentId, evaluation_id: "exam-fr", score: 11 },
+    { student_id: studentId, evaluation_id: "exam-ar", score: 9 },
+  ];
+  const before = structuredClone(db.tables);
+  const load = createFixtureRouteLoader(db, db.legacyAdminId, new Map([
+    ["src/lib/finance/student-finance-sync.ts",
+      'export async function synchronizeStudentFinance() { return { rollback: async () => {}, transfer: null, reconciliation: null }; }'],
+  ]));
+  const decision = await load(routePath).POST(request(arabicNextId, studentId, "", "transfer", "french"));
+  const gate = await decision.json();
+  assert.equal(gate.error, "french_administrative_transfer_required");
+  assert.equal(gate.source_class_id, homeId);
+
+  const moved = await load("src/app/api/admin/enrollments/assign/route.ts").POST(new NextRequest(baseUrl, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "assign", class_id: arabicNextId, student_id: gate.student_id,
+      source_class_id: gate.source_class_id }),
+  }));
+  assert.equal(moved.status, 200, JSON.stringify(await moved.clone().json()));
+  assert.equal((await moved.json()).student.matricule, "EPC260001");
+  assert.ok(db.tables.class_enrollments.find(row => row.class_id === homeId).end_date);
+  assert.deepEqual(db.tables.class_enrollments.filter(row => row.end_date == null).map(row => row.class_id), [arabicNextId]);
+  assert.deepEqual(db.tables.student_grades, before.student_grades);
+  assert.deepEqual(db.tables.institutions, before.institutions);
+  assert.equal(db.tables.students.length, 1);
+  assert.equal(db.tables.students[0].id, studentId);
+  assert.equal(db.tables.students[0].matricule, "EPC260001");
+  const roster = await load("src/lib/server/school-linked-class-roster.ts")
+    .loadLinkedClassEnrollments(db.service, db.legacyId, db.tables.classes[1], institution.settings_json);
+  assert.deepEqual(roster.map(row => row.student_id), [studentId]);
+});
+
+test("EPC: changing a French link removes the old French membership and keeps the Arabic enrollment", async () => {
+  const db = setup();
+  const institution = db.tables.institutions[0];
+  institution.code_unique = "E020684";
+  db.tables.class_enrollments[0].class_id = arabicId;
+  const policies = institution.settings_json.school_student_programs_v1.years["2026-2027"].classes;
+  policies[arabicNextId].tracks = ["french"];
+  db.tables.classes.find(row => row.id === arabicNextId).level = "CE1";
+  const before = structuredClone(db.tables);
+  const load = createFixtureRouteLoader(db, db.legacyAdminId);
+  assert.equal((await load(routePath).POST(request(homeId, studentId, "", "add", "french"))).status, 200);
+  const moved = await load(routePath).POST(request(arabicNextId, studentId, "", "transfer", "french"));
+  assert.equal(moved.status, 200, JSON.stringify(await moved.clone().json()));
+  assert.equal((await moved.json()).transferred, true);
+  const readRoster = load("src/lib/server/school-linked-class-roster.ts").loadLinkedClassEnrollments;
+  const oldRoster = await readRoster(db.service, db.legacyId, db.tables.classes[0], institution.settings_json);
+  const newRoster = await readRoster(db.service, db.legacyId, db.tables.classes[2], institution.settings_json);
+  assert.deepEqual(oldRoster, []);
+  assert.deepEqual(newRoster.map(row => row.student_id), [studentId]);
+  assert.deepEqual(db.tables.class_enrollments, before.class_enrollments);
+  assert.deepEqual(db.tables.students, before.students);
+});
+
+test("EPC: reject a French transfer if it would hide an existing preschool Arabic link", async () => {
+  const db = setup();
+  const institution = db.tables.institutions[0];
+  institution.code_unique = "E020684";
+  const policies = institution.settings_json.school_student_programs_v1.years["2026-2027"].classes;
+  policies[arabicId].linkedStudentIds = [studentId];
+  policies[arabicNextId].tracks = ["french"];
+  const school = institution.settings_json.school_cycles_v1;
+  school.enabledCycles.push("preschool");
+  school.teachingTracksByCycle.preschool = ["arabic", "french"];
+  for (const id of [homeId, arabicId]) {
+    school.classCycleById[id] = "preschool";
+    db.tables.classes.find(row => row.id === id).level = "MS";
+  }
+  const before = structuredClone(db.tables);
+  const route = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+  const result = await route.POST(request(arabicNextId, studentId, "", "transfer", "french"));
+  assert.equal(result.status, 409);
+  assert.equal((await result.json()).error, "other_teaching_would_be_lost");
   assert.deepEqual(db.tables, before);
   assert.equal(db.calls.some(call => call.op !== "read"), false);
 });

@@ -25,9 +25,8 @@ const reply = (payload: unknown, status = 200) => NextResponse.json(payload, {
 });
 
 /**
- * Associate an existing pupil with an Arabic teaching class.
- * Never transfer the administrative enrollment, mutate the pupil or reconcile
- * school fees: the French (home) class remains authoritative.
+ * Add or move a pedagogical membership while keeping the administrative
+ * enrollment in the other teaching. Administrative moves use the assign API.
  */
 export async function POST(request: NextRequest) {
   if (!isTrustedAppOrigin(request)) {
@@ -47,6 +46,11 @@ export async function POST(request: NextRequest) {
   if (operation !== undefined && operation !== "add" && operation !== "transfer") {
     return reply({ error: "invalid_teaching_operation" }, 400);
   }
+  const teaching = body.teaching ?? "arabic";
+  if ((teaching !== "arabic" && teaching !== "french") || (teaching === "french" && !operation)) {
+    return reply({ error: "invalid_teaching_operation" }, 400);
+  }
+  const otherTeaching = teaching === "arabic" ? "french" : "arabic";
   const classId = String(body.class_id || "").trim();
   const studentId = String(body.student_id || "").trim();
   const matricule = String(body.matricule || "").trim();
@@ -67,6 +71,8 @@ export async function POST(request: NextRequest) {
   if (!target) return reply({ error: "class_not_found" }, 404);
   if (!institutionResult.data) return reply({ error: "school_unavailable" }, 503);
 
+  const epc = institutionResult.data.code_unique === EPC_DIMBOKRO_CODE;
+  if (teaching === "french" && !epc) return reply({ error: "french_class_not_configured" }, 409);
   const school = parseSchoolCyclesSettings(rawSettings);
   if (!isBilingualSchool(school)) return reply({ error: "not_bilingual_school" }, 404);
   const cycle = school.classCycleById[classId] || inferSchoolCycleFromLevel(target.level);
@@ -75,9 +81,9 @@ export async function POST(request: NextRequest) {
   const yearPolicy = policy.years[year];
   const targetPolicy = yearPolicy?.classes[classId];
   if (!cycle || !school.enabledCycles.includes(cycle) ||
-    !school.teachingTracksByCycle[cycle]?.includes("arabic") ||
-    targetPolicy?.tracks.length !== 1 || targetPolicy.tracks[0] !== "arabic") {
-    return reply({ error: "arabic_class_not_configured" }, 409);
+    !school.teachingTracksByCycle[cycle]?.includes(teaching) ||
+    targetPolicy?.tracks.length !== 1 || targetPolicy.tracks[0] !== teaching) {
+    return reply({ error: `${teaching}_class_not_configured` }, 409);
   }
 
   const pupilQuery = srv.from("students")
@@ -108,39 +114,62 @@ export async function POST(request: NextRequest) {
   const source = homes.find(home => home.id === relevant[0].class_id)!;
   if (source.id === classId) return reply({ ok: true, already_present: true, student: pupil });
   const sourceCycle = school.classCycleById[source.id] || inferSchoolCycleFromLevel(source.level);
-  if (!sourceCycle || !school.enabledCycles.includes(sourceCycle) ||
-    !canLinkTeachingClass({ ...source, cycle: sourceCycle }, { ...target, cycle }, "arabic")) {
+  if (!sourceCycle || !school.enabledCycles.includes(sourceCycle)) {
     return reply({ error: "student_not_same_cycle_or_eligible_level" }, 409);
   }
   const homeTracks = programsForStudent(
     yearPolicy?.classes[source.id], pupil.id, school.teachingTracksByCycle[sourceCycle] || [],
   );
-  if (operation === "transfer" && institutionResult.data.code_unique === EPC_DIMBOKRO_CODE &&
-    homeTracks.length === 1 && homeTracks[0] === "arabic") {
+  if (epc && operation && homeTracks.length === 1 && homeTracks[0] === teaching) {
+    if (teaching === "arabic" && !canLinkTeachingClass({ ...source, cycle: sourceCycle }, { ...target, cycle }, teaching)) {
+      return reply({ error: "student_not_same_cycle_or_eligible_level" }, 409);
+    }
+    if (operation === "add") return reply({ error: `${teaching}_transfer_required` }, 409);
+    const otherClasses = Object.entries(yearPolicy?.classes || {})
+      .filter(([, value]) => value.tracks[0] === otherTeaching && value.linkedStudentIds?.includes(pupil.id))
+      .map(([id]) => id);
+    if (otherClasses.length) {
+      const { data: links, error } = await srv.from("classes").select("id,level")
+        .eq("institution_id", institutionId).eq("academic_year", year).in("id", otherClasses);
+      const targetTracks = programsForStudent(targetPolicy, pupil.id, school.teachingTracksByCycle[cycle] || []);
+      if (error || links?.length !== otherClasses.length || targetTracks.length !== 1 ||
+        targetTracks[0] !== teaching || links.some(link => {
+          const linkCycle = school.classCycleById[link.id] || inferSchoolCycleFromLevel(link.level);
+          return !linkCycle || !school.enabledCycles.includes(linkCycle) ||
+            !school.teachingTracksByCycle[linkCycle]?.includes(otherTeaching) ||
+            !canLinkTeachingClass({ ...target, cycle }, { ...link, cycle: linkCycle }, otherTeaching,
+              yearPolicy?.classes[link.id]?.independentFrenchLevels);
+        })) {
+        return reply({ error: "other_teaching_would_be_lost" }, 409);
+      }
+    }
     return reply({
-      error: "arabic_administrative_transfer_required",
+      error: `${teaching}_administrative_transfer_required`,
       student_id: pupil.id,
       source_class_id: source.id,
     }, 409);
   }
-  if (homeTracks.length !== 1 || homeTracks[0] !== "french") {
-    return reply({ error: "french_home_not_configured" }, 409);
+  if (homeTracks.length !== 1 || homeTracks[0] !== otherTeaching) {
+    return reply({ error: `${otherTeaching}_home_not_configured` }, 409);
+  }
+  if (!canLinkTeachingClass({ ...source, cycle: sourceCycle }, { ...target, cycle }, teaching, epc)) {
+    return reply({ error: "student_not_same_cycle_or_eligible_level" }, 409);
   }
   const links = targetPolicy.linkedStudentIds || [];
   if (links.includes(pupil.id)) return reply({ ok: true, already_present: true, student: pupil });
-  if (links.length >= 700) return reply({ error: "arabic_class_full" }, 409);
+  if (links.length >= 700) return reply({ error: `${teaching}_class_full` }, 409);
 
-  // An Arabic-to-Arabic transfer moves the pedagogical link (not the home).
+  // Move only the pedagogical membership in the selected teaching.
   const oldIds = Object.entries(yearPolicy?.classes || {})
     .filter(([id, value]) => id !== classId && value.tracks.length === 1 &&
-      value.tracks[0] === "arabic" && value.linkedStudentIds?.includes(pupil.id))
+      value.tracks[0] === teaching && value.linkedStudentIds?.includes(pupil.id))
     .map(([id]) => id);
-  if (oldIds.length > 1) return reply({ error: "multiple_arabic_links_require_review" }, 409);
+  if (oldIds.length > 1) return reply({ error: `multiple_${teaching}_links_require_review` }, 409);
   if (operation === "add" && oldIds.length) {
-    return reply({ error: "arabic_transfer_required" }, 409);
+    return reply({ error: `${teaching}_transfer_required` }, 409);
   }
   if (operation === "transfer" && !oldIds.length) {
-    return reply({ error: "arabic_add_required" }, 409);
+    return reply({ error: `${teaching}_add_required` }, 409);
   }
   if (oldIds.length) {
     const { data: previous, error } = await srv.from("classes")
@@ -150,10 +179,10 @@ export async function POST(request: NextRequest) {
       previous.some(row => {
         const previousCycle = school.classCycleById[row.id] || inferSchoolCycleFromLevel(row.level);
         return !previousCycle || !school.enabledCycles.includes(previousCycle) ||
-          !school.teachingTracksByCycle[previousCycle]?.includes("arabic") ||
-          !canLinkTeachingClass({ ...row, cycle: previousCycle }, { ...target, cycle }, "arabic");
+          !school.teachingTracksByCycle[previousCycle]?.includes(teaching) ||
+          !canLinkTeachingClass({ ...row, cycle: previousCycle }, { ...target, cycle }, teaching, epc);
       })) {
-      return reply({ error: "prior_arabic_class_requires_review" }, 409);
+      return reply({ error: `prior_${teaching}_class_requires_review` }, 409);
     }
   }
 
@@ -162,7 +191,11 @@ export async function POST(request: NextRequest) {
     const old = classes[id];
     classes[id] = { ...old, linkedStudentIds: (old.linkedStudentIds || []).filter(id => id !== pupil.id) };
   }
-  classes[classId] = { ...targetPolicy, linkedStudentIds: [...links, pupil.id] };
+  classes[classId] = {
+    ...targetPolicy,
+    linkedStudentIds: [...links, pupil.id],
+    ...(teaching === "french" ? { independentFrenchLevels: true } : {}),
+  };
   const next = {
     ...asSettingsObject(rawSettings),
     [SCHOOL_STUDENT_PROGRAMS_KEY]: {
@@ -181,8 +214,11 @@ export async function POST(request: NextRequest) {
   if (saved !== true) return reply({ error: "settings_changed_reload_required" }, 409);
   return reply({
     ok: true, student: pupil, transferred: oldIds.length > 0,
-    french_level: source.level, arabic_level: target.level,
-    french_cycle: sourceCycle, arabic_cycle: cycle, cross_cycle: sourceCycle !== cycle,
+    french_level: teaching === "french" ? target.level : source.level,
+    arabic_level: teaching === "arabic" ? target.level : source.level,
+    french_cycle: teaching === "french" ? cycle : sourceCycle,
+    arabic_cycle: teaching === "arabic" ? cycle : sourceCycle,
+    cross_cycle: sourceCycle !== cycle,
     cross_level: !sameSchoolLevel(source.level, target.level, cycle),
   });
 }

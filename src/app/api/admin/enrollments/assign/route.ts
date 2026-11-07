@@ -724,6 +724,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "arabic_administrative_source_required" }, { status: 409 });
   }
 
+  if (!arabicTransfer && action === "assign" && body?.source_class_id !== undefined &&
+    (sourceEnrollments?.length !== 1 || sourceClassIds.length !== 1 || sourceClassIds[0] !== body.source_class_id)) {
+    return NextResponse.json({ error: "administrative_source_changed" }, { status: 409 });
+  }
+
   let financeTransfer: AppliedStudentFinanceSynchronization | undefined;
 
   try {

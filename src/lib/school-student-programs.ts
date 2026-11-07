@@ -21,6 +21,7 @@ export type StudentProgramClassPolicy = {
   students: Record<string, TeachingTrack[]>;
   /** One additional pedagogical class without a second administrative enrollment. */
   linkedStudentIds?: string[];
+  independentFrenchLevels?: true;
 };
 export type StudentProgramYear = { classes: Record<string, StudentProgramClassPolicy> };
 export type StudentProgramSettings = { version: 1; years: Record<string, StudentProgramYear> };
@@ -72,7 +73,9 @@ export function readStudentProgramSettings(value: unknown): StudentProgramSettin
         links.every(id => typeof id === "string" && UUID.test(id))
         ? [...new Set(links)] as string[] : [];
       classes[classId] = linkedStudentIds.length
-        ? { tracks, students, linkedStudentIds }
+        ? { tracks, students, linkedStudentIds,
+          ...(tracks.length === 1 && tracks[0] === "french" && policy?.independentFrenchLevels === true
+            ? { independentFrenchLevels: true as const } : {}) }
         : { tracks, students };
     }
     years[year] = { classes };
@@ -93,14 +96,16 @@ export function programsForStudent(
 
 /** French and Arabic progress independently through primary and secondary.
  * Callers still verify school, year, configured tracks and unique enrollment.
- * Preschool and reverse (French) links retain their existing constraints. */
+ * Preschool keeps its level restriction, as do legacy French links. */
 export function canLinkTeachingClass(
   source: { cycle: SchoolCycle | null; level?: string | null },
   target: { cycle: SchoolCycle | null; level?: string | null },
   teaching: TeachingTrack,
+  independentFrenchLevels = false,
 ): boolean {
   if (!source.cycle || !target.cycle || !source.level?.trim() || !target.level?.trim()) return false;
-  if (teaching === "arabic" && source.cycle !== "preschool" && target.cycle !== "preschool") return true;
+  if ((teaching === "arabic" || independentFrenchLevels) &&
+    source.cycle !== "preschool" && target.cycle !== "preschool") return true;
   return source.cycle === target.cycle && sameSchoolLevel(source.level, target.level, target.cycle);
 }
 
@@ -139,7 +144,7 @@ export function expandPedagogicalEnrollments(
       if (!home || homeCounts.get(id) !== 1 || home.class_id === target.id) continue;
       const source = byClass.get(home.class_id);
       if (!source || !school.enabledCycles.includes(source.cycle) ||
-        !canLinkTeachingClass(source, target, teaching)) continue;
+        !canLinkTeachingClass(source, target, teaching, policy.independentFrenchLevels)) continue;
       const sourceTracks = programsForStudent(
         yearPolicy?.classes[source.id], id, school.teachingTracksByCycle[source.cycle] || []);
       if (sourceTracks.length !== 1 || sourceTracks[0] === teaching) continue;
