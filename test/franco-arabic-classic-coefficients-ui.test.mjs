@@ -101,9 +101,7 @@ test("un clic d'enregistrement arabe ne touche JAMAIS aux coefficients historiqu
     assert.match(container.textContent, /Arabe/);
     assert.ok(container.querySelector('input[aria-label="Coefficient Arabe"]'));
     assert.equal(container.querySelector('input[aria-label="Coefficient Français"]'), null);
-    const max = container.querySelector('input[aria-label="Barème des notes"]');
-    assert.ok(max);
-    await changeValue(win, max, "20");
+    assert.equal(container.querySelector('input[aria-label="Barème des notes"]'), null);
     await changeValue(win, container.querySelector('input[aria-label="Coefficient Arabe"]'), "5");
     const save = [...container.querySelectorAll("button")].find(b => /Enregistrer les coefficients/.test(b.textContent));
     assert.ok(save);
@@ -128,7 +126,8 @@ test("un clic d'enregistrement arabe ne touche JAMAIS aux coefficients historiqu
       coefficient: 5, includeInAverage: true,
     }]);
     assert.equal(data.revision, "rev1");
-    assert.deepEqual(data.scales, [{ cycle: "secondary", track: "arabic", level: "6e", maxScore: 20 }]);
+    // Coefficients can be saved without inventing a /10 or /20 grading scale.
+    assert.deepEqual(data.scales, []);
   } finally {
     await act(async () => root.unmount());
     await win.happyDOM.close();

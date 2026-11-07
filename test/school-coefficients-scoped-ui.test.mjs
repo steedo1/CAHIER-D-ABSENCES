@@ -56,7 +56,8 @@ test("primaire et préscolaire : pas de coefficients par matière", () => {
   const view = read("src/components/admin/SchoolCoefficientsClassicWorkflow.tsx");
   assert.match(view, /showCoefficients = cycle === "secondary"/);
   assert.match(view, /cycle === "preschool"/);
-  assert.match(view, /Barème des notes/);
+  assert.doesNotMatch(view, /aria-label="Barème des notes"/);
+  assert.match(view, /Barème de composition/);
 });
 
 test("la vue ordinaire reste inchangée et les APIs sont toujours isolées par établissement", () => {

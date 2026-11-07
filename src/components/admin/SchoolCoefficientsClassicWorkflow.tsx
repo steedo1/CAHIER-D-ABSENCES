@@ -89,7 +89,6 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [changes, setChanges] = useState<Record<string, string>>({});
-  const [scaleChange, setScaleChange] = useState("");
   const [primarySubjectChanges, setPrimarySubjectChanges] = useState<Record<string, string>>({});
   const [componentsFor, setComponentsFor] = useState<Subject | null>(null);
   const [components, setComponents] = useState<Component[]>([]);
@@ -157,7 +156,6 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const componentScope = [actualClassId, cycle, track, level].join("|");
   contextRef.current = componentScope;
   const frenchSecondary = cycle === "secondary" && track === "french";
-  const arabicSecondary = cycle === "secondary" && track === "arabic";
   const showCoefficients = cycle === "secondary";
   const configuredSubjects = (subjectClassId === actualClassId ? settings?.subjects || [] : []).filter(row =>
     !!(cycle && track && settings?.configuration?.subjectTracksByCycle[cycle]?.[row.id]?.includes(track)) &&
@@ -165,7 +163,6 @@ export default function SchoolCoefficientsClassicWorkflow() {
   const reporting = settings?.reporting;
   const currentScale = reporting?.scales.find(row => row.cycle === cycle && row.track === track &&
     sameSchoolLevel(row.level, level, row.cycle));
-  const scaleDisplay = cycle === "primary" ? "10" : scaleChange || numberInput(currentScale?.maxScore);
   function primarySubjectScaleValue(subject: Subject): string {
     if (cycle !== "primary" || !track) return "";
     const key = [track, level, subject.id].join("|");
@@ -192,7 +189,7 @@ export default function SchoolCoefficientsClassicWorkflow() {
     const controller = new AbortController();
     setLoadingClass(true); setError("");
     setSubjectIds([]); setSubjectClassId(""); setCiPrimaryApplied(false);
-    setChanges({}); setScaleChange(""); setPrimarySubjectChanges({});
+    setChanges({}); setPrimarySubjectChanges({});
     setCiPrimary(null); setShowCiSecondaryPreview(false);
     setComponentsFor(null); setComponents([]); setComponentsBusy(false); setComponentsRevision("");
     (async () => {
@@ -272,7 +269,6 @@ export default function SchoolCoefficientsClassicWorkflow() {
         setSubjectIds(data.preview?.proposedSubjectIds || []);
         setSubjectClassId(actualClassId);
         setCiPrimaryApplied(true);
-        setScaleChange("");
         setMessage("Référentiel CI appliqué à la classe : disciplines supplémentaires conservées.");
       } else {
         setMessage("Prévisualisation du référentiel primaire : aucune modification enregistrée.");
@@ -293,10 +289,10 @@ export default function SchoolCoefficientsClassicWorkflow() {
       let next: FrancoArabicReportsSettings = isPrimaryArabic
         ? { ...old, enabled: true }
         : { ...old, enabled: true, engine: "specialized", coefficientSource: "program" };
-      if (cycle === "primary" || arabicSecondary) {
-        const maximum = Number(scaleDisplay);
-        if (!Number.isInteger(maximum) || maximum < 1 || maximum > 100)
-          throw new Error("Indiquez le barème de notation confirmé par l'école (de 1 à 100).");
+      if (cycle === "primary") {
+        // The primary reporting scale remains /10; secondary coefficients
+        // must not force the administrator to declare a grading denominator.
+        const maximum = 10;
         const current = old.scales.filter(row => !(row.cycle === cycle && row.track === track &&
           sameSchoolLevel(row.level, level, cycle)));
         next = { ...next, scales: [...current, { cycle, track, level, maxScore: maximum }] };
@@ -514,14 +510,9 @@ export default function SchoolCoefficientsClassicWorkflow() {
             {ciPrimary.missing.length > 0 && " Matières absentes : " + ciPrimary.missing.join(", ")}
           </p>}
         </div>}
-        {cycle === "primary" ? <p className="rounded-lg bg-slate-50 p-3 text-sm font-semibold text-slate-800">
+        {cycle === "primary" && <p className="rounded-lg bg-slate-50 p-3 text-sm font-semibold text-slate-800">
           Échelle de la moyenne du bulletin : /10
-        </p> : arabicSecondary ? <label className="inline-block text-sm font-semibold">
-          Barème des notes — {selectedClass.label} (valeur confirmée par l’établissement)
-          <input aria-label="Barème des notes" type="number" min={1} max={100} step={1} className="mt-1 block w-36 rounded-lg border p-2"
-            placeholder="À renseigner" disabled={saving}
-            value={scaleDisplay} onChange={e => setScaleChange(e.target.value)}/>
-        </label> : null}
+        </p>}
         {cycle === "primary" && <p className="text-xs text-slate-600">
           {primaryFrenchReferenceApplied
             ? "Référentiel CI appliqué : les barèmes de composition sont affichés pour chaque matière. Ils ne sont pas des coefficients. La moyenne générale du bulletin reste sur /10."
