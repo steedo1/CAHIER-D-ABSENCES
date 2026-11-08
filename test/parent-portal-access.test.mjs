@@ -132,7 +132,7 @@ test("la d√©connexion parent n'ouvre jamais 0.0.0.0 et garde les cookies nettoy√
   assert.match(page, /redirect: "error"/);
   assert.match(page, /if \(!res\.ok\) throw/);
   assert.match(page, /window\.location\.replace\("\/parents\/login"\)/);
-  assert.doesNotMatch(page, /window\.location\.assign\(LOGOUT_PARENTS\)/);
+  assert.doesNotMatch(page, /window\.location\.assign\("\/parents\/logout"\)/);
   for (const source of [logout, apiLogout]) {
     assert.match(source, /Location: "https:\/\/www\.mon-cahier\.com\/parents\/login"/);
     assert.match(source, /status: 303/);
