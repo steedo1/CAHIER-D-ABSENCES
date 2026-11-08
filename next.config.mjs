@@ -3,6 +3,12 @@
 // load TypeScript and native SWC into every long-lived production server.
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Next 15.5 otherwise loads every page, API and bundled module at startup.
+  // On the 512 MiB server, load them when requested instead. This does not
+  // change response caching, revalidation, authentication or school data.
+  experimental: {
+    preloadEntriesOnStart: false,
+  },
   // Next 15 defaults to 50 MiB. Keep disk caching and revalidation unchanged;
   // reserve RAM for authenticated requests and native image/PDF buffers.
   cacheMaxMemorySize: 8 * 1024 * 1024,

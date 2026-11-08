@@ -1,0 +1,268 @@
+{
+  "reference": {
+    "label": "edge-baseline",
+    "node": "v22.23.4",
+    "next": "15.5.28",
+    "mode": "next",
+    "heapMiB": 288,
+    "semiMiB": 4,
+    "requests": 6000,
+    "concurrency": 8,
+    "schoolFixture": {
+      "classes": 20,
+      "students": 1200,
+      "requests": {
+        "/auth/v1/user": 1287,
+        "/rest/v1/user_roles": 858,
+        "/rest/v1/academic_years": 858,
+        "/rest/v1/classes": 445,
+        "/rest/v1/class_enrollments": 1287,
+        "/rest/v1/profiles": 858,
+        "/rest/v1/teacher_sessions": 429,
+        "/rest/v1/institutions": 429
+      }
+    },
+    "readyMs": 613.5752,
+    "loadMs": 21743.321877000002,
+    "totalCpuSeconds": 39.552697,
+    "osPeakRssMiB": 365.29296875,
+    "phases": {
+      "idle": {
+        "count": 5,
+        "rssMiB": {
+          "min": 313.2421875,
+          "median": 313.2421875,
+          "p95": 313.3671875,
+          "max": 313.3671875
+        },
+        "heapMiB": {
+          "min": 220.98978424072266,
+          "median": 221.23957061767578,
+          "p95": 221.44337463378906,
+          "max": 221.44337463378906
+        },
+        "externalMiB": {
+          "min": 5.491684913635254,
+          "median": 5.491684913635254,
+          "p95": 5.491684913635254,
+          "max": 5.491684913635254
+        }
+      },
+      "warmup": {
+        "count": 1,
+        "rssMiB": {
+          "min": 316.92578125,
+          "median": 316.92578125,
+          "p95": 316.92578125,
+          "max": 316.92578125
+        },
+        "heapMiB": {
+          "min": 228.35690307617188,
+          "median": 228.35690307617188,
+          "p95": 228.35690307617188,
+          "max": 228.35690307617188
+        },
+        "externalMiB": {
+          "min": 5.591889381408691,
+          "median": 5.591889381408691,
+          "p95": 5.591889381408691,
+          "max": 5.591889381408691
+        }
+      },
+      "load": {
+        "count": 44,
+        "rssMiB": {
+          "min": 323.8671875,
+          "median": 351.609375,
+          "p95": 354.04296875,
+          "max": 360.84375
+        },
+        "heapMiB": {
+          "min": 180.5427474975586,
+          "median": 208.05069732666016,
+          "p95": 230.8101806640625,
+          "max": 245.7951202392578
+        },
+        "externalMiB": {
+          "min": 6.057226181030273,
+          "median": 8.88024616241455,
+          "p95": 13.617812156677246,
+          "max": 15.1638765335083
+        }
+      },
+      "settled": {
+        "count": 20,
+        "rssMiB": {
+          "min": 289.83203125,
+          "median": 353.2109375,
+          "p95": 353.2109375,
+          "max": 353.2109375
+        },
+        "heapMiB": {
+          "min": 176.93962860107422,
+          "median": 197.20305633544922,
+          "p95": 198.21651458740234,
+          "max": 198.21651458740234
+        },
+        "externalMiB": {
+          "min": 5.832577705383301,
+          "median": 9.219015121459961,
+          "p95": 9.219015121459961,
+          "max": 9.219015121459961
+        }
+      }
+    },
+    "responseMs": {
+      "min": 1.1866209999971034,
+      "median": 21.290571999999884,
+      "p95": 70.806509,
+      "max": 319.9712529999997
+    },
+    "allExpectedStatuses": true,
+    "lastMemory": {
+      "rss": 304041984,
+      "heapTotal": 204840960,
+      "heapUsed": 186031968,
+      "external": 6115901,
+      "arrayBuffers": 2013908,
+      "heapLimit": 314572800,
+      "typescriptLoaded": false,
+      "swcLoaded": false,
+      "webpackLoaded": true
+    }
+  },
+  "correctif": {
+    "label": "demand-loading",
+    "node": "v22.23.4",
+    "next": "15.5.28",
+    "mode": "next",
+    "heapMiB": 288,
+    "semiMiB": 4,
+    "requests": 6000,
+    "concurrency": 8,
+    "schoolFixture": {
+      "classes": 20,
+      "students": 1200,
+      "requests": {
+        "/auth/v1/user": 1287,
+        "/rest/v1/user_roles": 858,
+        "/rest/v1/academic_years": 858,
+        "/rest/v1/classes": 443,
+        "/rest/v1/class_enrollments": 1287,
+        "/rest/v1/profiles": 858,
+        "/rest/v1/teacher_sessions": 429,
+        "/rest/v1/institutions": 429
+      }
+    },
+    "readyMs": 512.798121,
+    "loadMs": 19073.001817,
+    "totalCpuSeconds": 30.490389,
+    "osPeakRssMiB": 178.15625,
+    "phases": {
+      "idle": {
+        "count": 10,
+        "rssMiB": {
+          "min": 107.12109375,
+          "median": 107.12109375,
+          "p95": 107.12109375,
+          "max": 107.12109375
+        },
+        "heapMiB": {
+          "min": 29.300018310546875,
+          "median": 29.603843688964844,
+          "p95": 29.85785675048828,
+          "max": 29.85785675048828
+        },
+        "externalMiB": {
+          "min": 3.736459732055664,
+          "median": 3.736459732055664,
+          "p95": 3.736459732055664,
+          "max": 3.736459732055664
+        }
+      },
+      "warmup": {
+        "count": 1,
+        "rssMiB": {
+          "min": 116.99609375,
+          "median": 116.99609375,
+          "p95": 116.99609375,
+          "max": 116.99609375
+        },
+        "heapMiB": {
+          "min": 39.655067443847656,
+          "median": 39.655067443847656,
+          "p95": 39.655067443847656,
+          "max": 39.655067443847656
+        },
+        "externalMiB": {
+          "min": 3.8388729095458984,
+          "median": 3.8388729095458984,
+          "p95": 3.8388729095458984,
+          "max": 3.8388729095458984
+        }
+      },
+      "load": {
+        "count": 38,
+        "rssMiB": {
+          "min": 152.6328125,
+          "median": 171.40234375,
+          "p95": 175.4921875,
+          "max": 175.90234375
+        },
+        "heapMiB": {
+          "min": 55.80756378173828,
+          "median": 64.88735961914062,
+          "p95": 75.76744079589844,
+          "max": 77.72703552246094
+        },
+        "externalMiB": {
+          "min": 4.280869483947754,
+          "median": 5.579699516296387,
+          "p95": 10.501477241516113,
+          "max": 10.57625675201416
+        }
+      },
+      "settled": {
+        "count": 20,
+        "rssMiB": {
+          "min": 144.1796875,
+          "median": 175.671875,
+          "p95": 175.671875,
+          "max": 175.671875
+        },
+        "heapMiB": {
+          "min": 54.487953186035156,
+          "median": 63.11559295654297,
+          "p95": 63.68574523925781,
+          "max": 63.68574523925781
+        },
+        "externalMiB": {
+          "min": 4.087231636047363,
+          "median": 9.940484046936035,
+          "p95": 9.940484046936035,
+          "max": 9.940484046936035
+        }
+      }
+    },
+    "responseMs": {
+      "min": 1.1409630000016477,
+      "median": 18.623075000001336,
+      "p95": 62.12106800000038,
+      "max": 101.61720399999831
+    },
+    "allExpectedStatuses": true,
+    "lastMemory": {
+      "rss": 151183360,
+      "heapTotal": 61976576,
+      "heapUsed": 57318536,
+      "external": 4285773,
+      "arrayBuffers": 183780,
+      "heapLimit": 314572800,
+      "typescriptLoaded": false,
+      "swcLoaded": false,
+      "webpackLoaded": true
+    },
+    "appEntriesBeforeFirstRequest": 0,
+    "appEntriesAfterLoad": 21
+  }
+}

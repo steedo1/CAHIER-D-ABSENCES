@@ -22,6 +22,9 @@ if (process.env.MON_CAHIER_LOCAL_MEMORY_AUDIT === '1' && (process.send || output
       typescriptLoaded: Object.keys(require.cache).some(path => path.includes('/typescript/lib/typescript.js')),
       swcLoaded: Object.keys(require.cache).some(path => /next-swc.*\.node$/.test(path)),
       webpackLoaded: Object.keys(require.cache).some(path => path.endsWith('/compiled/webpack/bundle5.js')),
+      // Count entries, never their paths or any user/request content.
+      appEntryCount: Object.keys(require.cache).filter(path =>
+        path.includes('/.next/server/app/') && /\/(?:page|route)\.js$/.test(path)).length,
     };
     if (outputFile) appendFileSync(outputFile, JSON.stringify(row) + '\n');
     else process.send(row);
