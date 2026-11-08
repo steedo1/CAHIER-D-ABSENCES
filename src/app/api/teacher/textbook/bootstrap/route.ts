@@ -1,3 +1,4 @@
+import { readAllTextbookRows } from "@/lib/textbook/read-all";
 import { NextResponse } from "next/server";
 import {
   canManageTextbook,
@@ -297,13 +298,15 @@ export async function GET() {
 
   const itemsByProgression = new Map<string, any[]>();
   if (progressionIds.length) {
-    const { data: items, error: itemsErr } = await srv
-      .from("textbook_progression_items")
-      .select("*")
-      .eq("institution_id", institutionId)
-      .in("progression_id", progressionIds)
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
+    const { data: items, error: itemsErr } = await readAllTextbookRows(() =>
+      srv
+        .from("textbook_progression_items")
+        .select("*")
+        .eq("institution_id", institutionId)
+        .in("progression_id", progressionIds)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true }),
+    );
 
     if (itemsErr)
       return NextResponse.json(
@@ -319,17 +322,17 @@ export async function GET() {
 
   const sessionsByAssignmentItem = new Map<string, any[]>();
   if (assignmentIds.length) {
-    let sessionsQuery = srv
-      .from("textbook_lesson_sessions")
-      .select("*")
-      .eq("institution_id", institutionId)
-      .in("assignment_id", assignmentIds)
-      .order("session_date", { ascending: false })
-      .order("created_at", { ascending: false });
-
-    if (!isClassDevice) sessionsQuery = sessionsQuery.eq("teacher_id", userId);
-
-    const { data: sessions, error: sessionsErr } = await sessionsQuery;
+    const { data: sessions, error: sessionsErr } = await readAllTextbookRows(() => {
+      let query = srv
+        .from("textbook_lesson_sessions")
+        .select("*")
+        .eq("institution_id", institutionId)
+        .in("assignment_id", assignmentIds)
+        .order("session_date", { ascending: false })
+        .order("created_at", { ascending: false });
+      if (!isClassDevice) query = query.eq("teacher_id", userId);
+      return query;
+    });
 
     if (sessionsErr)
       return NextResponse.json(
@@ -346,11 +349,13 @@ export async function GET() {
 
   const completionsByAssignmentItem = new Map<string, any>();
   if (assignmentIds.length) {
-    const { data: completions, error: completionsErr } = await srv
-      .from("textbook_lesson_completions")
-      .select("*")
-      .eq("institution_id", institutionId)
-      .in("assignment_id", assignmentIds);
+    const { data: completions, error: completionsErr } = await readAllTextbookRows(() =>
+      srv
+        .from("textbook_lesson_completions")
+        .select("*")
+        .eq("institution_id", institutionId)
+        .in("assignment_id", assignmentIds),
+    );
 
     if (completionsErr)
       return NextResponse.json(

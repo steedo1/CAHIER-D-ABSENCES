@@ -1,3 +1,4 @@
+import { readAllTextbookRows } from "@/lib/textbook/read-all";
 import { NextRequest, NextResponse } from "next/server";
 import {
   cleanText,
@@ -176,13 +177,15 @@ export async function GET(req: NextRequest) {
 
   const itemsByProgression = new Map<string, any[]>();
   if (progressionIds.length) {
-    const { data: items, error: itemsErr } = await srv
-      .from("textbook_progression_items")
-      .select(
-        "id,progression_id,item_type,planned_duration_minutes,planned_sessions_count",
-      )
-      .eq("institution_id", institutionId)
-      .in("progression_id", progressionIds);
+    const { data: items, error: itemsErr } = await readAllTextbookRows(() =>
+      srv
+        .from("textbook_progression_items")
+        .select(
+          "id,progression_id,item_type,planned_duration_minutes,planned_sessions_count",
+        )
+        .eq("institution_id", institutionId)
+        .in("progression_id", progressionIds),
+    );
 
     if (itemsErr)
       return NextResponse.json(
@@ -198,12 +201,14 @@ export async function GET(req: NextRequest) {
 
   const completedByAssignment = new Map<string, Set<string>>();
   if (assignmentIds.length) {
-    const { data: completions, error: completionErr } = await srv
-      .from("textbook_lesson_completions")
-      .select("assignment_id,item_id,status")
-      .eq("institution_id", institutionId)
-      .in("assignment_id", assignmentIds)
-      .eq("status", "completed");
+    const { data: completions, error: completionErr } = await readAllTextbookRows(() =>
+      srv
+        .from("textbook_lesson_completions")
+        .select("id,assignment_id,item_id,status")
+        .eq("institution_id", institutionId)
+        .in("assignment_id", assignmentIds)
+        .eq("status", "completed"),
+    );
 
     if (completionErr)
       return NextResponse.json(
@@ -220,11 +225,13 @@ export async function GET(req: NextRequest) {
 
   const sessionStats = new Map<string, { count: number; minutes: number }>();
   if (assignmentIds.length) {
-    const { data: sessions, error: sessionErr } = await srv
-      .from("textbook_lesson_sessions")
-      .select("assignment_id,duration_minutes")
-      .eq("institution_id", institutionId)
-      .in("assignment_id", assignmentIds);
+    const { data: sessions, error: sessionErr } = await readAllTextbookRows(() =>
+      srv
+        .from("textbook_lesson_sessions")
+        .select("id,assignment_id,duration_minutes")
+        .eq("institution_id", institutionId)
+        .in("assignment_id", assignmentIds),
+    );
 
     if (sessionErr)
       return NextResponse.json(

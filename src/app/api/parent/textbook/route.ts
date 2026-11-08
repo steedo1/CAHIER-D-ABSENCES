@@ -1,3 +1,4 @@
+import { readAllTextbookRows } from "@/lib/textbook/read-all";
 import { parentConnectDenial } from "@/lib/parent-connect/server";
 // src/app/api/parent/textbook/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -185,12 +186,14 @@ export async function GET(req: NextRequest) {
 
   const itemsByProgression = new Map<string, any[]>();
   if (progressionIds.length) {
-    const { data: progressionItems, error: itemsErr } = await srv
-      .from("textbook_progression_items")
-      .select("*")
-      .in("progression_id", progressionIds)
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
+    const { data: progressionItems, error: itemsErr } = await readAllTextbookRows(() =>
+      srv
+        .from("textbook_progression_items")
+        .select("*")
+        .in("progression_id", progressionIds)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true }),
+    );
 
     if (itemsErr) {
       return NextResponse.json(
@@ -208,13 +211,15 @@ export async function GET(req: NextRequest) {
 
   const sessionsByAssignmentItem = new Map<string, any[]>();
   if (assignmentIds.length) {
-    const { data: sessions, error: sessionsErr } = await srv
-      .from("textbook_lesson_sessions")
-      .select("id,assignment_id,item_id,teacher_id,session_title,session_date,session_period_label,session_start_time,session_end_time,duration_minutes,content,homework,created_at")
-      .eq("institution_id", institutionId)
-      .in("assignment_id", assignmentIds)
-      .order("session_date", { ascending: false })
-      .order("created_at", { ascending: false });
+    const { data: sessions, error: sessionsErr } = await readAllTextbookRows(() =>
+      srv
+        .from("textbook_lesson_sessions")
+        .select("id,assignment_id,item_id,teacher_id,session_title,session_date,session_period_label,session_start_time,session_end_time,duration_minutes,content,homework,created_at")
+        .eq("institution_id", institutionId)
+        .in("assignment_id", assignmentIds)
+        .order("session_date", { ascending: false })
+        .order("created_at", { ascending: false }),
+    );
 
     if (sessionsErr) {
       return NextResponse.json(
@@ -232,11 +237,20 @@ export async function GET(req: NextRequest) {
 
   const completionsByAssignmentItem = new Map<string, any>();
   if (assignmentIds.length) {
-    const { data: completions } = await srv
-      .from("textbook_lesson_completions")
-      .select("id,assignment_id,item_id,status,updated_at")
-      .eq("institution_id", institutionId)
-      .in("assignment_id", assignmentIds);
+    const { data: completions, error: completionsErr } = await readAllTextbookRows(() =>
+      srv
+        .from("textbook_lesson_completions")
+        .select("id,assignment_id,item_id,status,updated_at")
+        .eq("institution_id", institutionId)
+        .in("assignment_id", assignmentIds),
+    );
+
+    if (completionsErr) {
+      return NextResponse.json(
+        { ok: false, error: completionsErr.message },
+        { status: 400 },
+      );
+    }
 
     for (const completion of (completions || []) as any[]) {
       completionsByAssignmentItem.set(
