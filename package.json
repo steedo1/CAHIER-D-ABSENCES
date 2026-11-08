@@ -14,7 +14,7 @@
     "test:multicycle:print": "node scripts/verify-specialized-print.mjs",
     "test:multicycle:e2e": "node scripts/verify-multicycle-e2e.mjs",
     "test:mon-cahier-ai": "node --test test/mon-cahier-ai-chat.test.mjs test/mon-cahier-ai-api.test.mjs test/mon-cahier-ai-server.test.mjs test/mon-cahier-ai-premium.test.mjs",
-    "test:parent-connect": "node --import tsx --test test/parent-portal-access.test.mjs && node --test test/parent-connect-navigation.test.mjs && node --import tsx --test test/parent-connect-server.test.ts && node --test test/parent-connect-db.test.mjs && node --test test/parent-connect-super.test.mjs && node --test test/parent-connect-sms.test.mjs",
+    "test:parent-connect": "node --test test/parent-install-avatar.test.mjs && node --import tsx --test test/parent-portal-access.test.mjs && node --test test/parent-connect-navigation.test.mjs && node --import tsx --test test/parent-connect-server.test.ts && node --test test/parent-connect-db.test.mjs && node --test test/parent-connect-super.test.mjs && node --test test/parent-connect-sms.test.mjs",
     "test:primary-events:browser": "node --import tsx --test --test-concurrency=1 test/primary-events-browser.test.mjs test/primary-bulletin-print.test.mjs test/arabic-class-list-browser.test.mjs test/primary-class-list-landscape.test.mjs",
     "test:school-cards": "node --import tsx --test test/school-cards.test.ts test/school-cards-api.test.mjs test/school-cards-db.test.mjs",
     "test:desps": "node --test test/desps-export.test.mjs test/desps-export-ui.test.mjs"
