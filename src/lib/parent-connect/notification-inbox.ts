@@ -10,6 +10,7 @@ export type QueueNotice = {
   severity?: string | null;
   created_at: string;
   read_at?: string | null;
+  parent_id?: string | null;
   payload?: unknown;
 };
 
@@ -30,9 +31,14 @@ function nonEmptyString(value: unknown): string | null {
 export function normalizeParentNotifications<T extends QueueNotice>(
   rows: T[],
   nowMs = Date.now(),
+  ownParentIds: string[] = [],
 ) {
+  const own = new Set(ownParentIds);
+  // Prefer this guardian's record when the same mark was delivered to others.
+  const preferred = [...rows].sort((a, b) =>
+    Number(!b.parent_id || own.has(b.parent_id)) - Number(!a.parent_id || own.has(a.parent_id)));
   const seenEvents = new Set<string>();
-  return rows.flatMap((row) => {
+  const normalized = preferred.flatMap((row) => {
     const payload = record(row.payload);
     const isAttendance = payload.kind === "attendance";
     let eventIso: string | null = null;
@@ -62,7 +68,9 @@ export function normalizeParentNotifications<T extends QueueNotice>(
     }
 
     return [{
-      id: row.id,
+      id: isAttendance && row.parent_id && !own.has(row.parent_id)
+        ? `historique:${row.student_id || "eleve"}:${row.mark_id || row.session_id || row.id}`
+        : row.id,
       student_id: row.student_id ?? null,
       institution_id: row.institution_id ?? null,
       title: nonEmptyString(row.title) || nonEmptyString(payload.title) || null,
@@ -70,8 +78,13 @@ export function normalizeParentNotifications<T extends QueueNotice>(
       severity: nonEmptyString(row.severity) || nonEmptyString(payload.severity) || null,
       // Queue creation time may be days after the actual session.
       created_at: eventIso || row.created_at,
-      read_at: row.read_at ?? null,
+      // Imported child history is not a notification sent to this parent.
+      // Never expose or modify another guardian's unread/read status.
+      read_at: isAttendance && row.parent_id && !own.has(row.parent_id)
+        ? row.created_at
+        : row.read_at ?? null,
       payload: row.payload,
     }];
   });
+  return normalized.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
 }
