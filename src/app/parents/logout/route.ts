@@ -16,12 +16,12 @@ export async function GET() {
     // La déconnexion locale doit toujours réussir.
   }
 
-  // Location RELATIVE: ne jamais utiliser req.url ici. Sur Render, sa base
-  // peut être http://0.0.0.0:10000, inaccessible depuis un téléphone.
+  // Canonical public URL: relative Location was resolved against Render's
+  // internal origin (0.0.0.0:10000) for parent logout in production.
   const res = new NextResponse(null, {
     status: 303,
     headers: {
-      Location: "/parents/login",
+      Location: "https://www.mon-cahier.com/parents/login",
       "Cache-Control": "private, no-store",
     },
   });

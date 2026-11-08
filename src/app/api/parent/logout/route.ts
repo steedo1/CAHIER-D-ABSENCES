@@ -18,7 +18,7 @@ function clearParentCookies(res: NextResponse) {
   return res;
 }
 
-/** Appelée depuis un formulaire ou un fetch(). */
+/** Appelée depuis un fetch(). Aucune redirection serveur à suivre. */
 export async function POST() {
   return clearParentCookies(new NextResponse(null, {
     status: 204,
@@ -31,7 +31,7 @@ export async function GET() {
   return clearParentCookies(new NextResponse(null, {
     status: 303,
     headers: {
-      Location: "/parents/login",
+      Location: "https://www.mon-cahier.com/parents/login",
       "Cache-Control": "private, no-store",
     },
   }));

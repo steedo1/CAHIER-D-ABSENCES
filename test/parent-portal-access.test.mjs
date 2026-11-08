@@ -120,23 +120,28 @@ test("un nouveau parent voit les cinq événements récents sans fausses notific
   assert.ok(recipient.every((x) => !x.read_at && x.id.endsWith("-recipient-4")));
 });
 
-test("la déconnexion parent ne redirige jamais vers l'hôte interne de Render", async () => {
+test("la déconnexion parent n'ouvre jamais 0.0.0.0 et garde les cookies nettoyés", async () => {
   const [logout, apiLogout, page] = await Promise.all([
     read("src/app/parents/logout/route.ts"),
     read("src/app/api/parent/logout/route.ts"),
     read("src/app/parents/page.tsx"),
   ]);
-  assert.match(page, /const LOGOUT_PARENTS = "\/parents\/logout"/);
-  assert.match(page, /window\.location\.assign\(LOGOUT_PARENTS\)/);
+  assert.match(page, /const res = await fetch\("\/api\/parent\/logout", \{/);
+  assert.match(page, /method: "POST"/);
+  assert.match(page, /credentials: "include"/);
+  assert.match(page, /redirect: "error"/);
+  assert.match(page, /if \(!res\.ok\) throw/);
+  assert.match(page, /window\.location\.replace\("\/parents\/login"\)/);
+  assert.doesNotMatch(page, /window\.location\.assign\("\/parents\/logout"\)/);
   for (const source of [logout, apiLogout]) {
-    assert.match(source, /Location: "\/parents\/login"/);
+    assert.match(source, /Location: "https:\/\/www\.mon-cahier\.com\/parents\/login"/);
     assert.match(source, /status: 303/);
     assert.match(source, /"Cache-Control": "private, no-store"/);
     assert.doesNotMatch(source, /new URL\("\/parents\/login", req\.url\)/);
-    assert.doesNotMatch(source, /NextResponse\.redirect\(/);
     assert.match(source, /res\.cookies\.set\("parent_device", "", clear\)/);
     assert.match(source, /res\.cookies\.set\(COOKIE_NAME, "", clear\)/);
   }
   assert.match(logout, /await supa\.auth\.signOut\(\)/);
   assert.match(apiLogout, /status: 204/);
+  assert.doesNotMatch(apiLogout, /Location: "http:\/\/0\.0\.0\.0/);
 });
