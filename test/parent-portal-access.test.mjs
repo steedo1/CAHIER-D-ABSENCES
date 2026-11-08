@@ -82,12 +82,16 @@ test("les alertes identiques de plusieurs parents ne gonflent pas la boîte de m
   ];
   const got = normalizeParentNotifications(rows, now);
   assert.equal(got.length, 2);
-  assert.equal(got[0].title, "Retard 2 min");
-  assert.equal(got[0].body, "Anglais • 5e2");
-  assert.equal(got[0].severity, "medium");
-  assert.equal(got[0].created_at, "2026-11-03T10:15:00.000Z");
-  assert.equal(got[1].title, "Réunion");
-  assert.equal(got[1].body, "Vendredi");
+  const attendanceItem = got.find((item) => item.title === "Retard 2 min");
+  const communicationItem = got.find((item) => item.title === "Réunion");
+  assert.ok(attendanceItem);
+  assert.ok(communicationItem);
+  assert.equal(attendanceItem.id, "historique:child:mark-1");
+  assert.equal(attendanceItem.body, "Anglais • 5e2");
+  assert.equal(attendanceItem.severity, "medium");
+  assert.equal(attendanceItem.created_at, "2026-11-03T10:15:00.000Z");
+  assert.ok(attendanceItem.read_at);
+  assert.equal(communicationItem.body, "Vendredi");
 });
 
 test("un nouveau parent voit les cinq événements récents sans fausses notifications non lues", async () => {
