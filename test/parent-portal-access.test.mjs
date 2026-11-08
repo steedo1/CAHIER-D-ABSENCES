@@ -31,3 +31,22 @@ test("les données parents restent filtrées par le cookie appareil et les ratta
   assert.match(children, /\.from\("parent_device_children"\)/);
   assert.match(attach, /parentConnectDenial\(srv, student\.id\)/);
 });
+
+test("les absences affichent uniquement les vraies séances et leurs matières", async () => {
+  const [api, page] = await Promise.all([
+    read("src/app/api/parent/children/events/route.ts"),
+    read("src/app/parents/page.tsx"),
+  ]);
+  assert.match(api, /session:session_id!inner/);
+  assert.match(api, /\.gte\("session\.started_at", fromISO\)/);
+  assert.match(api, /\.in\("status", \["absent", "late"\]\)/);
+  assert.match(api, /Number\.isFinite\(sessionTime\) && sessionTime >= minTime/);
+  assert.match(api, /when: String\(s\.started_at\)/);
+  assert.doesNotMatch(api, /s\.started_at \|\| new Date\(\)/);
+  assert.doesNotMatch(api, /const penItems|\.from\("conduct_penalties"\)/);
+  assert.match(api, /subject_name: s\.subject_id \? \(subjName\.get/);
+  assert.match(api, /class_label: s\.class_id \? \(className\.get/);
+  assert.match(page, /event\.subject_name \|\| "Matière non précisée"/);
+  assert.match(api, /parentConnectDenial\(srv, student_id\)/);
+  assert.match(api, /\.from\("parent_device_children"\)/);
+});
