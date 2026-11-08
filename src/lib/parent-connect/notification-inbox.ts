@@ -83,7 +83,10 @@ export function normalizeParentNotifications<T extends QueueNotice>(
       read_at: isAttendance && row.parent_id && !own.has(row.parent_id)
         ? row.created_at
         : row.read_at ?? null,
-      payload: row.payload,
+      // Do not expose any recipient-specific metadata from another guardian.
+      payload: isAttendance && row.parent_id && !own.has(row.parent_id)
+        ? { kind: "attendance", event: String(payload.event || "") }
+        : row.payload,
     }];
   });
   return normalized.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
