@@ -5,7 +5,6 @@ import { UserRound } from "lucide-react";
 import { parentConnectMessage, parentConnectEndLabel, type ParentConnectStatus } from "@/lib/parent-connect/domain";
 import { MON_CAHIER_SW_URL } from "@/lib/offline";
 
-const LOGOUT_PARENTS = "/parents/logout";
 const PARENT_FIRST_USE_GUIDE_KEY = "mon-cahier-parent-first-use-guide-v1";
 
 type PrimaryScreen = "home" | "children" | "attach" | "messages";
