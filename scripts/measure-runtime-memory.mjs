@@ -120,12 +120,24 @@ try {
     await pause(100);
   }
   const readyMs = performance.now() - started;
+  // Next can print Ready before its async instrumentation registration finishes.
+  // Do not mistake that short startup race for a missing memory configuration.
+  if (process.env.MON_CAHIER_BENCH_VERIFY_INSTRUMENTATION === '1') {
+    while (!logs.includes('[runtime-memory]')) {
+      assert(child.exitCode === null && child.signalCode === null, `Server exited: ${logs}`);
+      assert(performance.now() < deadline, `Instrumentation timed out: ${logs}`);
+      await pause(100);
+    }
+  }
   const imageBudget = logs.match(/\[runtime-image-memory\] (\{[^\n]+\})/)?.[1];
   if (process.env.MON_CAHIER_BENCH_VERIFY_INSTRUMENTATION === '1') {
     assert.deepEqual(imageBudget && JSON.parse(imageBudget), { cacheMB: 8, concurrency: 1 });
     assert(logs.includes('[runtime-memory]'), 'Production memory telemetry did not start');
   }
   setPhase('idle'); await pause(5_000);
+  if (process.env.MON_CAHIER_BENCH_VERIFY_LAZY_ENTRIES === '1') {
+    assert.equal(samples.at(-1)?.appEntryCount, 0, 'Unused app entries were loaded before the first request');
+  }
   setPhase('warmup');
   for (const route of paths) await request(...route);
   if (school) {
@@ -165,6 +177,9 @@ try {
     assert(samples.length > 0 && npmSamples.length > 0, 'Missing Next/npm memory samples');
   }
   const last = samples.at(-1);
+  if (process.env.MON_CAHIER_BENCH_VERIFY_LAZY_ENTRIES === '1') {
+    assert(last.appEntryCount > 0, 'Requested app entries were not measured');
+  }
   const firstLoad = samples.find(s => s.phase === 'load');
   const lastLoad = samples.findLast(s => s.phase === 'load');
   const cpuSeconds = firstLoad && lastLoad ? ((lastLoad.cpu.user + lastLoad.cpu.system) - (firstLoad.cpu.user + firstLoad.cpu.system)) / 1e6 : null;
