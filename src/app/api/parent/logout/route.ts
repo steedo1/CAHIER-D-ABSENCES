@@ -1,25 +1,38 @@
-//src/app/api/parent/logout/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import { clearParentSessionCookie } from "@/lib/parent-session";
+// src/app/api/parent/logout/route.ts
+import { NextResponse } from "next/server";
+import { COOKIE_NAME } from "@/lib/parent-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Appelée depuis un <form method="post"> ou un fetch() */
-export async function POST() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      "Set-Cookie": clearParentSessionCookie(),
-      "Cache-Control": "no-store",
-    },
-  });
+function clearParentCookies(res: NextResponse) {
+  const clear = {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  };
+  res.cookies.set("parent_device", "", clear);
+  res.cookies.set(COOKIE_NAME, "", clear);
+  return res;
 }
 
-/** Pratique si on visite l’URL depuis la barre d’adresse */
-export async function GET(req: NextRequest) {
-  const url = new URL("/parents/login", req.url);
-  return NextResponse.redirect(url, {
-    headers: { "Set-Cookie": clearParentSessionCookie() },
-  });
+/** Appelée depuis un formulaire ou un fetch(). */
+export async function POST() {
+  return clearParentCookies(new NextResponse(null, {
+    status: 204,
+    headers: { "Cache-Control": "private, no-store" },
+  }));
+}
+
+/** Compatible avec la navigation directe : ne jamais renvoyer l'adresse Render interne. */
+export async function GET() {
+  return clearParentCookies(new NextResponse(null, {
+    status: 303,
+    headers: {
+      Location: "/parents/login",
+      "Cache-Control": "private, no-store",
+    },
+  }));
 }
