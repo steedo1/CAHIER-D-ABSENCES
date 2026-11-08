@@ -1055,7 +1055,21 @@ export default function ParentPage() {
   async function logout() {
     if (loggingOut) return;
     setLoggingOut(true);
-    window.location.assign(LOGOUT_PARENTS);
+    try {
+      // Avoid a server-side redirect: Render's internal 0.0.0.0:10000
+      // must never become the browser's navigation destination.
+      const res = await fetch("/api/parent/logout", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        redirect: "error",
+      });
+      if (!res.ok) throw new Error("Logout failed");
+      window.location.replace("/parents/login");
+    } catch {
+      setLoggingOut(false);
+      setGlobalError("Déconnexion impossible. Vérifiez votre connexion puis réessayez.");
+    }
   }
 
   const navItems: Array<{
