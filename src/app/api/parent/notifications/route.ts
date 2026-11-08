@@ -1,4 +1,5 @@
 import { filterParentConnectNotifications } from "@/lib/parent-connect/server";
+import { normalizeParentNotifications } from "@/lib/parent-connect/notification-inbox";
 // src/app/api/parent/notifications/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -35,8 +36,14 @@ function buildOwnerOr(scope: NotificationScope) {
   const parts: string[] = [];
   if (scope.parentIds.length === 1) parts.push(`parent_id.eq.${scope.parentIds[0]}`);
   if (scope.parentIds.length > 1) parts.push(`parent_id.in.(${scope.parentIds.join(",")})`);
-  if (scope.studentIds.length === 1) parts.push(`student_id.eq.${scope.studentIds[0]}`);
-  if (scope.studentIds.length > 1) parts.push(`student_id.in.(${scope.studentIds.join(",")})`);
+  // Student-linked searches may only include recipient-less broadcasts.
+  // Never fetch other guardians' recipient-specific rows using student_id.
+  const studentClause = scope.studentIds.length === 1
+    ? `student_id.eq.${scope.studentIds[0]}`
+    : scope.studentIds.length > 1
+      ? `student_id.in.(${scope.studentIds.join(",")})`
+      : "";
+  if (studentClause) parts.push(`and(parent_id.is.null,${studentClause})`);
   return parts.join(",");
 }
 
@@ -85,7 +92,7 @@ export async function GET(req: NextRequest) {
   if (user) {
     const { data, error } = await supa
       .from("notifications_queue")
-      .select("id,title,body,severity,created_at,read_at,payload,student_id,institution_id")
+      .select("id,title,body,severity,created_at,read_at,payload,student_id,institution_id,mark_id,session_id")
       .eq("parent_id", user.id)
       .or(PARENT_NOTIFICATION_KIND_FILTER)
       .order("created_at", { ascending: false })
@@ -94,7 +101,12 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     const { data: guardians, error: guardianError } = await srv.from("student_guardians").select("student_id").or(`parent_id.eq.${user.id},guardian_profile_id.eq.${user.id}`);
     if (guardianError) return NextResponse.json({ error: "Messages indisponibles." }, { status: 503 });
-    try { return NextResponse.json({ items: await filterParentConnectNotifications(srv, data || [], (guardians || []).map((g) => g.student_id)) }); }
+    try {
+      const ownedIds = (guardians || []).map((g) => String(g.student_id));
+      const allowedRows = (data || []).filter((row) => !row.student_id || ownedIds.includes(String(row.student_id)));
+      const filtered = await filterParentConnectNotifications(srv, allowedRows, ownedIds);
+      return NextResponse.json({ items: normalizeParentNotifications(filtered) });
+    }
     catch { return NextResponse.json({ error: "Messages indisponibles." }, { status: 503 }); }
   }
 
@@ -102,14 +114,18 @@ export async function GET(req: NextRequest) {
     const { uid, sid } = claims;
     const { data, error } = await srv
       .from("notifications_queue")
-      .select("id,title,body,severity,created_at,read_at,payload,student_id,institution_id")
-      .or(`parent_id.eq.${uid},student_id.eq.${sid}`)
+      .select("id,title,body,severity,created_at,read_at,payload,student_id,institution_id,mark_id,session_id")
+      .or(buildOwnerOr({ parentIds: [uid], studentIds: [sid] }))
       .or(PARENT_NOTIFICATION_KIND_FILTER)
       .order("created_at", { ascending: false })
       .limit(limit);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    try { return NextResponse.json({ items: await filterParentConnectNotifications(srv, data || [], [sid]) }); }
+    try {
+      const allowedRows = (data || []).filter((row) => !row.student_id || String(row.student_id) === sid);
+      const filtered = await filterParentConnectNotifications(srv, allowedRows, [sid]);
+      return NextResponse.json({ items: normalizeParentNotifications(filtered) });
+    }
     catch { return NextResponse.json({ error: "Messages indisponibles." }, { status: 503 }); }
   }
 
@@ -120,14 +136,17 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await srv
       .from("notifications_queue")
-      .select("id,title,body,severity,created_at,read_at,payload,student_id,institution_id")
+      .select("id,title,body,severity,created_at,read_at,payload,student_id,institution_id,mark_id,session_id")
       .or(ownerOr)
       .or(PARENT_NOTIFICATION_KIND_FILTER)
       .order("created_at", { ascending: false })
       .limit(limit);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    return NextResponse.json({ items: await filterParentConnectNotifications(srv, data || [], scope?.studentIds || []) });
+    const ownedIds = scope?.studentIds || [];
+    const allowedRows = (data || []).filter((row) => !row.student_id || ownedIds.includes(String(row.student_id)));
+    const filtered = await filterParentConnectNotifications(srv, allowedRows, ownedIds);
+    return NextResponse.json({ items: normalizeParentNotifications(filtered) });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e) }, { status: 400 });
   }
@@ -166,7 +185,7 @@ export async function PATCH(req: NextRequest) {
       .from("notifications_queue")
       .update({ read_at: nowIso })
       .in("id", ids)
-      .or(`parent_id.eq.${uid},student_id.eq.${sid}`)
+      .or(buildOwnerOr({ parentIds: [uid], studentIds: [sid] }))
       .select("id");
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
