@@ -34,3 +34,26 @@ test("les deux avatars élèves emploient une icône locale sans requête photo 
   assert.match(page, /h-16 w-16 place-items-center rounded-\[22px\] bg-slate-100/);
   assert.doesNotMatch(page, /photo_url|avatar_url/);
 });
+
+test("la carte enfant rend l’action Ouvrir explicite sans ajouter de bouton imbriqué", async () => {
+  const page = await read("src/app/parents/page.tsx");
+  assert.match(page, /onClick=\{\(\) => openKid\(kid\.id\)\}/);
+  assert.match(page, /Ouvrir\s*<Icon name="arrow" size=\{17\}/);
+  assert.match(page, /bg-emerald-50 px-3 text-sm font-black text-emerald-800/);
+  assert.match(page, /<UserRound size=\{28\} strokeWidth=\{2\.2\} aria-hidden="true" \/>/);
+});
+
+test("le guide d’accueil est montré une seule fois, ignoré après ouverture et sans réseau", async () => {
+  const page = await read("src/app/parents/page.tsx");
+  assert.match(page, /PARENT_FIRST_USE_GUIDE_KEY = "mon-cahier-parent-first-use-guide-v1"/);
+  assert.match(page, /localStorage\.getItem\(PARENT_FIRST_USE_GUIDE_KEY\) !== "done"/);
+  assert.match(page, /localStorage\.setItem\(PARENT_FIRST_USE_GUIDE_KEY, "done"\)/);
+  assert.match(page, /if \(showFirstUseGuide\) completeFirstUseGuide\(\)/);
+  assert.match(page, /\{showFirstUseGuide \? \(/);
+  assert.match(page, /Guide de première utilisation/);
+  assert.match(page, /Mes enfants<\/strong>/);
+  assert.match(page, /Ouvrir<\/strong>/);
+  assert.match(page, /onClick=\{\(\) => openPrimary\(kids\.length \? "children" : "attach"\)\}/);
+  assert.match(page, /onClick=\{completeFirstUseGuide\}/);
+  assert.doesNotMatch(page.slice(page.indexOf("function completeFirstUseGuide"), page.indexOf("function openPrimary")), /fetch\(/);
+});

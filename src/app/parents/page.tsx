@@ -6,6 +6,7 @@ import { parentConnectMessage, parentConnectEndLabel, type ParentConnectStatus }
 import { MON_CAHIER_SW_URL } from "@/lib/offline";
 
 const LOGOUT_PARENTS = "/parents/logout";
+const PARENT_FIRST_USE_GUIDE_KEY = "mon-cahier-parent-first-use-guide-v1";
 
 type PrimaryScreen = "home" | "children" | "attach" | "messages";
 type ChildScreen =
@@ -708,6 +709,7 @@ export default function ParentPage() {
   const [expandedLessons, setExpandedLessons] = useState<Record<string, boolean>>({});
   const [showProgression, setShowProgression] = useState(false);
   const [selectedTimetableDay, setSelectedTimetableDay] = useState(1);
+  const [showFirstUseGuide, setShowFirstUseGuide] = useState(false);
 
   const selectedKid = useMemo(
     () => kids.find((kid) => kid.id === selectedKidId) || kids[0] || null,
@@ -890,6 +892,11 @@ export default function ParentPage() {
     const offline = () => setIsOnline(false);
     window.addEventListener("online", online);
     window.addEventListener("offline", offline);
+    try {
+      setShowFirstUseGuide(window.localStorage.getItem(PARENT_FIRST_USE_GUIDE_KEY) !== "done");
+    } catch {
+      setShowFirstUseGuide(true);
+    }
     loadInitialData();
     void hasActivePushSubscription()
       .then(setPushEnabled)
@@ -934,6 +941,15 @@ export default function ParentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKid?.id, selectedKid?.parent_connect?.allowed, selectedPeriodId]);
 
+  function completeFirstUseGuide() {
+    setShowFirstUseGuide(false);
+    try {
+      window.localStorage.setItem(PARENT_FIRST_USE_GUIDE_KEY, "done");
+    } catch {
+      // No persistent browser storage: the guide remains dismissible for this visit.
+    }
+  }
+
   function openPrimary(next: PrimaryScreen) {
     setScreen(next);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -941,6 +957,7 @@ export default function ParentPage() {
   }
 
   function openKid(kidId: string) {
+    if (showFirstUseGuide) completeFirstUseGuide();
     setSelectedKidId(kidId);
     setScreen("child");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1075,6 +1092,33 @@ export default function ParentPage() {
             Consultez simplement le suivi scolaire de vos enfants depuis le menu principal.
           </p>
         </section>
+        {showFirstUseGuide ? (
+          <section aria-label="Guide de première utilisation" className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-left shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-black text-emerald-900">Premiers pas dans l’espace parent</div>
+                <p className="mt-2 text-sm font-medium leading-6 text-slate-700">
+                  1. Touchez <strong>Mes enfants</strong> dans le menu.
+                  <br />
+                  2. Appuyez sur <strong>Ouvrir</strong> sur la fiche de votre enfant.
+                  <br />
+                  3. Choisissez la rubrique à consulter.
+                </p>
+              </div>
+              <button type="button" onClick={completeFirstUseGuide} className="shrink-0 rounded-lg px-2 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100" aria-label="Fermer le guide de première utilisation">
+                Compris
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => openPrimary(kids.length ? "children" : "attach")}
+              className="mt-3 inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-black text-white transition hover:bg-emerald-800"
+            >
+              {kids.length ? "Voir mes enfants" : "Ajouter un enfant"}
+              <Icon name="arrow" size={17} />
+            </button>
+          </section>
+        ) : null}
       </div>
     );
   }
@@ -1102,8 +1146,9 @@ export default function ParentPage() {
                     <div className="grid h-16 w-16 place-items-center rounded-[22px] bg-slate-100 text-xl font-black text-slate-700">
                       <UserRound size={28} strokeWidth={2.2} aria-hidden="true" />
                     </div>
-                    <span className="grid h-10 w-10 place-items-center rounded-full bg-slate-50 text-slate-400 transition group-hover:bg-slate-900 group-hover:text-white">
-                      <Icon name="arrow" size={18} />
+                    <span className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-3 text-sm font-black text-emerald-800 transition group-hover:bg-emerald-600 group-hover:text-white">
+                      Ouvrir
+                      <Icon name="arrow" size={17} />
                     </span>
                   </div>
                   <div className="mt-5 text-xl font-black text-slate-950">{kid.full_name}</div>
