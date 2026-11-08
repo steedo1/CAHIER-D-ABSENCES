@@ -89,3 +89,29 @@ test("les alertes identiques de plusieurs parents ne gonflent pas la boîte de m
   assert.equal(got[1].title, "Réunion");
   assert.equal(got[1].body, "Vendredi");
 });
+
+test("un nouveau parent voit les cinq événements récents sans fausses notifications non lues", async () => {
+  const { normalizeParentNotifications } = await import("../src/lib/parent-connect/notification-inbox.ts");
+  const now = Date.parse("2026-11-08T08:00:00Z");
+  const marks = [
+    ["m1", "late", "2026-11-03T10:15:00Z"],
+    ["m2", "late", "2026-10-06T08:10:00Z"],
+    ["m3", "absent", "2026-10-02T16:20:00Z"],
+    ["m4", "absent", "2026-09-14T09:05:00Z"],
+    ["m5", "absent", "2026-09-11T15:25:00Z"],
+    ["m6", "late", "2026-02-13T10:15:00Z"],
+    ["m7", "absent", "2026-01-14T07:15:00Z"],
+  ];
+  const records = marks.flatMap(([mark,event,started_at]) => Array.from({ length: 6 }, (_, i) => ({
+    id: mark + "-recipient-" + i, parent_id: "older-parent-" + i, mark_id: mark,
+    student_id: "child", created_at: started_at, read_at: null,
+    payload: { kind: "attendance", event, session: { started_at },
+      title: event === "late" ? "Retard" : "Absence", body: "Cours" },
+  })));
+  const fresh = normalizeParentNotifications(records, now, ["new-parent"]);
+  assert.equal(fresh.length, 5);
+  assert.ok(fresh.every((x) => Boolean(x.read_at) && x.id.startsWith("historique:")));
+  const recipient = normalizeParentNotifications(records, now, ["older-parent-4"]);
+  assert.equal(recipient.length, 5);
+  assert.ok(recipient.every((x) => !x.read_at && x.id.endsWith("-recipient-4")));
+});
