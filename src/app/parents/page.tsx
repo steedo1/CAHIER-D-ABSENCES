@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { UserRound } from "lucide-react";
 import { parentConnectMessage, parentConnectEndLabel, type ParentConnectStatus } from "@/lib/parent-connect/domain";
 import { MON_CAHIER_SW_URL } from "@/lib/offline";
 
@@ -377,16 +378,6 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   );
 }
 
-function initials(value: string) {
-  const parts = String(value || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (!parts.length) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-}
-
 function dateFr(value?: string | null, withTime = false) {
   if (!value) return "—";
   const date = new Date(value);
@@ -624,7 +615,7 @@ function ChildIdentity({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3.5">
           <div className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[18px] bg-[#003766] text-base font-black text-white sm:h-14 sm:w-14">
-            {initials(kid.full_name)}
+            <UserRound size={28} strokeWidth={2.2} aria-hidden="true" />
           </div>
           <div className="min-w-0">
             <div className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">Enfant sélectionné</div>
@@ -1109,7 +1100,7 @@ export default function ParentPage() {
                 <div className="p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div className="grid h-16 w-16 place-items-center rounded-[22px] bg-slate-100 text-xl font-black text-slate-700">
-                      {initials(kid.full_name)}
+                      <UserRound size={28} strokeWidth={2.2} aria-hidden="true" />
                     </div>
                     <span className="grid h-10 w-10 place-items-center rounded-full bg-slate-50 text-slate-400 transition group-hover:bg-slate-900 group-hover:text-white">
                       <Icon name="arrow" size={18} />
