@@ -50,3 +50,42 @@ test("les absences affichent uniquement les vraies séances et leurs matières",
   assert.match(api, /parentConnectDenial\(srv, student_id\)/);
   assert.match(api, /\.from\("parent_device_children"\)/);
 });
+
+test("les messages parents ne lisent que leur destinataire et les diffusions sans parent", async () => {
+  const api = await read("src/app/api/parent/notifications/route.ts");
+  assert.match(api, /and\(parent_id\.is\.null/);
+  assert.match(api, /normalizeParentNotifications\(filtered\)/);
+  assert.match(api, /mark_id,session_id/);
+  assert.doesNotMatch(api, /parent_id\.eq\.\$\{uid\},student_id\.eq\.\$\{sid\}/);
+  assert.match(api, /filterParentConnectNotifications/);
+  assert.match(api, /\.or\(ownerOr\)/);
+});
+
+test("les alertes identiques de plusieurs parents ne gonflent pas la boîte de messages", async () => {
+  const { normalizeParentNotifications } = await import("../src/lib/parent-connect/notification-inbox.ts");
+  const now = Date.parse("2026-11-08T08:00:00Z");
+  const attendance = {
+    student_id: "child",
+    mark_id: "mark-1",
+    created_at: "2026-11-04T06:56:00Z",
+    title: null,
+    body: null,
+    severity: null,
+    read_at: null,
+    payload: { kind: "attendance", event: "late", session: { started_at: "2026-11-03T10:15:00Z" },
+      title: "Retard 2 min", body: "Anglais • 5e2", severity: "medium" },
+  };
+  const rows = [
+    ...["a","b","c","d","e","f"].map((s) => ({ ...attendance, id: "notif-" + s })),
+    { ...attendance, id: "old", mark_id: "mark-2", created_at: "2026-02-13T10:25:00Z", payload: { ...attendance.payload, session: { started_at: "2026-02-13T10:15:00Z" } } },
+    { id: "message", student_id: "child", created_at: "2026-11-04T07:00:00Z", title: null, body: null, payload: { kind: "communication", title: "Réunion", body: "Vendredi" } },
+  ];
+  const got = normalizeParentNotifications(rows, now);
+  assert.equal(got.length, 2);
+  assert.equal(got[0].title, "Retard 2 min");
+  assert.equal(got[0].body, "Anglais • 5e2");
+  assert.equal(got[0].severity, "medium");
+  assert.equal(got[0].created_at, "2026-11-03T10:15:00.000Z");
+  assert.equal(got[1].title, "Réunion");
+  assert.equal(got[1].body, "Vendredi");
+});
