@@ -43,14 +43,8 @@ type TimelineItem = {
   class_label: string | null;
   subject_name: string | null;
   expected_minutes?: number | null;
-  type: "absent" | "late" | "penalty";
+  type: "absent" | "late";
   minutes_late?: number | null;
-  rubric?: "discipline" | "tenue" | "moralite";
-  points?: number | null;
-  reason?: string | null;
-  author_name?: string | null;
-  author_role_label?: string | null;
-  author_subject_name?: string | null;
 };
 
 export async function GET(req: NextRequest) {
@@ -135,100 +129,61 @@ export async function GET(req: NextRequest) {
   // Fenêtre
   const fromISO = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
 
-  // Attendance (avec fallback si le filtre imbriqué ne passe pas)
-  let rows: any[] = [];
-  {
-    const { data, error } = await srv
-      .from("attendance_marks")
-      .select(`
-        id,
-        status,
-        minutes_late,
-        session:session_id (
-          started_at,
-          expected_minutes,
-          class_id,
-          subject_id,
-          institution_id
-        )
-      `)
-      .eq("student_id", student_id)
-      .gte("session.started_at", fromISO)
-      .order("id", { ascending: false })
-      .limit(400);
-
-    if (!error) rows = data || [];
-    if (!rows.length) {
-      const { data: data2, error: e2 } = await srv
-        .from("attendance_marks")
-        .select(`
-          id,
-          status,
-          minutes_late,
-          session:session_id (
-            started_at,
-            expected_minutes,
-            class_id,
-            subject_id,
-            institution_id
-          )
-        `)
-        .eq("student_id", student_id)
-        .order("id", { ascending: false })
-        .limit(800);
-      if (e2) return NextResponse.json({ items: [], error: e2.message }, { status: 400 });
-      rows = (data2 || []).filter((r: any) => r?.session?.started_at && String(r.session.started_at) >= fromISO);
-    }
-  }
-
-  const useful = (rows || []).filter((r: any) => r.status === "absent" || r.status === "late");
-
-  const classIds = Array.from(new Set(useful.map((r: any) => String(r.session?.class_id)).filter(Boolean)));
-  const { data: classes } = await srv
-    .from("classes")
-    .select("id,label")
-    .in("id", classIds.length ? classIds : ["00000000-0000-0000-0000-000000000000"]);
-  const className = new Map<string, string>((classes || []).map((c: any) => [String(c.id), String(c.label ?? "")]));
-
-  const subjIds = Array.from(new Set(useful.map((r: any) => String(r.session?.subject_id)).filter(Boolean)));
-  const subjName = await resolveSubjectNames(srv, subjIds);
-
-  // Pénalités récentes (même timeline)
-  const penRes = await srv
-    .from("conduct_penalties")
+  // The embedded relation must use an INNER join: otherwise PostgREST can
+  // return a mark with session=null when the date filter rejects its session.
+  const { data, error: marksError } = await srv
+    .from("attendance_marks")
     .select(`
       id,
-      occurred_at,
-      rubric,
-      points,
-      reason,
-      class_id,
-      subject_id,
-      author_profile_id,
-      author_role_label,
-      author_subject_name
+      status,
+      minutes_late,
+      session:session_id!inner (
+        started_at,
+        expected_minutes,
+        class_id,
+        subject_id,
+        institution_id
+      )
     `)
     .eq("student_id", student_id)
-    .gte("occurred_at", fromISO)
-    .order("occurred_at", { ascending: false })
-    .limit(limit);
-  const penalties = toArray(penRes);
+    .in("status", ["absent", "late"])
+    .gte("session.started_at", fromISO)
+    .order("created_at", { ascending: false })
+    .limit(400);
 
-  let authorMap = new Map<string, { name: string | null }>();
-  const authorIds = Array.from(new Set(penalties.map((p: any) => String(p?.author_profile_id || "")).filter(Boolean)));
-  if (authorIds.length) {
-    const auRes = await srv.from("profiles").select("id,display_name").in("id", authorIds);
-    const auArr = toArray<{ id: string; display_name: string | null }>(auRes);
-    authorMap = new Map(auArr.map((p) => [String(p.id), { name: (p.display_name as string | null) ?? null }]));
+  if (marksError) {
+    console.error("[parent.children.events] attendance query failed", marksError);
+    return NextResponse.json({ items: [], error: marksError.message }, { status: 400 });
   }
 
-  const markItems: TimelineItem[] = useful.map((r: any) => {
-    const s = r.session || {};
-    const started = String(s.started_at || new Date().toISOString());
+  // Never invent the current time for an old or unlinked attendance mark.
+  const minTime = Date.parse(fromISO);
+  const useful = (data || []).filter((row: any) => {
+    const sessionTime = row?.session?.started_at ? Date.parse(String(row.session.started_at)) : NaN;
+    return (row.status === "absent" || row.status === "late") &&
+      Number.isFinite(sessionTime) && sessionTime >= minTime;
+  });
+
+  const classIds = Array.from(new Set(useful.map((r: any) => String(r.session?.class_id || "")).filter(Boolean)));
+  const className = new Map<string, string>();
+  if (classIds.length) {
+    const { data: classes } = await srv
+      .from("classes")
+      .select("id,label")
+      .in("id", classIds);
+    for (const cls of classes || []) className.set(String(cls.id), String(cls.label ?? ""));
+  }
+
+  const subjIds = Array.from(new Set(useful.map((r: any) => String(r.session?.subject_id || "")).filter(Boolean)));
+  const subjName = await resolveSubjectNames(srv, subjIds);
+
+  // Sanctions have their own endpoint and screen. Never label them "Retard".
+  const items: TimelineItem[] = useful.map((r: any) => {
+    const s = r.session;
     const type: "absent" | "late" = r.status === "absent" ? "absent" : "late";
     return {
       id: String(r.id),
-      when: started,
+      when: String(s.started_at),
       expected_minutes: typeof s.expected_minutes === "number" ? Number(s.expected_minutes) : null,
       type,
       minutes_late: type === "late" ? Number(r.minutes_late || 0) : null,
@@ -237,28 +192,6 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  const penItems: TimelineItem[] = penalties.map((p: any) => {
-    const a = authorMap.get(String(p.author_profile_id));
-    const penaltySubjectName = p.subject_id ? (subjName.get(String(p.subject_id)) || null) : null;
-    const authorSubjectName = (p.author_subject_name as string | null) || penaltySubjectName || null;
-    const author_role_label: string | null =
-      (p.author_role_label as string | null) ?? (authorSubjectName ? "Enseignant" : "Administration");
-
-    return {
-      id: String(p.id),
-      when: String(p.occurred_at),
-      type: "penalty",
-      class_label: p.class_id ? (className.get(String(p.class_id)) || null) : null,
-      subject_name: penaltySubjectName,
-      rubric: p.rubric as "discipline" | "tenue" | "moralite",
-      points: Number(p.points || 0),
-      reason: (p.reason as string | null) ?? null,
-      author_name: a?.name ?? null,
-      author_subject_name: authorSubjectName,
-      author_role_label,
-    };
-  });
-
-  const items = [...markItems, ...penItems].sort((a, b) => b.when.localeCompare(a.when)).slice(0, limit);
-  return NextResponse.json({ items });
+  items.sort((a, b) => b.when.localeCompare(a.when));
+  return NextResponse.json({ items: items.slice(0, limit) });
 }
