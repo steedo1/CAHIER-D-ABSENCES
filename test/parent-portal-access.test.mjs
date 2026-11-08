@@ -119,3 +119,24 @@ test("un nouveau parent voit les cinq événements récents sans fausses notific
   assert.equal(recipient.length, 5);
   assert.ok(recipient.every((x) => !x.read_at && x.id.endsWith("-recipient-4")));
 });
+
+test("la déconnexion parent ne redirige jamais vers l'hôte interne de Render", async () => {
+  const [logout, apiLogout, page] = await Promise.all([
+    read("src/app/parents/logout/route.ts"),
+    read("src/app/api/parent/logout/route.ts"),
+    read("src/app/parents/page.tsx"),
+  ]);
+  assert.match(page, /const LOGOUT_PARENTS = "\/parents\/logout"/);
+  assert.match(page, /window\.location\.assign\(LOGOUT_PARENTS\)/);
+  for (const source of [logout, apiLogout]) {
+    assert.match(source, /Location: "\/parents\/login"/);
+    assert.match(source, /status: 303/);
+    assert.match(source, /"Cache-Control": "private, no-store"/);
+    assert.doesNotMatch(source, /new URL\("\/parents\/login", req\.url\)/);
+    assert.doesNotMatch(source, /NextResponse\.redirect\(/);
+    assert.match(source, /res\.cookies\.set\("parent_device", "", clear\)/);
+    assert.match(source, /res\.cookies\.set\(COOKIE_NAME, "", clear\)/);
+  }
+  assert.match(logout, /await supa\.auth\.signOut\(\)/);
+  assert.match(apiLogout, /status: 204/);
+});
