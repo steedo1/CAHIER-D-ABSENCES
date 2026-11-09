@@ -95,3 +95,14 @@ test("dashboard GET is read-only and detail lookups have bounded results", () =>
   assert.match(details, /requireTextbookManager/);
   assert.match(details, /\.limit\(40\)/);
 });
+
+test("admin cards display only teacher and execution rate without session drilldown", () => {
+  const page = readFileSync("src/app/admin/cahier-de-texte/page.tsx", "utf8");
+  const monitor = readFileSync("src/app/api/admin/textbook/monitor/route.ts", "utf8");
+  assert.match(page, /card\.teacher/);
+  assert.match(page, /card\.metric\.completion_rate/);
+  assert.match(page, /execution_only: "1"/);
+  assert.doesNotMatch(page, /Séances consignées|Voir les séances|Aucune prévision renseignée|toggleDetails/);
+  assert.doesNotMatch(page, /\/api\/admin\/textbook\/details/);
+  assert.match(monitor, /if \(!executionOnly && assignmentIds\.length\)/);
+});
