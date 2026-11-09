@@ -178,6 +178,7 @@ export async function GET(req: NextRequest) {
         levelCode: "",
         classId: "",
       };
+  const executionOnly = url.searchParams.get("execution_only") === "1";
   const academicYear =
     cleanText(url.searchParams.get("academic_year"), 30) ||
     (await getCurrentAcademicYearCode(srv, institutionId));
@@ -421,7 +422,9 @@ export async function GET(req: NextRequest) {
   }
 
   const sessionsByAssignment = new Map<string, any[]>();
-  if (assignmentIds.length) {
+  // Cards display only progression execution rates: no session read needed.
+  // Preserve the full response for any existing callers that omit the flag.
+  if (!executionOnly && assignmentIds.length) {
     const { data: sessions, error: sessionError } = await readAllTextbookRows(() =>
       srv
         .from("textbook_lesson_sessions")
