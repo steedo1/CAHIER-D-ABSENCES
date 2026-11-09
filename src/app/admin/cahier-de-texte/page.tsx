@@ -119,7 +119,7 @@ export default function AdminTextbookPage() {
     setError(null);
 
     try {
-      const monitorParams = new URLSearchParams();
+      const monitorParams = new URLSearchParams({ execution_only: "1" });
       if (year) monitorParams.set("academic_year", year);
       // One institutional summary request. Switching subject/class/period is local.
       const classParams = new URLSearchParams({ education_type: "all", limit: "5000" });
