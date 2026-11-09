@@ -11,7 +11,6 @@ import {
   resolveTextbookAssignmentSubject,
 } from "@/lib/textbook/subject-matching";
 import { decorateTextbookClassEducation } from "@/lib/textbook/education-context";
-import { syncTextbookAssignmentsFromTeaching } from "@/lib/textbook/auto-assignment";
 import {
   ALL_EDUCATION_TYPES,
   classMatchesEducationScope,
@@ -129,6 +128,12 @@ function periodMetric(
     (sum, session) => sum + (Number(session?.duration_minutes || 0) || 0),
     0,
   );
+  // Based on the progression's planned sessions, not elapsed timetable slots.
+  // Keep this separate from teaching actually delivered and lesson completion.
+  const plannedSessions = actionable.reduce((sum, item) => {
+    const count = Number(item?.planned_sessions_count || 0);
+    return sum + (count > 0 ? count : 1);
+  }, 0);
 
   return {
     expected_items: expected,
@@ -142,6 +147,10 @@ function periodMetric(
       ? pct(completedPlanned, planned)
       : pct(completed.length, expected),
     sessions_count: matchingSessions.length,
+    planned_sessions_count: plannedSessions,
+    recording_rate: plannedSessions
+      ? Math.min(100, pct(matchingSessions.length, plannedSessions))
+      : 0,
     realized_minutes: realizedMinutes,
     realized_hours: Math.round((realizedMinutes / 60) * 10) / 10,
   };
@@ -150,7 +159,7 @@ function periodMetric(
 export async function GET(req: NextRequest) {
   const auth = await requireTextbookManager();
   if (!auth.ok) return auth.response;
-  const { srv, institutionId, userId } = auth.ctx;
+  const { srv, institutionId } = auth.ctx;
 
   const url = new URL(req.url);
   const hasEducationScope = [
@@ -176,23 +185,6 @@ export async function GET(req: NextRequest) {
   if (!academicYear) {
     return NextResponse.json(
       { ok: false, error: "academic_year_required" },
-      { status: 400 },
-    );
-  }
-
-  try {
-    await syncTextbookAssignmentsFromTeaching({
-      srv,
-      institutionId,
-      userId,
-      academicYear,
-    });
-  } catch (error: any) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error?.message || "textbook_auto_assignment_failed",
-      },
       { status: 400 },
     );
   }
@@ -538,6 +530,7 @@ export async function GET(req: NextRequest) {
       acc.planned_minutes += item.planned_minutes;
       acc.completed_planned_minutes += item.completed_planned_minutes;
       acc.sessions_count += item.sessions_count;
+      acc.planned_sessions_count += item.planned_sessions_count;
       acc.realized_minutes += item.realized_minutes;
       return acc;
     },
@@ -548,6 +541,7 @@ export async function GET(req: NextRequest) {
       planned_minutes: 0,
       completed_planned_minutes: 0,
       sessions_count: 0,
+      planned_sessions_count: 0,
       realized_minutes: 0,
     },
   );
@@ -574,6 +568,9 @@ export async function GET(req: NextRequest) {
         Math.round((totals.completed_planned_minutes / 60) * 10) / 10,
       realized_hours:
         Math.round((totals.realized_minutes / 60) * 10) / 10,
+      recording_rate: totals.planned_sessions_count
+        ? Math.min(100, pct(totals.sessions_count, totals.planned_sessions_count))
+        : 0,
     },
     items,
   });
