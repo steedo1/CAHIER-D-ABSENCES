@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   combineMetrics,
   groupCards,
@@ -74,4 +75,23 @@ test("class view separates subjects and teacher; subject view separates classes 
 test("recording percent is capped at 100 when entries exceed planned sessions", () => {
   const item = assignment("a", "5e", "Math", "Prof", metric(1, 1, 5, 2));
   assert.equal(combineMetrics([item], "ALL").recording_rate, 100);
+});
+
+test("a taught subject without progression is displayed as unconfigured", () => {
+  const missing = assignment("", "CP1", "Arabe", "Enseignant", metric(0, 0, 0, 0));
+  const cards = groupCards([missing], "T1", "subject");
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].title, "CP1");
+  assert.equal(cards[0].metric.planned_sessions_count, 0);
+});
+
+test("dashboard GET is read-only and detail lookups have bounded results", () => {
+  const monitor = readFileSync("src/app/api/admin/textbook/monitor/route.ts", "utf8");
+  const page = readFileSync("src/app/admin/cahier-de-texte/page.tsx", "utf8");
+  const details = readFileSync("src/app/api/admin/textbook/details/route.ts", "utf8");
+  assert.doesNotMatch(monitor, /syncTextbookAssignmentsFromTeaching/);
+  assert.doesNotMatch(page, /setInterval\\s*\\(/);
+  assert.match(page, /method: "POST"/);
+  assert.match(details, /requireTextbookManager/);
+  assert.match(details, /\.limit\(40\)/);
 });
