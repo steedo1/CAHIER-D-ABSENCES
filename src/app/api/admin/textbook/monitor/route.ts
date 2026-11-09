@@ -198,7 +198,7 @@ export async function GET(req: NextRequest) {
         .maybeSingle(),
       srv
         .from("classes")
-        .select("academic_year")
+        .select("id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code")
         .eq("institution_id", institutionId),
     ]);
 
@@ -259,15 +259,14 @@ export async function GET(req: NextRequest) {
   const progressionIds = uniq(
     assignments.map((row) => (firstRelation(row?.progression) || {})?.id),
   );
-  const classIds = uniq(assignments.map((row) => row?.class_id));
-
   const classTeachersByClass = new Map<string, any[]>();
-  if (classIds.length) {
+  {
+    // Include all current teaching assignments, even those lacking a
+    // progression. Otherwise their subjects/classes vanish from the dashboard.
     const { data: classTeachers, error: classTeacherError } = await srv
       .from("class_teachers")
       .select("class_id,teacher_id,subject_id")
       .eq("institution_id", institutionId)
-      .in("class_id", classIds)
       .is("end_date", null);
 
     if (classTeacherError) {
@@ -327,7 +326,18 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const teacherIds = uniq(Array.from(effectiveTeacherByAssignment.values()));
+  const currentClasses = ((classYearRows || []) as any[])
+    .filter((row) =>
+      String(row?.academic_year || "").trim() === academicYear &&
+      classMatchesEducationScope(row, educationScope),
+    );
+  const currentClassIds = new Set(currentClasses.map((row) => String(row.id)));
+  const teacherIds = uniq([
+    ...Array.from(effectiveTeacherByAssignment.values()),
+    ...Array.from(classTeachersByClass.entries())
+      .filter(([classId]) => currentClassIds.has(classId))
+      .flatMap(([, rows]) => rows.map((row) => row?.teacher_id)),
+  ]);
   const teacherNames = new Map<string, string>();
   if (teacherIds.length) {
     const [profilesResult, teachersResult] = await Promise.all([
@@ -521,6 +531,55 @@ export async function GET(req: NextRequest) {
         "fr",
       );
     });
+
+  // Show every taught class/subject even if its pedagogical progression is
+  // not assigned yet. Unknown rates stay undefined in the UI, never 0%.
+  const assignmentSubjectKeys = new Set(items.map((item) =>
+    String(item.class_id) + "|" + String(item.subject_id || item.subject_name),
+  ));
+  const empty = periodMetric([], new Set<string>(), []);
+  for (const classRow of currentClasses) {
+    const classId = String(classRow.id || "");
+    for (const teacherRow of classTeachersByClass.get(classId) || []) {
+      const subject = resolveTextbookAssignmentSubject(
+        { subject_id: teacherRow.subject_id, institution_subject_id: teacherRow.subject_id },
+        subjectCatalog,
+      );
+      if (!subject) continue;
+      const subjectId = subject.globalSubjectId ||
+        subject.institutionSubjectId ||
+        String(teacherRow.subject_id || "");
+      const subjectName = subject.displayName || "Matière";
+      const dedupeKey = classId + "|" + String(subjectId || subjectName);
+      if (assignmentSubjectKeys.has(dedupeKey)) continue;
+      // One card per class/subject/teacher. Multiple teachers remain visible.
+      const teacherId = String(teacherRow.teacher_id || "");
+      const teacherKey = dedupeKey + "|" + teacherId;
+      if (assignmentSubjectKeys.has(teacherKey)) continue;
+      assignmentSubjectKeys.add(teacherKey);
+      const schoolClass = decorateTextbookClassEducation(classRow, educationSettings);
+      items.push({
+        assignment_id: "",
+        progression_id: null,
+        progression_title: "Progression non affectée",
+        academic_year: academicYear,
+        class_id: classId,
+        class_label: schoolClass?.label || "Classe",
+        level: schoolClass?.level || null,
+        education_type: schoolClass?.education_type || "general_secondary",
+        formation_code: schoolClass?.formation_code || null,
+        formation_level_code: schoolClass?.formation_level_code || null,
+        education_label: schoolClass?.education_label || "Secondaire général",
+        education_context_label: schoolClass?.education_context_label || "Secondaire général",
+        subject_id: subjectId || null,
+        subject_name: subjectName,
+        teacher_id: teacherId || null,
+        teacher_name: teacherNames.get(teacherId) || "Enseignant non affecté",
+        ...empty,
+        periods: { T1: empty, T2: empty, T3: empty },
+      });
+    }
+  }
 
   const totals = items.reduce(
     (acc, item) => {
