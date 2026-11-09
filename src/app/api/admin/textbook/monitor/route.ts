@@ -11,7 +11,6 @@ import {
   resolveTextbookAssignmentSubject,
 } from "@/lib/textbook/subject-matching";
 import { decorateTextbookClassEducation } from "@/lib/textbook/education-context";
-import { syncTextbookAssignmentsFromTeaching } from "@/lib/textbook/auto-assignment";
 import {
   ALL_EDUCATION_TYPES,
   classMatchesEducationScope,
@@ -129,6 +128,12 @@ function periodMetric(
     (sum, session) => sum + (Number(session?.duration_minutes || 0) || 0),
     0,
   );
+  // Based on the progression's planned sessions, not elapsed timetable slots.
+  // Keep this separate from teaching actually delivered and lesson completion.
+  const plannedSessions = actionable.reduce((sum, item) => {
+    const count = Number(item?.planned_sessions_count || 0);
+    return sum + (count > 0 ? count : 1);
+  }, 0);
 
   return {
     expected_items: expected,
@@ -142,6 +147,10 @@ function periodMetric(
       ? pct(completedPlanned, planned)
       : pct(completed.length, expected),
     sessions_count: matchingSessions.length,
+    planned_sessions_count: plannedSessions,
+    recording_rate: plannedSessions
+      ? Math.min(100, pct(matchingSessions.length, plannedSessions))
+      : 0,
     realized_minutes: realizedMinutes,
     realized_hours: Math.round((realizedMinutes / 60) * 10) / 10,
   };
@@ -150,7 +159,7 @@ function periodMetric(
 export async function GET(req: NextRequest) {
   const auth = await requireTextbookManager();
   if (!auth.ok) return auth.response;
-  const { srv, institutionId, userId } = auth.ctx;
+  const { srv, institutionId } = auth.ctx;
 
   const url = new URL(req.url);
   const hasEducationScope = [
@@ -180,23 +189,6 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  try {
-    await syncTextbookAssignmentsFromTeaching({
-      srv,
-      institutionId,
-      userId,
-      academicYear,
-    });
-  } catch (error: any) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error?.message || "textbook_auto_assignment_failed",
-      },
-      { status: 400 },
-    );
-  }
-
   const [{ data: institution }, { data: classYearRows, error: classYearError }] =
     await Promise.all([
       srv
@@ -206,7 +198,7 @@ export async function GET(req: NextRequest) {
         .maybeSingle(),
       srv
         .from("classes")
-        .select("academic_year")
+        .select("id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code")
         .eq("institution_id", institutionId),
     ]);
 
@@ -267,15 +259,14 @@ export async function GET(req: NextRequest) {
   const progressionIds = uniq(
     assignments.map((row) => (firstRelation(row?.progression) || {})?.id),
   );
-  const classIds = uniq(assignments.map((row) => row?.class_id));
-
   const classTeachersByClass = new Map<string, any[]>();
-  if (classIds.length) {
+  {
+    // Include all current teaching assignments, even those lacking a
+    // progression. Otherwise their subjects/classes vanish from the dashboard.
     const { data: classTeachers, error: classTeacherError } = await srv
       .from("class_teachers")
       .select("class_id,teacher_id,subject_id")
       .eq("institution_id", institutionId)
-      .in("class_id", classIds)
       .is("end_date", null);
 
     if (classTeacherError) {
@@ -335,7 +326,18 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const teacherIds = uniq(Array.from(effectiveTeacherByAssignment.values()));
+  const currentClasses = ((classYearRows || []) as any[])
+    .filter((row) =>
+      String(row?.academic_year || "").trim() === academicYear &&
+      classMatchesEducationScope(row, educationScope),
+    );
+  const currentClassIds = new Set(currentClasses.map((row) => String(row.id)));
+  const teacherIds = uniq([
+    ...Array.from(effectiveTeacherByAssignment.values()),
+    ...Array.from(classTeachersByClass.entries())
+      .filter(([classId]) => currentClassIds.has(classId))
+      .flatMap(([, rows]) => rows.map((row) => row?.teacher_id)),
+  ]);
   const teacherNames = new Map<string, string>();
   if (teacherIds.length) {
     const [profilesResult, teachersResult] = await Promise.all([
@@ -530,6 +532,55 @@ export async function GET(req: NextRequest) {
       );
     });
 
+  // Show every taught class/subject even if its pedagogical progression is
+  // not assigned yet. Unknown rates stay undefined in the UI, never 0%.
+  const assignmentSubjectKeys = new Set(items.map((item) =>
+    String(item.class_id) + "|" + String(item.subject_id || item.subject_name),
+  ));
+  const empty = periodMetric([], new Set<string>(), []);
+  for (const classRow of currentClasses) {
+    const classId = String(classRow.id || "");
+    for (const teacherRow of classTeachersByClass.get(classId) || []) {
+      const subject = resolveTextbookAssignmentSubject(
+        { subject_id: teacherRow.subject_id, institution_subject_id: teacherRow.subject_id },
+        subjectCatalog,
+      );
+      if (!subject) continue;
+      const subjectId = subject.globalSubjectId ||
+        subject.institutionSubjectId ||
+        String(teacherRow.subject_id || "");
+      const subjectName = subject.displayName || "Matière";
+      const dedupeKey = classId + "|" + String(subjectId || subjectName);
+      if (assignmentSubjectKeys.has(dedupeKey)) continue;
+      // One card per class/subject/teacher. Multiple teachers remain visible.
+      const teacherId = String(teacherRow.teacher_id || "");
+      const teacherKey = dedupeKey + "|" + teacherId;
+      if (assignmentSubjectKeys.has(teacherKey)) continue;
+      assignmentSubjectKeys.add(teacherKey);
+      const schoolClass = decorateTextbookClassEducation(classRow, educationSettings);
+      items.push({
+        assignment_id: "",
+        progression_id: null,
+        progression_title: "Progression non affectée",
+        academic_year: academicYear,
+        class_id: classId,
+        class_label: schoolClass?.label || "Classe",
+        level: schoolClass?.level || null,
+        education_type: schoolClass?.education_type || "general_secondary",
+        formation_code: schoolClass?.formation_code || null,
+        formation_level_code: schoolClass?.formation_level_code || null,
+        education_label: schoolClass?.education_label || "Secondaire général",
+        education_context_label: schoolClass?.education_context_label || "Secondaire général",
+        subject_id: subjectId || null,
+        subject_name: subjectName,
+        teacher_id: teacherId || null,
+        teacher_name: teacherNames.get(teacherId) || "Enseignant non affecté",
+        ...empty,
+        periods: { T1: empty, T2: empty, T3: empty },
+      });
+    }
+  }
+
   const totals = items.reduce(
     (acc, item) => {
       acc.assignments += 1;
@@ -538,6 +589,7 @@ export async function GET(req: NextRequest) {
       acc.planned_minutes += item.planned_minutes;
       acc.completed_planned_minutes += item.completed_planned_minutes;
       acc.sessions_count += item.sessions_count;
+      acc.planned_sessions_count += item.planned_sessions_count;
       acc.realized_minutes += item.realized_minutes;
       return acc;
     },
@@ -548,6 +600,7 @@ export async function GET(req: NextRequest) {
       planned_minutes: 0,
       completed_planned_minutes: 0,
       sessions_count: 0,
+      planned_sessions_count: 0,
       realized_minutes: 0,
     },
   );
@@ -574,6 +627,9 @@ export async function GET(req: NextRequest) {
         Math.round((totals.completed_planned_minutes / 60) * 10) / 10,
       realized_hours:
         Math.round((totals.realized_minutes / 60) * 10) / 10,
+      recording_rate: totals.planned_sessions_count
+        ? Math.min(100, pct(totals.sessions_count, totals.planned_sessions_count))
+        : 0,
     },
     items,
   });

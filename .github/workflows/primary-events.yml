@@ -35,6 +35,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Cartes de suivi du cahier de textes
+        run: node --import tsx --test test/textbook-admin-cards.test.ts
       - name: Registre admin mobile et export PDF
         run: node --import tsx --test test/admin-grade-register.test.mjs test/grade-register-loading.test.mjs test/grade-register-print.test.mjs
       - name: Resource usage and authorization isolation
