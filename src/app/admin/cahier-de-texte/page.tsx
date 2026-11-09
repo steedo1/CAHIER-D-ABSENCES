@@ -12,14 +12,12 @@ import {
   combineMetrics,
   groupCards,
   subjectKey,
-  type MonitorCard,
   type MonitorItem,
   type MonitorView,
   type PeriodFilter,
 } from "@/lib/textbook/monitor-cards";
 import {
   BookOpenCheck,
-  ChevronDown,
   ClipboardList,
   Loader2,
   RefreshCw,
@@ -34,24 +32,6 @@ type MonitorPayload = {
   academic_years: string[];
   error?: string;
 };
-type Session = {
-  id: string;
-  assignment_id: string;
-  session_title: string;
-  session_date: string;
-  duration_minutes: number;
-  content?: string | null;
-  homework?: string | null;
-  observations?: string | null;
-};
-type DetailState = {
-  key: string;
-  loading: boolean;
-  error: string | null;
-  sessions: Session[];
-  limited: boolean;
-};
-
 const INITIAL_SCOPE: EducationScopeValue = {
   educationType: ALL_EDUCATION_TYPES,
   formationCode: "",
@@ -65,47 +45,27 @@ function formatPercent(value: number) {
   }) + " %";
 }
 
-function RateLine({
-  label,
-  rate,
-  numerator,
-  denominator,
-  tone,
-  unit,
+function ExecutionRate({
+  value,
+  available,
 }: {
-  label: string;
-  rate: number;
-  numerator: number;
-  denominator: number;
-  tone: "green" | "blue";
-  unit: string;
+  value: number;
+  available: boolean;
 }) {
-  const safe = Math.max(0, Math.min(100, Number(rate) || 0));
+  const safe = Math.max(0, Math.min(100, Number(value) || 0));
   return (
-    <div>
-      <div className="flex items-center justify-between gap-2 text-sm">
-        <span className="font-semibold text-slate-600">{label}</span>
-        <span className="font-black tabular-nums text-slate-900">
-          {denominator > 0 ? formatPercent(safe) : "—"}
-        </span>
-      </div>
+    <div className="mt-4">
       <div
-        role="progressbar"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={denominator > 0 ? safe : undefined}
-        className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"
+        className="text-3xl font-black tabular-nums tracking-tight text-emerald-700"
+        aria-label={available ? "Taux d’exécution : " + formatPercent(safe) : "Taux d’exécution indisponible"}
       >
-        <div
-          className={"h-full rounded-full " + (tone === "green" ? "bg-emerald-600" : "bg-sky-600")}
-          style={{ width: String(denominator > 0 ? safe : 0) + "%" }}
-        />
+        {available ? formatPercent(safe) : "—"}
       </div>
-      <div className="mt-1 text-xs font-medium text-slate-500">
-        {denominator > 0
-          ? String(numerator) + " / " + String(denominator) + " " + unit
-          : "Aucune prévision renseignée"}
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+        <div
+          className="h-full rounded-full bg-emerald-600"
+          style={{ width: (available ? safe : 0) + "%" }}
+        />
       </div>
     </div>
   );
@@ -150,9 +110,7 @@ export default function AdminTextbookPage() {
   const [scope, setScope] = useState<EducationScopeValue>(INITIAL_SCOPE);
   const [classId, setClassId] = useState("");
   const [subjectId, setSubjectId] = useState("");
-  const [detail, setDetail] = useState<DetailState | null>(null);
   const requestSequence = useRef(0);
-  const detailSequence = useRef(0);
 
   async function loadDashboard(year = "", silent = false) {
     const requestId = ++requestSequence.current;
@@ -273,11 +231,6 @@ export default function AdminTextbookPage() {
     ? classChoices.find((row) => row.id === activeClassId)?.label || "la classe"
     : subjectChoices.find((row) => row.id === activeSubjectId)?.label || "la matière";
 
-  useEffect(() => {
-    ++detailSequence.current;
-    setDetail(null);
-  }, [view, period, activeSubjectId, activeClassId, scope]);
-
   async function synchronizeAssignments() {
     if (syncing) return;
     setSyncing(true);
@@ -300,53 +253,6 @@ export default function AdminTextbookPage() {
     }
   }
 
-  async function toggleDetails(card: MonitorCard) {
-    if (detail?.key === card.key) {
-      ++detailSequence.current;
-      setDetail(null);
-      return;
-    }
-    const token = ++detailSequence.current;
-    setDetail({ key: card.key, loading: true, error: null, sessions: [], limited: false });
-    try {
-      const ids = Array.from(new Set(card.assignments
-        .map((row) => row.assignment_id)
-        .filter(Boolean)));
-      if (!ids.length) {
-        setDetail({ key: card.key, loading: false, error: null, sessions: [], limited: false });
-        return;
-      }
-      const params = new URLSearchParams({ assignment_ids: ids.join(",") });
-      const response = await fetch("/api/admin/textbook/details?" + params.toString(), {
-        credentials: "include",
-        cache: "no-store",
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok || !data?.ok) throw new Error(data?.error || "Séances indisponibles.");
-      if (token === detailSequence.current) {
-        setDetail({
-          key: card.key,
-          loading: false,
-          error: null,
-          sessions: Array.isArray(data.sessions) ? data.sessions : [],
-          limited: Boolean(data.limited),
-        });
-      }
-    } catch (cause: unknown) {
-      if (token === detailSequence.current) {
-        setDetail({
-          key: card.key,
-          loading: false,
-          error: cause instanceof Error ? cause.message : "Séances indisponibles.",
-          sessions: [],
-          limited: false,
-        });
-      }
-    }
-  }
-
-  const selectedCard = cards.find((card) => card.key === detail?.key);
-
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-5 text-slate-900 sm:px-6">
       <div className="mx-auto max-w-[1400px] space-y-4">
@@ -360,7 +266,7 @@ export default function AdminTextbookPage() {
                 Suivi pédagogique
               </h1>
               <p className="mt-1 text-sm text-slate-600">
-                Progression des enseignements et séances consignées, par classe ou par matière.
+                Taux d’exécution par classe ou par matière.
               </p>
             </div>
             <button
@@ -456,90 +362,43 @@ export default function AdminTextbookPage() {
           </div>
         ) : (
           <>
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-black text-slate-950">
-                    {view === "class" ? "Matières de " : "Classes en "}{chosenTitle}
-                  </h2>
-                  <p className="text-sm text-slate-600">
-                    {cards.length} carte(s) · {period === "ALL" ? "Année scolaire" : "Trimestre " + period.slice(1)}
-                  </p>
-                </div>
-                <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700">
+            <section className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+              <div>
+                <h2 className="text-lg font-black text-slate-950">
+                  {view === "class" ? "Matières de " : "Classes en "}{chosenTitle}
+                </h2>
+                <p className="text-sm text-slate-600">
+                  {period === "ALL" ? "Année scolaire" : "Trimestre " + period.slice(1)}
+                </p>
+              </div>
+              <div className="text-right">
+                <div className="text-xs font-semibold text-slate-500">Taux global d’exécution</div>
+                <div className="text-2xl font-black tabular-nums text-emerald-700">
                   {summary.expected_items > 0 || summary.planned_minutes > 0
                     ? formatPercent(summary.completion_rate)
-                    : "Progression non définie"}
-                </span>
+                    : "—"}
+                </div>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <RateLine
-                  label="Avancement des progressions"
-                  rate={summary.completion_rate}
-                  numerator={summary.planned_minutes ? summary.completed_planned_minutes : summary.completed_items}
-                  denominator={summary.planned_minutes || summary.expected_items}
-                  tone="green"
-                  unit={summary.planned_minutes ? "min" : "éléments"}
-                />
-                <RateLine
-                  label="Séances consignées / prévues"
-                  rate={summary.recording_rate}
-                  numerator={summary.sessions_count}
-                  denominator={summary.planned_sessions_count}
-                  tone="blue"
-                  unit="séances"
-                />
-              </div>
-              <p className="mt-4 text-xs leading-relaxed text-slate-500">
-                Le premier taux suit les éléments de progression terminés (pondérés par leur durée prévue).
-                Le second compare les séances enregistrées aux séances prévues par la progression.
-                Ces indicateurs ne certifient pas la tenue effective des créneaux.
-              </p>
             </section>
 
             {cards.length ? (
-              <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {cards.map((card) => (
-                  <button
+                  <article
                     key={card.key}
-                    type="button"
-                    aria-expanded={detail?.key === card.key}
-                    onClick={() => void toggleDetails(card)}
-                    className={"min-w-0 rounded-3xl border bg-white p-5 text-left shadow-sm transition hover:border-emerald-400 hover:shadow-md " +
-                      (detail?.key === card.key ? "border-emerald-500 ring-2 ring-emerald-100" : "border-slate-200")}
+                    className="min-w-0 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm"
                   >
-                    <div className="mb-4 flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h3 className="break-words text-lg font-black text-slate-950">{card.title}</h3>
-                        <p className="mt-1 break-words text-sm font-semibold text-slate-600">
-                          {card.teacher}
-                        </p>
-                      </div>
-                      <ChevronDown className={"mt-1 h-5 w-5 shrink-0 text-slate-500 transition " +
-                        (detail?.key === card.key ? "rotate-180" : "")} />
-                    </div>
-                    <div className="space-y-4">
-                      <RateLine
-                        label="Progression exécutée"
-                        rate={card.metric.completion_rate}
-                        numerator={card.metric.planned_minutes ? card.metric.completed_planned_minutes : card.metric.completed_items}
-                        denominator={card.metric.planned_minutes || card.metric.expected_items}
-                        tone="green"
-                        unit={card.metric.planned_minutes ? "min" : "éléments"}
-                      />
-                      <RateLine
-                        label="Séances consignées"
-                        rate={card.metric.recording_rate}
-                        numerator={card.metric.sessions_count}
-                        denominator={card.metric.planned_sessions_count}
-                        tone="blue"
-                        unit="séances"
-                      />
-                    </div>
-                    <div className="mt-4 border-t border-slate-100 pt-3 text-xs font-bold text-emerald-700">
-                      {detail?.key === card.key ? "Masquer les séances" : "Voir les séances"}
-                    </div>
-                  </button>
+                    <h3 className="break-words text-lg font-black text-slate-950">
+                      {card.title}
+                    </h3>
+                    <p className="mt-1 break-words text-sm font-semibold text-slate-600">
+                      {card.teacher}
+                    </p>
+                    <ExecutionRate
+                      value={card.metric.completion_rate}
+                      available={card.metric.planned_minutes > 0 || card.metric.expected_items > 0}
+                    />
+                  </article>
                 ))}
               </section>
             ) : (
@@ -560,54 +419,6 @@ export default function AdminTextbookPage() {
               </section>
             )}
 
-            {detail && selectedCard ? (
-              <section className="rounded-3xl border border-emerald-200 bg-white p-5 shadow-sm">
-                <h2 className="text-lg font-black text-slate-950">
-                  Séances enregistrées — {selectedCard.title}
-                </h2>
-                <p className="mt-1 text-sm text-slate-600">
-                  {selectedCard.teacher} · dernières séances, toutes périodes confondues
-                </p>
-                {detail.loading ? (
-                  <div className="mt-4 flex items-center gap-2 text-sm text-slate-600">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Chargement des séances…
-                  </div>
-                ) : detail.error ? (
-                  <p role="alert" className="mt-4 text-sm font-bold text-rose-700">{detail.error}</p>
-                ) : detail.sessions.length ? (
-                  <div className="mt-4 space-y-3">
-                    {detail.sessions.map((session) => (
-                      <article key={session.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <h3 className="font-bold text-slate-900">{session.session_title || "Séance"}</h3>
-                          <span className="text-xs font-semibold text-slate-600">
-                            {session.session_date} · {session.duration_minutes} min
-                          </span>
-                        </div>
-                        {session.content ? (
-                          <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
-                            <strong>Contenu : </strong>{session.content}
-                          </p>
-                        ) : null}
-                        {session.homework ? (
-                          <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
-                            <strong>Travail à faire : </strong>{session.homework}
-                          </p>
-                        ) : null}
-                        {session.observations ? (
-                          <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
-                            <strong>Observations : </strong>{session.observations}
-                          </p>
-                        ) : null}
-                      </article>
-                    ))}
-                    {detail.limited ? <p className="text-xs text-slate-500">Affichage limité aux 40 séances les plus récentes.</p> : null}
-                  </div>
-                ) : (
-                  <p className="mt-4 text-sm text-slate-600">Aucune séance saisie pour cette carte.</p>
-                )}
-              </section>
-            ) : null}
             {cards.length ? (
               <div className="text-right">
                 <button
