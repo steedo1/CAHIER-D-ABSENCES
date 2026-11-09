@@ -71,12 +71,14 @@ function RateLine({
   numerator,
   denominator,
   tone,
+  unit,
 }: {
   label: string;
   rate: number;
   numerator: number;
   denominator: number;
   tone: "green" | "blue";
+  unit: string;
 }) {
   const safe = Math.max(0, Math.min(100, Number(rate) || 0));
   return (
@@ -102,7 +104,7 @@ function RateLine({
       </div>
       <div className="mt-1 text-xs font-medium text-slate-500">
         {denominator > 0
-          ? String(numerator) + " / " + String(denominator)
+          ? String(numerator) + " / " + String(denominator) + " " + unit
           : "Aucune prévision renseignée"}
       </div>
     </div>
@@ -468,9 +470,10 @@ export default function AdminTextbookPage() {
                 <RateLine
                   label="Avancement des progressions"
                   rate={summary.completion_rate}
-                  numerator={summary.completed_items}
-                  denominator={summary.expected_items}
+                  numerator={summary.planned_minutes ? summary.completed_planned_minutes : summary.completed_items}
+                  denominator={summary.planned_minutes || summary.expected_items}
                   tone="green"
+                  unit={summary.planned_minutes ? "min" : "éléments"}
                 />
                 <RateLine
                   label="Séances consignées / prévues"
@@ -478,6 +481,7 @@ export default function AdminTextbookPage() {
                   numerator={summary.sessions_count}
                   denominator={summary.planned_sessions_count}
                   tone="blue"
+                  unit="séances"
                 />
               </div>
               <p className="mt-4 text-xs leading-relaxed text-slate-500">
@@ -512,9 +516,10 @@ export default function AdminTextbookPage() {
                       <RateLine
                         label="Progression exécutée"
                         rate={card.metric.completion_rate}
-                        numerator={card.metric.completed_items}
-                        denominator={card.metric.expected_items}
+                        numerator={card.metric.planned_minutes ? card.metric.completed_planned_minutes : card.metric.completed_items}
+                        denominator={card.metric.planned_minutes || card.metric.expected_items}
                         tone="green"
+                        unit={card.metric.planned_minutes ? "min" : "éléments"}
                       />
                       <RateLine
                         label="Séances consignées"
@@ -522,6 +527,7 @@ export default function AdminTextbookPage() {
                         numerator={card.metric.sessions_count}
                         denominator={card.metric.planned_sessions_count}
                         tone="blue"
+                        unit="séances"
                       />
                     </div>
                     <div className="mt-4 border-t border-slate-100 pt-3 text-xs font-bold text-emerald-700">
