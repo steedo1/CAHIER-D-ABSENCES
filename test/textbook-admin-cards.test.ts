@@ -90,7 +90,7 @@ test("dashboard GET is read-only and detail lookups have bounded results", () =>
   const page = readFileSync("src/app/admin/cahier-de-texte/page.tsx", "utf8");
   const details = readFileSync("src/app/api/admin/textbook/details/route.ts", "utf8");
   assert.doesNotMatch(monitor, /syncTextbookAssignmentsFromTeaching/);
-  assert.doesNotMatch(page, /setInterval\\s*\\(/);
+  assert.doesNotMatch(page, /setInterval\s*\(/);
   assert.match(page, /method: "POST"/);
   assert.match(details, /requireTextbookManager/);
   assert.match(details, /\.limit\(40\)/);
