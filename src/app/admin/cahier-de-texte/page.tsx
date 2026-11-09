@@ -309,7 +309,13 @@ export default function AdminTextbookPage() {
     const token = ++detailSequence.current;
     setDetail({ key: card.key, loading: true, error: null, sessions: [], limited: false });
     try {
-      const ids = Array.from(new Set(card.assignments.map((row) => row.assignment_id)));
+      const ids = Array.from(new Set(card.assignments
+        .map((row) => row.assignment_id)
+        .filter(Boolean)));
+      if (!ids.length) {
+        setDetail({ key: card.key, loading: false, error: null, sessions: [], limited: false });
+        return;
+      }
       const params = new URLSearchParams({ assignment_ids: ids.join(",") });
       const response = await fetch("/api/admin/textbook/details?" + params.toString(), {
         credentials: "include",
