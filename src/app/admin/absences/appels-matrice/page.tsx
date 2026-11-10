@@ -13,6 +13,7 @@ import {
   CircleDashed,
 } from "lucide-react";
 import { fetchAdminAttendanceMonitor, type LocalDataSource } from "@/lib/local-relay";
+import DailyClassAttendance from "@/components/admin/DailyClassAttendance";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import {
   adminAttendanceMatrixPollDelay,
@@ -194,6 +195,7 @@ function cellColorClasses(s: MonitorStatus): string {
 }
 
 export default function AppelsMatricePage() {
+  const [view, setView] = useState<"slots" | "daily">("slots");
   const { relayEnabled } = useRelayCapability();
   const [rowsState, dispatchRows] = useReducer(
     adminAttendanceViewReducer<MonitorRow>,
@@ -302,8 +304,9 @@ export default function AppelsMatricePage() {
   }, [educationScope]);
 
   useEffect(() => {
+    if (view !== "slots") return;
     void loadRows(new Date());
-  }, [loadRows]);
+  }, [loadRows, view]);
 
   const pollDelayMs = adminAttendanceMatrixPollDelay(
     dataSource,
@@ -311,17 +314,17 @@ export default function AppelsMatricePage() {
   );
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || view !== "slots") return;
 
     const id = window.setTimeout(() => {
       void loadRows(new Date());
     }, pollDelayMs);
 
     return () => window.clearTimeout(id);
-  }, [loadRows, pollCycle, pollDelayMs]);
+  }, [loadRows, pollCycle, pollDelayMs, view]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || view !== "slots") return;
 
     const refreshNow = () => {
       void loadRows(new Date());
@@ -346,7 +349,7 @@ export default function AppelsMatricePage() {
       window.removeEventListener("online", refreshNow);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [loadRows]);
+  }, [loadRows, view]);
 
   useEffect(() => {
     return () => {
@@ -520,6 +523,12 @@ export default function AppelsMatricePage() {
       )}
 
       <div className="mx-auto max-w-6xl space-y-6">
+        <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1" aria-label="Vue des appels">
+          <button type="button" onClick={() => setView("slots")} aria-pressed={view === "slots"} className={`rounded-lg px-3 py-2 text-sm font-medium ${view === "slots" ? "bg-emerald-600 text-white" : "text-slate-700"}`}>Par créneau</button>
+          <button type="button" onClick={() => setView("daily")} aria-pressed={view === "daily"} className={`rounded-lg px-3 py-2 text-sm font-medium ${view === "daily" ? "bg-emerald-600 text-white" : "text-slate-700"}`}>Bilan journalier</button>
+        </div>
+        {view === "daily" ? <DailyClassAttendance classes={availableClasses} /> : (
+          <>
         <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">
@@ -850,6 +859,8 @@ export default function AppelsMatricePage() {
             l’appel est conforme ; après le délai, il est en retard.
           </p>
         </section>
+          </>
+        )}
       </div>
     </main>
   );

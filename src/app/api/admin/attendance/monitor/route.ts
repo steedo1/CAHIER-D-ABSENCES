@@ -196,6 +196,7 @@ export async function GET(req: NextRequest) {
         levelCode: "",
         classId: "",
       };
+  const requestedClassId = String(educationScope.classId || "").trim();
 
   const {
     data: { user },
@@ -290,24 +291,30 @@ export async function GET(req: NextRequest) {
       .from("institution_periods")
       .select("id,institution_id,weekday,label,start_time,end_time", { count: "exact" })
       .eq("institution_id", institution_id).order("id").range(from, to)),
-    readAttendancePages<any>((from, to) => srv
-      .from("teacher_timetables")
-      .select("id,institution_id,class_id,subject_id,teacher_id,weekday,period_id", { count: "exact" })
-      .eq("institution_id", institution_id).order("id").range(from, to)),
-    readAttendancePages<any>((from, to) => srv
-      .from("classes")
-      .select(
-        "id,label,level,education_type,formation_code,formation_level_code", { count: "exact" },
-      )
-      .eq("institution_id", institution_id).order("id").range(from, to)),
+    readAttendancePages<any>((from, to) => {
+      let query = srv.from("teacher_timetables")
+        .select("id,institution_id,class_id,subject_id,teacher_id,weekday,period_id", { count: "exact" })
+        .eq("institution_id", institution_id);
+      if (requestedClassId) query = query.eq("class_id", requestedClassId);
+      return query.order("id").range(from, to);
+    }),
+    readAttendancePages<any>((from, to) => {
+      let query = srv.from("classes")
+        .select("id,label,level,education_type,formation_code,formation_level_code", { count: "exact" })
+        .eq("institution_id", institution_id);
+      if (requestedClassId) query = query.eq("id", requestedClassId);
+      return query.order("id").range(from, to);
+    }),
     readAttendancePages<any>((from, to) => srv
       .from("institution_subjects")
       .select("id,custom_name,subjects:subject_id(id,name)", { count: "exact" })
       .eq("institution_id", institution_id).order("id").range(from, to)),
-    readAttendancePages<any>((from, to) => srv
-      .from("profiles")
-      .select("id,display_name,email,phone", { count: "exact" })
-      .eq("institution_id", institution_id).order("id").range(from, to)),
+    requestedClassId
+      ? Promise.resolve({ data: [] as any[], error: null })
+      : readAttendancePages<any>((from, to) => srv
+          .from("profiles")
+          .select("id,display_name,email,phone", { count: "exact" })
+          .eq("institution_id", institution_id).order("id").range(from, to)),
   ]);
 
   if (pErr) {
@@ -350,12 +357,14 @@ export async function GET(req: NextRequest) {
     { data: sessions, error: sessErr },
     { data: absenceRequests, error: absErr },
   ] = await Promise.all([
-    readAttendancePages<any>((from, to) => srv
-      .from("teacher_sessions")
-      .select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,ended_at,origin", { count: "exact" })
-      .eq("institution_id", institution_id)
-      .gte("started_at", dateMinIso.toISOString())
-      .lt("started_at", dateMaxIso.toISOString()).order("id").range(from, to)),
+    readAttendancePages<any>((from, to) => {
+      let query = srv.from("teacher_sessions")
+        .select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,ended_at,origin", { count: "exact" })
+        .eq("institution_id", institution_id);
+      if (requestedClassId) query = query.eq("class_id", requestedClassId);
+      return query.gte("started_at", dateMinIso.toISOString())
+        .lt("started_at", dateMaxIso.toISOString()).order("id").range(from, to);
+    }),
     readAttendancePages<any>((from, to) => srv
       .from("teacher_absence_requests")
       .select(
@@ -374,6 +383,28 @@ export async function GET(req: NextRequest) {
   if (absErr) {
     console.error("[attendance/monitor] absence_requests_err", { error: absErr.message });
     return NextResponse.json({ error: absErr.message }, { status: 400 });
+  }
+
+  // Une consultation par classe ne doit pas charger les profils de tous les parents/élèves.
+  let scopedTeachers: any[] = teachers || [];
+  if (requestedClassId) {
+    const teacherIds = Array.from(new Set(
+      [...scopedTimetables, ...(sessions || [])]
+        .map((row: any) => String(row.teacher_id || "").trim())
+        .filter(Boolean),
+    ));
+    if (teacherIds.length) {
+      const scoped = await readAttendancePages<any>((from, to) => srv.from("profiles")
+        .select("id,display_name,email,phone", { count: "exact" })
+        .eq("institution_id", institution_id)
+        .in("id", teacherIds)
+        .order("id").range(from, to));
+      if (scoped.error) {
+        console.error("[attendance/monitor] scoped_teachers_err", { error: scoped.error.message });
+        return NextResponse.json({ error: scoped.error.message }, { status: 400 });
+      }
+      scopedTeachers = scoped.data || [];
+    }
   }
 
   // A causal receipt proves a student-attendance batch was accepted, not that a
@@ -475,7 +506,7 @@ export async function GET(req: NextRequest) {
 
   const teacherNameById = new Map<string, string>();
   const teacherPhoneById = new Map<string, string>();
-  (teachers || []).forEach((t: any) => {
+  (scopedTeachers || []).forEach((t: any) => {
     const id = String(t.id);
     const disp = (t.display_name as string | null) || "";
     const email = (t.email as string | null) || "";
