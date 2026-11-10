@@ -89,14 +89,98 @@ function periodAverageHeading(label: string): string {
   return "MOY";
 }
 
+
+function birthYear(raw: string | null | undefined): string {
+  const value = String(raw || "").trim();
+  const iso = /^(\d{4})-/.exec(value);
+  if (iso) return iso[1];
+  const french = /\/(\d{4})$/.exec(value);
+  return french ? french[1] : "—";
+}
+
+function nominalGenderRecap(classes: SchoolReportClass[], filter: AffectationFilter): string {
+  type Counts = { red: number; nonRed: number; total: number; incomplete: number };
+  const blank = (): Counts => ({ red: 0, nonRed: 0, total: 0, incomplete: 0 });
+  type Recap = { label: string; girls: Counts; boys: Counts };
+  const levels = new Map<string, Recap>();
+  const school = { girls: blank(), boys: blank() };
+  const firstCycle = { girls: blank(), boys: blank() };
+  let unknownGender = 0;
+  const isFirst = (level: string) => /^[6543](?:e|è|eme|ème)/i.test(level.trim());
+  const add = (target: Counts, student: SchoolReportClass["students"][number]) => {
+    target.total++;
+    if (student.repeater === true) target.red++;
+    else if (student.repeater === false) target.nonRed++;
+    else target.incomplete++;
+  };
+  const order = (value: string): number => {
+    const text = value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+    const first = ["6", "5", "4", "3"].findIndex(n => text.startsWith(n));
+    if (first >= 0) return first;
+    if (text.startsWith("2") || text.startsWith("SECONDE")) return 4;
+    if (text.startsWith("1") || text.startsWith("PREMIERE")) return 5;
+    if (text.startsWith("T") || text.startsWith("TERMINALE")) return 6;
+    return 100;
+  };
+  for (const cls of classes) {
+    const level = String(cls.level || "").trim() || "Niveau non renseigné";
+    let recap = levels.get(level);
+    if (!recap) {
+      recap = { label: level, girls: blank(), boys: blank() };
+      levels.set(level, recap);
+    }
+    for (const student of selectAffectation(cls.students, filter)) {
+      const sex = student.gender === "F" ? "girls" : student.gender === "G" ? "boys" : null;
+      if (!sex) { unknownGender++; continue; }
+      add(recap[sex], student);
+      add(school[sex], student);
+      if (isFirst(level)) add(firstCycle[sex], student);
+    }
+  }
+  const cells = (c: Counts) => td(c.red) + td(c.nonRed) + td(c.total);
+  const line = (label: string, girls: Counts, boys: Counts, total = false) =>
+    '<tr' + (total ? ' class="total-row"' : '') + '>' + td(label) +
+    cells(girls) + cells(boys) + td(girls.red + boys.red) +
+    td(girls.nonRed + boys.nonRed) + td(girls.total + boys.total) + '</tr>';
+  const sorted = [...levels.values()].sort((a, b) =>
+    order(a.label) - order(b.label) || a.label.localeCompare(b.label, "fr"));
+  let body = "", firstCyclePrinted = false;
+  for (const level of sorted) {
+    if (!firstCyclePrinted && !isFirst(level.label) &&
+        firstCycle.girls.total + firstCycle.boys.total > 0) {
+      body += line("TOTAL 1er CYCLE", firstCycle.girls, firstCycle.boys, true);
+      firstCyclePrinted = true;
+    }
+    body += line(level.label, level.girls, level.boys);
+  }
+  if (!firstCyclePrinted && firstCycle.girls.total + firstCycle.boys.total > 0) {
+    body += line("TOTAL 1er CYCLE", firstCycle.girls, firstCycle.boys, true);
+  }
+  body += line("TOTAL ETABLISSEMENT", school.girls, school.boys, true);
+  const missingRepeater = school.girls.incomplete + school.boys.incomplete;
+  return '<section class="recap-block nominal-recap">' +
+    '<h2>EFFECTIF AVEC L’APPROCHE PAR NIVEAU ET PAR GENRE</h2>' +
+    '<table class="recap-nominal"><thead><tr>' +
+    '<th rowspan="2">NIVEAU</th><th colspan="3">FILLES</th>' +
+    '<th colspan="3">GARÇONS</th><th colspan="3">EFFECTIF TOTAL</th></tr>' +
+    '<tr><th>RED</th><th>N-RED</th><th>TOTAL</th>' +
+    '<th>RED</th><th>N-RED</th><th>TOTAL</th>' +
+    '<th>RED</th><th>N-RED</th><th>TOTAL</th></tr></thead><tbody>' +
+    body + '</tbody></table>' +
+    (missingRepeater || unknownGender ? '<p class="note">Données non renseignées : ' +
+      missingRepeater + ' situation(s) de redoublement, ' +
+      unknownGender + ' sexe(s). Les totaux par sexe ne comptent que les données connues.</p>' : '') +
+    '</section>';
+}
+
 function nominalTable(cls: SchoolReportClass, group: boolean | null, filter: AffectationFilter, averageHeader: string): string {
   const students = selectAffectation(cls.students, filter).filter(s => filter !== "all" || s.isAffected === group);
   const rows = students.map((s, index) => {
     const cols: unknown[] = [
       index + 1, s.matricule || "—", s.name, s.gender === "G" ? "M" : s.gender,
-      s.birthdate || "—", s.nationality || "—",
-      s.repeater === null ? "NR" : s.repeater ? "R" : "",
-      s.isAffected === true ? "AFF" : s.isAffected === false ? "NAF" : "—",
+      birthYear(s.birthdate), s.nationality || "—",
+      s.repeater === null ? "—" : s.repeater ? "R" : "",
+      s.isAffected === true ? "AFF" : s.isAffected === false ? "NAFF" : "—",
       s.decisionNumber || "—", s.average === null ? "NC" : number(s.average),
       s.rank ?? "—", s.observation || "",
     ];
@@ -115,23 +199,24 @@ function nominalTable(cls: SchoolReportClass, group: boolean | null, filter: Aff
 }
 
 function nominalBody(classes: SchoolReportClass[], filter: AffectationFilter, periodLabel: string): string {
-  const groups: Array<{ label: string; value: boolean | null; letter: string }> = filter === "all"
-    ? [{ label: "Liste des élèves affectés par classe", value: true, letter: "a)" },
-      { label: "Liste des élèves non affectés par classe", value: false, letter: "b)" },
-      { label: "Liste des élèves à affectation non renseignée par classe", value: null, letter: "c)" }]
+  const groups: Array<{ label: string; value: boolean | null }> = filter === "all"
+    ? [{ label: "Liste des élèves affectés par classe", value: true },
+       { label: "Liste des élèves non affectés par classe", value: false },
+       { label: "Liste des élèves à affectation non renseignée par classe", value: null }]
     : [{ label: filter === "affected" ? "Liste des élèves affectés par classe" : "Liste des élèves non affectés par classe",
-        value: filter === "affected", letter: filter === "affected" ? "a)" : "b)" }];
-  return '<h2 class="nominal-main">1- &nbsp; Liste nominative des élèves</h2>' +
-    groups.filter(group => classes.some(c => c.students.some(s => s.isAffected === group.value))).map(group => {
-      // Les classes sans élève dans ce groupe n'ont pas de tableau à imprimer.
+         value: filter === "affected" }];
+  const suffix = /\btrimestre\b|\bt[123]\b/i.test(periodLabel)
+    ? " au " + periodLabel.toLocaleLowerCase("fr-FR") : " — " + periodLabel;
+  const sections = groups.filter(group =>
+    classes.some(c => c.students.some(s => s.isAffected === group.value))).map(group => {
       const printable = classes.filter(c => c.students.some(s => s.isAffected === group.value));
       return '<section class="report-section">' +
-        '<h3 class="nominal-group">' + e(group.letter) +
-        ' &nbsp; Liste <span class="accent">' + e(group.label.slice("Liste ".length).replace(" par classe", "")) +
-        '</span> par classe</h3>' +
+        '<h3 class="nominal-group">' + e(group.label + suffix) + '</h3>' +
         printable.map(c => nominalTable(c, group.value, filter, periodAverageHeading(periodLabel))).join("") +
         '</section>';
     }).join("");
+  return '<h2 class="nominal-main">1- &nbsp; Liste nominative des élèves</h2>' +
+    sections + nominalGenderRecap(classes, filter);
 }
 
 /** HTML printed locally by the browser; no QR, persistent PDF or Supabase write. */
