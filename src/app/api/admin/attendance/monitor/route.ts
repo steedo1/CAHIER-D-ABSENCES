@@ -196,6 +196,7 @@ export async function GET(req: NextRequest) {
         levelCode: "",
         classId: "",
       };
+  const requestedClassId = String(educationScope.classId || "").trim();
 
   const {
     data: { user },
@@ -290,10 +291,13 @@ export async function GET(req: NextRequest) {
       .from("institution_periods")
       .select("id,institution_id,weekday,label,start_time,end_time", { count: "exact" })
       .eq("institution_id", institution_id).order("id").range(from, to)),
-    readAttendancePages<any>((from, to) => srv
-      .from("teacher_timetables")
-      .select("id,institution_id,class_id,subject_id,teacher_id,weekday,period_id", { count: "exact" })
-      .eq("institution_id", institution_id).order("id").range(from, to)),
+    readAttendancePages<any>((from, to) => {
+      let query = srv.from("teacher_timetables")
+        .select("id,institution_id,class_id,subject_id,teacher_id,weekday,period_id", { count: "exact" })
+        .eq("institution_id", institution_id);
+      if (requestedClassId) query = query.eq("class_id", requestedClassId);
+      return query.order("id").range(from, to);
+    }),
     readAttendancePages<any>((from, to) => srv
       .from("classes")
       .select(
@@ -350,12 +354,14 @@ export async function GET(req: NextRequest) {
     { data: sessions, error: sessErr },
     { data: absenceRequests, error: absErr },
   ] = await Promise.all([
-    readAttendancePages<any>((from, to) => srv
-      .from("teacher_sessions")
-      .select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,ended_at,origin", { count: "exact" })
-      .eq("institution_id", institution_id)
-      .gte("started_at", dateMinIso.toISOString())
-      .lt("started_at", dateMaxIso.toISOString()).order("id").range(from, to)),
+    readAttendancePages<any>((from, to) => {
+      let query = srv.from("teacher_sessions")
+        .select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,ended_at,origin", { count: "exact" })
+        .eq("institution_id", institution_id);
+      if (requestedClassId) query = query.eq("class_id", requestedClassId);
+      return query.gte("started_at", dateMinIso.toISOString())
+        .lt("started_at", dateMaxIso.toISOString()).order("id").range(from, to);
+    }),
     readAttendancePages<any>((from, to) => srv
       .from("teacher_absence_requests")
       .select(
