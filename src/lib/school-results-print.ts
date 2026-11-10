@@ -252,7 +252,7 @@ export function buildSchoolReportHtml(input: {
     '.total-row{background:#dedede;font-weight:bold}.statistics tbody tr.total-row td{font-weight:bold}' +
     '.report-section{margin-top:18px}.report-section:first-child{margin-top:0}.level-block,.recap-block{break-inside:avoid-page;page-break-inside:avoid}.document-title,.recap-title,.level-title,.nominal-group{break-after:avoid-page;page-break-after:avoid}' +
     '.class-section{margin:8px 0 17px}.class-heading{display:grid;grid-template-columns:27% 43% 30%;gap:3px;margin:12px 0 5px;font-size:12px;break-after:avoid-page;page-break-after:avoid}' +
-    '.class-heading strong{font-weight:700}.nominal th{font-size:8px;padding:4px 1px}' +
+    '.class-heading strong{font-weight:700}.nominal th{font-size:11px;padding:6px 2px;white-space:normal}.nominal td{font-size:12px;padding:6px 3px}' +
     '.nominal th:nth-child(1){width:3%}.nominal th:nth-child(2){width:11%}' +
     '.nominal th:nth-child(3){width:25%}.nominal th:nth-child(4){width:4%}' +
     '.nominal th:nth-child(5){width:6%}.nominal th:nth-child(6){width:9%}' +
