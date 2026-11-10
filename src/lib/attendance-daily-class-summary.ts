@@ -27,7 +27,7 @@ export function dailyAttendanceStatus(
   if (selectedDate > today) return "ongoing";
   if (selectedDate < today) return "unreceived";
   const end = String(row.planned_end || "").slice(0, 5);
-  if (!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(end)) return "unconfirmed";
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(end)) return "unconfirmed";
   const currentTime = now.toISOString().slice(11, 16);
   return currentTime < end ? "ongoing" : "unreceived";
 }
