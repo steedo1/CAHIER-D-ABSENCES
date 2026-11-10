@@ -231,13 +231,12 @@ export function buildSchoolReportHtml(input: {
   const first = input.classes[0];
   const isStatistics = input.kind === "statistics";
   const reportName = isStatistics ? "Synthèse statistique des résultats" : "Liste nominative des résultats";
-  const isTrimester = /\btrimestre\b|\bt[123]\b/i.test(input.periodLabel);
   const subtitle = "Année scolaire " + input.academicYear + " · " + input.periodLabel +
     (input.track === "arabic" ? " · Enseignement arabe" : "");
   return '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>' + e(reportName) + '</title>' +
     '<style>' +
-    '@page{size:A4 portrait;margin:12mm 8mm 14mm}' +
-    'html,body{font:10px Arial,Helvetica,sans-serif;color:#111;background:#fff}body{margin:0}' +
+    '@page{size:A4 ' + (isStatistics ? 'portrait' : 'landscape') + ';margin:11mm 8mm 13mm}' +
+    'html,body{font:' + (isStatistics ? '10px' : '13px') + ' Arial,Helvetica,sans-serif;color:#111;background:#fff}body{margin:0}' +
     'h1{font-size:20px;margin:10px 0 12px}h2{font-size:12px}h3{font-size:11px}' +
     '.header{text-align:center;border-bottom:1px solid #777;padding-bottom:8px;margin-bottom:15px}' +
     '.header .school{font-size:12px;font-weight:bold}.header .meta{font-size:9px;color:#444}' +
@@ -247,22 +246,23 @@ export function buildSchoolReportHtml(input: {
     '.level-title{margin:14px 0 9px 20px;font-weight:700}' +
     'table{width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:13px}' +
     'th,td{border:1px solid #555;padding:4px 2px;vertical-align:middle;overflow-wrap:anywhere}' +
-    'th{font-size:8px;font-weight:700}td{text-align:center;font-size:8.7px}' +
+    'th{font-size:9px;font-weight:700}td{text-align:center;font-size:10px}' +
     '.statistics .first-col{width:17%}.statistics th:nth-child(2){width:3%}' +
     '.statistics th:nth-child(3),.statistics th:nth-child(4),.statistics th:nth-child(5){width:6%}' +
     '.total-row{background:#dedede;font-weight:bold}.statistics tbody tr.total-row td{font-weight:bold}' +
     '.report-section{margin-top:18px}.report-section:first-child{margin-top:0}.level-block,.recap-block{break-inside:avoid-page;page-break-inside:avoid}.document-title,.recap-title,.level-title,.nominal-group{break-after:avoid-page;page-break-after:avoid}' +
-    '.class-section{margin:8px 0 17px}.class-heading{display:grid;grid-template-columns:27% 43% 30%;gap:3px;margin:12px 0 5px;font-size:9px;break-after:avoid-page;page-break-after:avoid}' +
+    '.class-section{margin:8px 0 17px}.class-heading{display:grid;grid-template-columns:27% 43% 30%;gap:3px;margin:12px 0 5px;font-size:12px;break-after:avoid-page;page-break-after:avoid}' +
     '.class-heading strong{font-weight:700}.nominal th{font-size:8px;padding:4px 1px}' +
-    '.nominal th:nth-child(1){width:4%}.nominal th:nth-child(2){width:12%}' +
-    '.nominal th:nth-child(3){width:19%}.nominal th:nth-child(4){width:5%}' +
-    '.nominal th:nth-child(5){width:9%}.nominal th:nth-child(6){width:9%}' +
+    '.nominal th:nth-child(1){width:3%}.nominal th:nth-child(2){width:11%}' +
+    '.nominal th:nth-child(3){width:25%}.nominal th:nth-child(4){width:4%}' +
+    '.nominal th:nth-child(5){width:6%}.nominal th:nth-child(6){width:9%}' +
     '.nominal th:nth-child(7){width:4%}.nominal th:nth-child(8){width:6%}' +
-    '.nominal th:nth-child(9){width:7%}.nominal th:nth-child(10){width:7%}' +
-    '.nominal th:nth-child(11){width:6%}.nominal th:nth-child(12){width:12%}' +
+    '.nominal th:nth-child(9){width:9%}.nominal th:nth-child(10){width:7%}' +
+    '.nominal th:nth-child(11){width:5%}.nominal th:nth-child(12){width:11%}' +
     '.nominal td:nth-child(3){text-align:left}.nominal .avg-head{color:#c11}' +
     '.nominal-main{font-size:13px;margin:14px 0}.nominal-group{font-size:11px;font-style:italic;margin:12px 0}' +
-    '.empty{padding:10px;text-align:center}.note{font-size:8px;color:#555;margin:7px 0 12px}' +
+    '.nominal-recap{break-before:page;page-break-before:always}.nominal-recap h2{text-align:center;font-size:14px;margin:8px 0 18px}.recap-nominal th,.recap-nominal td{font-size:12px;padding:7px 3px}.recap-nominal th:first-child{width:22%}' +
+    '.empty{padding:10px;text-align:center}.note{font-size:11px;color:#555;margin:7px 0 12px}' +
     '.footer{display:block;position:static;clear:both;margin:2px 0 0;border-top:1px solid #bbb;padding:2px 0 0;text-align:center;color:#666;font-size:7px;line-height:1.1;letter-spacing:.01em;break-inside:avoid-page;page-break-inside:avoid}' +
     '.report-section:last-of-type > .recap-block > table{margin-bottom:0}' +
     '.report-section:last-of-type .class-section:last-child > table{margin-bottom:0}' +
@@ -274,10 +274,10 @@ export function buildSchoolReportHtml(input: {
     '<header class="header"><div class="meta">' + e(first?.regionalDirection || "") + '</div>' +
     '<div class="school">' + e(first?.institutionName || "Établissement") + '</div>' +
     '<div class="meta">' + e(subtitle) + '</div></header>' +
-    (isStatistics ? '' : '<h1><u>' + (isTrimester ? 'RAPPORT 2 (PAR TRIMESTRE)' : 'RAPPORT 2 — ' + e(input.periodLabel)) + '</u></h1>') +
+    '' +
     (isStatistics
       ? statisticsBody(input.classes, input.filter)
       : nominalBody(input.classes, input.filter, input.periodLabel)) +
-    '<footer class="footer">Document édité avec <strong>Mon Cahier</strong> &bull; www.mon-cahier.com</footer>' +
+    (isStatistics ? '<footer class="footer">Document édité avec <strong>Mon Cahier</strong> &bull; www.mon-cahier.com</footer>' : '') +
     '</body></html>';
 }
