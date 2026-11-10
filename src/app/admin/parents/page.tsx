@@ -18,6 +18,7 @@ import { documentNationalEmblem } from "@/lib/document-national-emblem";
 import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
 import { isBilingualSchool, readStudentProgramSettings } from "@/lib/school-student-programs";
 import { buildOrdinaryClassRosterCsv, ordinaryClassRosterCsvFilename } from "@/lib/class-roster-csv";
+import { buildDobConnectExport } from "@/lib/dob-connect-export";
 import {
   DEFAULT_EDUCATION_SCOPE,
   getClassLevelCode,
@@ -128,6 +129,9 @@ type StudentRow = {
   birthdate?: string | null;
   birth_date?: string | null;
   birth_place?: string | null;
+  nationality?: string | null;
+  is_repeater?: boolean | null;
+  is_affecte?: boolean | null;
   parent_names?: string | null;
   parent_contact?: string | null;
   is_scholarship?: boolean | null;
@@ -1003,6 +1007,7 @@ export default function AdminStudentsByClassPage() {
 
   const [loading, setLoading] = useState(true);
   const [docsLoading, setDocsLoading] = useState(false);
+  const [dobExporting, setDobExporting] = useState(false);
   const [authErr, setAuthErr] = useState(false);
   const [role, setRole] = useState<string | null | undefined>(undefined);
   const [msg, setMsg] = useState<string | null>(null);
@@ -1577,6 +1582,65 @@ export default function AdminStudentsByClassPage() {
     }
   }
 
+  async function exportDobConnectExcel() {
+    if (loading || dobExporting || !ordinarySchoolCsvEnabled ||
+        educationScope.educationType !== "general_secondary") return;
+    setDobExporting(true);
+    setMsg(null);
+    try {
+      // Même source locale que la liste de classe : aucune requête Supabase,
+      // aucun fichier enregistré sur Render et aucune donnée fictive.
+      const targetClasses = classes.filter(row =>
+        normalizeClassEducationType(row) === "general_secondary" &&
+        (!classId || row.id === classId) &&
+        (!level || getClassLevelCode(row) === level));
+      const output = buildDobConnectExport({
+        institutionCode: String(cfg.institution_code || ""),
+        classes: targetClasses,
+        students,
+      });
+      if (!output.count) {
+        setMsg("Aucun élève correspondant à exporter vers DOB CONNECT.");
+        return;
+      }
+      const XLSX = await import("xlsx");
+      const sheet = XLSX.utils.aoa_to_sheet(output.rows, { cellDates: true });
+      // Le modèle fourni exige 14 colonnes et ces intitulés, dès la ligne 1.
+      sheet["!cols"] = [12, 13, 12, 19, 24, 30, 9, 16, 23, 17, 15, 17, 12, 14]
+        .map(wch => ({ wch }));
+      for (let rowIndex = 2; rowIndex <= output.rows.length; rowIndex++) {
+        const cell = sheet[`H${rowIndex}`];
+        if (cell?.t === "d") cell.z = "dd/mm/yyyy";
+      }
+      const workbook = XLSX.utils.book_new();
+      // Nom de l'onglet préservé, même si le modèle contient plusieurs niveaux.
+      XLSX.utils.book_append_sheet(workbook, sheet, "4eme1");
+      const data = XLSX.write(workbook, { bookType: "xlsx", type: "array", cellDates: true });
+      const url = URL.createObjectURL(new Blob([data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }));
+      const filename = "DOB_CONNECT_" + (academicYear || "annee_scolaire")
+        .replace(/[^a-zA-Z0-9_-]/g, "_") +
+        (classId ? "_classe" : "_etablissement") + ".xlsx";
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 3000);
+      setMsg("Export DOB CONNECT : " + output.count + " élève(s)." +
+        (output.missingClassNumbers.length
+          ? " Attention : numéro de classe non renseigné pour " +
+            output.missingClassNumbers.join(", ") + ". Complétez-le avant l'import."
+          : ""));
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Impossible de générer le fichier DOB CONNECT.");
+    } finally {
+      setDobExporting(false);
+    }
+  }
+
   function openClassListPdf() {
     if (!classId) {
       setMsg("Choisissez d'abord une classe avant d'exporter la liste PDF.");
@@ -1933,6 +1997,16 @@ export default function AdminStudentsByClassPage() {
               >
                 Liste PDF (classe)
               </Button>
+              {ordinarySchoolCsvEnabled && educationScope.educationType === "general_secondary" ? (
+                <Button
+                  tone="white"
+                  onClick={() => void exportDobConnectExcel()}
+                  disabled={loading || dobExporting}
+                  title="Exporter les élèves au format exact d'import DOB CONNECT (.xlsx), sans requête supplémentaire"
+                >
+                  {dobExporting ? "Export en cours…" : "Export DOB CONNECT (Excel)"}
+                </Button>
+              ) : null}
               {ordinarySchoolCsvEnabled ? (
                 <Button
                   tone="white"
