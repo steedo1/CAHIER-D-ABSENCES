@@ -334,6 +334,7 @@ function guardFixture({ pathname = "/class", destination = "/class", role = "cla
     "@/components/auth/LoginCard": { default: LoginCard, __esModule: true },
     "@/components/RelayCapabilityProvider": { useRelayCapability: () => ({ relayEnabled: false, resolved: true }) },
     "@/lib/offline-auth-contract": contract,
+    "@/lib/parent-connect/navigation": evaluate("src/lib/parent-connect/navigation.ts", {}),
     "@/lib/offline-auth-client": { OFFLINE_AUTH_STATE_EVENT: "offline-auth", getOfflineLogoutLock: () => lock,
       getOfflineAccessIntent: async () => lock ? null : intent, getActiveOfflineAccess: async () => lock ? null : intent,
       clearOfflineLogoutLock() {} },

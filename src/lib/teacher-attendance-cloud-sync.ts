@@ -24,6 +24,7 @@ import {
 import {
   listTeacherSessionLifecycleOperations,
   markTeacherSessionClosedInCloud,
+  type TeacherSessionLifecycleDeliveryRecord,
 } from "@/lib/teacher-session-lifecycle-delivery";
 
 export type TeacherAttendanceCloudSyncResult = {
@@ -77,11 +78,48 @@ async function knownInstitutionIds(preferred?: string | null) {
       .then((value) => value?.institution_id)
       .catch(() => ""),
   );
+  // Les comptes classe n'ont pas le cache d'établissement enseignant. Leur
+  // journal d'ouverture peut exister avant la première écriture dans l'outbox.
+  const classes = await cacheGet<{ items?: Array<{ institution_id?: string }> }>(
+    "classDevice:my-classes",
+  ).catch(() => null);
+  const queued = await listOfflineOutboxEntries();
   return Array.from(new Set(
-    [preferred, teacherInstitution, ...(indexed || [])]
+    [preferred, teacherInstitution, ...(indexed || []),
+      ...(classes?.items || []).map((item) => item.institution_id),
+      ...queued.map((entry) => entry.meta?.institutionId)]
       .map(text)
       .filter(Boolean),
   ));
+}
+
+async function queueDurableSessionClose(
+  record: TeacherSessionLifecycleDeliveryRecord,
+  opens: TeacherSessionDeliveryRecord[],
+  existingOperationIds: Set<string>,
+) {
+  if (record.kind !== "close" || record.state !== "device_pending" ||
+      !record.session_id || existingOperationIds.has(record.operation_id)) return;
+  const reference = record.session_id.replace(/^client:/, "");
+  const opened = opens.find((candidate) =>
+    candidate.operation_id === reference || candidate.attempt_key === reference ||
+    candidate.session_id === record.session_id,
+  );
+  const classSession = Boolean(opened?.class_start);
+  await offlineMutateJson(classSession ? "/api/class/sessions/end" : "/api/teacher/sessions/end", {
+    method: "PATCH",
+    body: { session_id: record.session_id, actual_end_at: record.device_requested_at },
+  }, {
+    queueOnly: true,
+    operationId: record.operation_id,
+    createdAt: Date.parse(record.created_at),
+    mergeKey: `durable:end:${record.session_id}`,
+    meta: {
+      operationType: "session-end", clientSessionId: record.session_id,
+      institutionId: record.institution_id, classId: record.class_id,
+    },
+  });
+  existingOperationIds.add(record.operation_id);
 }
 
 function parseTeacherAttemptKey(record: TeacherSessionDeliveryRecord) {
@@ -234,6 +272,9 @@ async function materializeDurableOperations(institutionIds: string[]) {
   }
   for (const record of durable.attendance) {
     await queueDurableAttendance(record, operationIds);
+  }
+  for (const record of durable.lifecycle) {
+    await queueDurableSessionClose(record, durable.opens, operationIds);
   }
 }
 
@@ -394,7 +435,7 @@ export async function getTeacherAttendanceSyncStatus(
  * Rejoue toute la transaction PWA dans l'ordre ouverture → appel → fermeture.
  * Chaque phase attend l'ACK exact avant de rendre la suivante éligible.
  */
-export async function syncTeacherAttendanceOperationsToCloud(
+async function syncTeacherAttendanceOperationsToCloudInternal(
   institutionId?: string | null,
 ): Promise<TeacherAttendanceCloudSyncResult> {
   const institutionIds = await knownInstitutionIds(institutionId);
@@ -427,6 +468,7 @@ export async function syncTeacherAttendanceOperationsToCloud(
   const starts = await flushOutbox({
     includeOperationTypes: ["session-start"],
     releaseNetworkBackoff: true,
+    maxAcknowledgements: 50,
   });
   results.push(starts);
   await applyAcknowledgements(starts.acknowledged);
@@ -434,6 +476,7 @@ export async function syncTeacherAttendanceOperationsToCloud(
   const attendance = await flushOutbox({
     includeOperationTypes: ["attendance"],
     releaseNetworkBackoff: true,
+    maxAcknowledgements: 50,
   });
   results.push(attendance);
   await applyAcknowledgements(attendance.acknowledged);
@@ -450,9 +493,10 @@ export async function syncTeacherAttendanceOperationsToCloud(
     ...remainingAttendanceRows,
   ]));
   const endings = await flushOutbox({
-    excludeOperationTypes: ["session-start", "attendance"],
+    includeOperationTypes: ["session-end"],
     deferSessionEndKeys: deferredSessionEnds,
     releaseNetworkBackoff: true,
+    maxAcknowledgements: 50,
   });
   results.push(endings);
   await applyAcknowledgements(endings.acknowledged);
@@ -466,4 +510,22 @@ export async function syncTeacherAttendanceOperationsToCloud(
     conflicts: status.conflicts,
     authRequired: combined.authRequired || status.authRequired,
   };
+}
+
+let cloudSyncTail: Promise<unknown> = Promise.resolve();
+const cloudSyncRuns = new Map<string, Promise<TeacherAttendanceCloudSyncResult>>();
+
+/** Un retour réseau, un changement de page et un bouton peuvent se produire
+ * ensemble : une seule matérialisation/reprise, sans multiplier les envois. */
+export function syncTeacherAttendanceOperationsToCloud(institutionId?: string | null) {
+  const key = text(institutionId);
+  const existing = cloudSyncRuns.get(key);
+  if (existing) return existing;
+  const run = cloudSyncTail.then(() => syncTeacherAttendanceOperationsToCloudInternal(institutionId));
+  cloudSyncRuns.set(key, run);
+  cloudSyncTail = run.then(
+    () => { cloudSyncRuns.delete(key); },
+    () => { cloudSyncRuns.delete(key); },
+  );
+  return run;
 }

@@ -1256,6 +1256,15 @@ export async function putDurableAttendanceRecord<T extends {
     else records.push(record);
     kv.put({ ...stored, key, value: records, updatedAt: Date.now() });
   }
+  // Indexer les trois journaux dans la même transaction, y compris une
+  // ouverture interrompue avant la création de son entrée d'envoi.
+  const institutionsKey = "teacher:attendance-delivery:v1:institutions";
+  const institutions = await reqToPromise<KVRow | undefined>(kv.get(institutionsKey));
+  const ids = new Set<string>(Array.isArray(institutions?.value) ? institutions.value : []);
+  if (!ids.has(record.institution_id)) {
+    ids.add(record.institution_id);
+    kv.put({ key: institutionsKey, value: [...ids].sort(), updatedAt: Date.now() });
+  }
   await completed;
 }
 

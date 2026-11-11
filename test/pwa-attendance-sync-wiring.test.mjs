@@ -46,7 +46,7 @@ test("le synchroniseur Cloud impose ouverture → appel → clôture", async () 
   ]);
   const startPhase = sync.indexOf('includeOperationTypes: ["session-start"]');
   const attendancePhase = sync.indexOf('includeOperationTypes: ["attendance"]');
-  const closePhase = sync.indexOf('excludeOperationTypes: ["session-start", "attendance"]');
+  const closePhase = sync.indexOf('includeOperationTypes: ["session-end"]');
   assert.ok(startPhase > 0);
   assert.ok(attendancePhase > startPhase);
   assert.ok(closePhase > attendancePhase);
