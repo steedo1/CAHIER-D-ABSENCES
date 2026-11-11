@@ -13,6 +13,7 @@ import {
   getTeacherAttendanceSyncStatus,
   syncTeacherAttendanceOperationsToCloud,
 } from "../src/lib/teacher-attendance-cloud-sync";
+import { resetAttendanceCloudProbe } from "../src/lib/attendance-network";
 
 type StoredValue = Record<string, any>;
 type StoreDefinition = {
@@ -920,3 +921,74 @@ test("école sans Relais : trois appels PWA se synchronisent seuls en 9 ACK ordo
     restoreIndexedDb();
   }
 });
+
+for (const discoverFromClassCache of [false, true]) {
+  test(`un appel de classe conservé uniquement dans les journaux est repris intégralement (${discoverFromClassCache ? "découverte classe" : "établissement explicite"})`, async () => {
+    const restoreIndexedDb = installFakeIndexedDb();
+    const previousFetch = globalThis.fetch;
+    const calls: Array<{ path: string; body: any; operationId: string }> = [];
+    const institutionId = "school-orphan";
+    const openedAt = "2026-11-09T07:16:00.000Z";
+    const closedAt = "2026-11-09T08:10:00.000Z";
+    const clientSessionId = "client:orphan-class-open";
+    globalThis.fetch = (async (url: any, init?: RequestInit) => {
+      const path = String(url);
+      if (path === "/api/auth/role") return Response.json({});
+      const body = JSON.parse(String(init?.body || "{}"));
+      const operationId = new Headers(init?.headers).get("X-Mon-Cahier-Operation-Id") || "";
+      calls.push({ path, body, operationId });
+      if (path.includes("/sessions/start")) {
+        assert.equal(body.actual_call_at, openedAt);
+        return Response.json({ operation_id: operationId, item: { id: "server-orphan" } });
+      }
+      assert.equal(body.session_id, "server-orphan");
+      if (path.includes("/sessions/end")) assert.equal(body.actual_end_at, closedAt);
+      return Response.json({ operation_id: operationId, session_id: body.session_id });
+    }) as typeof fetch;
+    try {
+      await clearOfflineAll();
+      resetAttendanceCloudProbe();
+      setAttendanceCacheActor("class-actor");
+      await cacheSet("classDevice:my-classes", { items: [{ id: "class-orphan", institution_id: institutionId, actor_profile_id: "class-actor" }] });
+      await cacheSet(`teacher:session-delivery:v1:${institutionId}`, [{
+        schema_version: 1, institution_id: institutionId, operation_id: "orphan-class-open",
+        class_id: "class-orphan", period_id: "period-orphan", attempt_key: "class-orphan:period-orphan:2026-11-09",
+        state: "device_pending", subject_id: "subject-orphan", created_at: openedAt,
+        actual_call_at: openedAt, started_at: "2026-11-09T07:15:00.000Z",
+        class_start: { period_id: "period-orphan", expected_minutes: 55, actual_call_at: openedAt, manual_course: false },
+      }]);
+      await cacheSet(`teacher:attendance-delivery:v1:${institutionId}`, [{
+        schema_version: 1, institution_id: institutionId, operation_id: "orphan-class-attendance",
+        class_id: "class-orphan", period_id: "period-orphan", session_id: clientSessionId, session_reference: clientSessionId,
+        state: "device_pending", marks: [{ student_id: "student-orphan", status: "absent", comment: "Maladie" }],
+        created_at: closedAt, captured_at_device: closedAt,
+      }]);
+      await cacheSet(`teacher:session-lifecycle:v1:${institutionId}`, [{
+        schema_version: 1, institution_id: institutionId, operation_id: "orphan-class-close",
+        kind: "close", class_id: "class-orphan", session_id: clientSessionId,
+        attendance_operation_id: "orphan-class-attendance", state: "device_pending",
+        device_requested_at: closedAt, created_at: closedAt,
+      }]);
+      await offlineMutateJson("/api/unrelated-textbook", { method: "POST", body: {} }, {
+        queueOnly: true, meta: { operationType: "textbook" },
+      });
+      const target = discoverFromClassCache ? undefined : institutionId;
+      const first = syncTeacherAttendanceOperationsToCloud(target);
+      const second = syncTeacherAttendanceOperationsToCloud(target);
+      assert.equal(first, second, "les réveils simultanés partagent une reprise");
+      const result = await first;
+      assert.equal(result.remaining, 0);
+      assert.deepEqual(calls.map((call) => call.path), ["/api/class/sessions/start", "/api/teacher/attendance/bulk", "/api/class/sessions/end"]);
+      assert.deepEqual(calls.map((call) => call.operationId), ["orphan-class-open", "orphan-class-attendance", "orphan-class-close"]);
+      assert.equal((await cacheGet<any[]>(`teacher:session-lifecycle:v1:${institutionId}`))?.[0].state, "cloud_confirmed");
+      assert.equal((await outboxStats()).total, 1, "les autres modules restent en dehors du rejeu des appels");
+      const requestsAfterSync = calls.length;
+      await syncTeacherAttendanceOperationsToCloud(discoverFromClassCache ? undefined : institutionId);
+      assert.equal(calls.length, requestsAfterSync, "aucun rejeu après confirmation");
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreIndexedDb();
+      resetAttendanceCloudProbe();
+    }
+  });
+}

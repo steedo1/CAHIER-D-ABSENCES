@@ -173,10 +173,6 @@ export function createIndexedDbTeacherAttendanceStore(): TeacherAttendanceOperat
     },
     async put(record) {
       await putDurableAttendanceRecord("attendance-delivery", record);
-      const institutions = await cacheGet<string[]>(STORE_INSTITUTIONS_KEY);
-      const nextInstitutions = new Set(Array.isArray(institutions) ? institutions : []);
-      nextInstitutions.add(record.institution_id);
-      await cacheSet(STORE_INSTITUTIONS_KEY, Array.from(nextInstitutions).sort());
     },
   };
 }

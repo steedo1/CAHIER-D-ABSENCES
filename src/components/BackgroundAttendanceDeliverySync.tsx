@@ -21,9 +21,11 @@ export default function BackgroundAttendanceDeliverySync() {
     let disposed = false;
     let running = false;
     let wakeTimer: number | null = null;
+    let failures = 0;
+    let nextAttemptAt = 0;
 
     const run = async () => {
-      if (disposed || running) return;
+      if (disposed || running || Date.now() < nextAttemptAt) return;
 
       // Ne jamais annuler une reprise uniquement parce que l'écran est masqué.
       // Sur mobile, l'événement online peut arriver après verrouillage ou
@@ -34,11 +36,20 @@ export default function BackgroundAttendanceDeliverySync() {
         // Le synchroniseur consulte d'abord les données locales : zéro sondage
         // Cloud quand aucune opération ne peut être rejouée.
         const result = await syncTeacherAttendanceOperationsToCloud();
+        if (result.remaining > 0 && result.flushed === 0) {
+          failures += 1;
+          nextAttemptAt = Date.now() + Math.min(300_000, 10_000 * 2 ** Math.min(failures, 5));
+        } else {
+          failures = 0;
+          nextAttemptAt = 0;
+        }
         if (!RELAY_LOCAL_DISABLED && result.retryableFailure) {
           await syncDurableAttendanceOperationsToRelay();
         }
       } catch {
         // Toutes les opérations restent dans IndexedDB; le prochain réveil retente.
+        failures += 1;
+        nextAttemptAt = Date.now() + Math.min(300_000, 10_000 * 2 ** Math.min(failures, 5));
       } finally {
         running = false;
       }
@@ -53,14 +64,16 @@ export default function BackgroundAttendanceDeliverySync() {
     };
 
     const onVisibility = () => {
+      if (document.visibilityState === "visible") nextAttemptAt = 0;
       wake();
     };
+    const onOnline = () => { nextAttemptAt = 0; failures = 0; wake(); };
 
     wake();
     // Le retour du Relais local ne déclenche pas forcément l'événement "online" :
     // ce réveil périodique est donc indispensable quand Internet reste coupé.
     const interval = window.setInterval(() => void run(), 20_000);
-    window.addEventListener("online", wake);
+    window.addEventListener("online", onOnline);
     window.addEventListener("offline", wake);
     window.addEventListener("class-device-sync-updated", wake);
     document.addEventListener("visibilitychange", onVisibility);
@@ -69,7 +82,7 @@ export default function BackgroundAttendanceDeliverySync() {
       disposed = true;
       if (wakeTimer != null) window.clearTimeout(wakeTimer);
       window.clearInterval(interval);
-      window.removeEventListener("online", wake);
+      window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", wake);
       window.removeEventListener("class-device-sync-updated", wake);
       document.removeEventListener("visibilitychange", onVisibility);
