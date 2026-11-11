@@ -4,7 +4,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getRequestRoles, requireInstitutionRole } from "@/lib/auth/server-context";
 import { educatorNeedsAssignedClasses, educatorAssignmentCoversClass, loadEducatorAssignments } from "@/lib/auth/educator-class-scope";
-import { CARD_READ_ROLES, CARD_WRITE_ROLES, CARD_SLOTS, defaultCardConfiguration, cardWarnings, signatureSlotForTracks, type CardConfiguration, type SchoolCard, type CardSlot, type CardAsset } from "@/lib/school-cards";
+import { CARD_READ_ROLES, CARD_WRITE_ROLES, CARD_SLOTS, defaultCardConfiguration, cardWarnings, signatureSlotForTracks, cardTeachingTrackForClass, type CardConfiguration, type SchoolCard, type CardSlot, type CardAsset } from "@/lib/school-cards";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
 import { readStudentProgramSettings, programsForStudent, isBilingualSchool } from "@/lib/school-student-programs";
 import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
@@ -38,7 +38,10 @@ export async function cardScope(write = false) {
 export type CardScope = Exclude<Awaited<ReturnType<typeof cardScope>>, { error: unknown }>;
 export function publicCardConfig(configuration: CardConfiguration): CardConfiguration {
   // Never send private object locators to the browser. Asset presence only.
-  return { ...configuration, signatures: Object.fromEntries(Object.entries(configuration.signatures || {}).map(([slot, asset]) => [slot, { original: "", processed: "", updatedAt: asset!.updatedAt }])) };
+  const masked = (assets: CardConfiguration["signatures"]) =>
+    Object.fromEntries(Object.entries(assets || {}).map(([slot, asset]) =>
+      [slot, { original: "", processed: "", updatedAt: asset!.updatedAt }]));
+  return { ...configuration, signatures: masked(configuration.signatures), stamps: masked(configuration.stamps || {}) };
 }
 export async function loadCardClasses(ctx: CardScope, year: string) {
   const { data, error } = await ctx.service.from("classes").select("id,label,level,academic_year,education_type")
@@ -78,28 +81,33 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
   const items: SchoolCard[] = rows.map((row: any) => {
     const student = row.students, classe = byClass.get(row.class_id)!;
     const cycle = resolveSchoolCycleForClass(classe, cycles);
+    const policy = programs.years[year]?.classes[row.class_id];
+    const tracks = programsForStudent(policy, row.student_id, cycles.teachingTracksByCycle[cycle] || []);
     const item: SchoolCard = { enrollmentId: row.id, studentId: row.student_id, classId: row.class_id, year,
       name: student.full_name || [student.last_name, student.first_name].filter(Boolean).join(" "), matricule: student.matricule || "",
       birthdate: student.birthdate || "", birthPlace: student.birth_place || "", gender: student.gender || "",
       classLabel: classe.label, level: classe.level || "", photoUrl: photos.get(student.photo_path) || null,
-      tracks: programsForStudent(programs.years[year]?.classes[row.class_id], row.student_id, cycles.teachingTracksByCycle[cycle] || []),
+      tracks, cardTrack: cardTeachingTrackForClass(tracks, policy?.tracks || []),
       revoked: revocations.has(row.id), warnings: [] };
     item.warnings = cardWarnings(item); return item;
   });
   return { items, classes, nextOffset: !options.enrollmentIds && data?.length === 500 ? (options.offset || 0) + 500 : null };
 }
-export async function cardSignatureImages(ctx: CardScope) {
+async function cardAssetImages(ctx: CardScope, kind: "signatures" | "stamps") {
   const images: Partial<Record<CardSlot, string>> = {};
   if (!ctx.configuration.automaticSignature) return images;
+  const configured = ctx.configuration[kind] || {};
   for (const slot of CARD_SLOTS) {
-    const asset = ctx.configuration.signatures?.[slot];
+    const asset = configured[slot];
     if (!asset || !safeCardAsset(ctx.instId, asset)) continue;
     const blob = await ctx.service.storage.from("signatures").download(asset.processed);
-    if (blob.error || !blob.data) throw Error("signature_unavailable");
+    if (blob.error || !blob.data) throw Error("card_asset_unavailable");
     images[slot] = `data:image/png;base64,${Buffer.from(await blob.data.arrayBuffer()).toString("base64")}`;
   }
   return images;
 }
+export const cardSignatureImages = (ctx: CardScope) => cardAssetImages(ctx, "signatures");
+export const cardStampImages = (ctx: CardScope) => cardAssetImages(ctx, "stamps");
 export function safeCardAsset(instId: string, asset: CardAsset) {
   const prefix = `school-cards/${instId}/`;
   return asset.original.startsWith(prefix) && asset.processed.startsWith(prefix) && ![asset.original,asset.processed].some(path => path.includes(".."));
@@ -108,10 +116,11 @@ export function prepareSchoolCards(ctx: CardScope, items: SchoolCard[], origin: 
   const cycles = parseSchoolCyclesSettings(ctx.school.settings_json), bilingual = isBilingualSchool(cycles);
   const signatories = readSchoolTeachingSignatories(ctx.school.settings_json);
   return items.map(item => {
-    const slot = signatureSlotForTracks(item.tracks, bilingual);
+    const slot = signatureSlotForTracks(item.cardTrack ? [item.cardTrack] : item.tracks, bilingual);
     const signatoryName = slot === "general" ? ctx.school.head_name || "" : slot ? signatories[slot]?.name || "" : "";
     // Bilingual images require a configured teaching director; no general fallback.
-    const signatureSlot = ctx.configuration.automaticSignature && slot && signatoryName && ctx.configuration.signatures?.[slot] ? slot : null;
+    const signatureSlot = ctx.configuration.automaticSignature && slot && signatoryName &&
+      (ctx.configuration.signatures?.[slot] || ctx.configuration.stamps?.[slot]) ? slot : null;
     const token = issueCardToken({ institutionId: ctx.instId, studentId: item.studentId, enrollmentId: item.enrollmentId, classId: item.classId, year: item.year });
     return { ...item, token, verificationUrl: `${origin}/verifier-carte#${token}`, fingerprint: cardFingerprint(token), signatureSlot, signatoryName,
       warnings: ctx.configuration.automaticSignature && !signatureSlot ? [...item.warnings, "Signature non appliquée : responsable ou section à configurer"] : item.warnings };
