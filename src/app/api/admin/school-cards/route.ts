@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { CARD_UUID } from "@/lib/school-card-token";
-import { cardJson, cardScope, requireCardOrigin, loadCardEnrollments, readCardYears, publicCardConfig, cardSignatureImages, prepareSchoolCards, isCardYearValid } from "@/lib/server/school-cards";
+import { cardJson, cardScope, requireCardOrigin, loadCardEnrollments, readCardYears, publicCardConfig, cardSignatureImages, cardStampImages, prepareSchoolCards, isCardYearValid } from "@/lib/server/school-cards";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -13,8 +13,10 @@ export async function GET(req: NextRequest) {
     if (!years.some(y => y.code === year) || !Number.isInteger(offset) || offset < 0 || offset > 50_000) return cardJson({ error: "annee_ou_page_invalide" }, 400);
     const roster = await loadCardEnrollments(ctx, year, { offset });
     const { settings_json: _, subscription_expires_at: __, ...school } = ctx.school;
+    const [signatureImages, stampImages] = offset === 0
+      ? await Promise.all([cardSignatureImages(ctx), cardStampImages(ctx)]) : [{}, {}];
     return cardJson({ school, years, year, ...roster, configuration: publicCardConfig(ctx.configuration),
-      revision: ctx.revision, canConfigure: ctx.canConfigure, signatureImages: offset === 0 ? await cardSignatureImages(ctx) : {} });
+      revision: ctx.revision, canConfigure: ctx.canConfigure, signatureImages, stampImages });
   } catch { return cardJson({ error: "chargement_cartes_impossible" }, 503); }
 }
 
@@ -54,6 +56,7 @@ export async function POST(req: NextRequest) {
     // URL comes from server deployment config, never a client-provided domain.
     const origin = process.env.SCHOOL_CARD_PUBLIC_ORIGIN || "https://www.mon-cahier.com";
     if (!/^https:\/\/[^/]+$/.test(origin) && !(process.env.NODE_ENV !== "production" && /^http:\/\/localhost:\d+$/.test(origin))) return cardJson({ error: "domaine_verification_invalide" }, 503);
-    return cardJson({ items: prepareSchoolCards(ctx, items, origin), signatureImages: await cardSignatureImages(ctx) });
+    const [signatureImages, stampImages] = await Promise.all([cardSignatureImages(ctx), cardStampImages(ctx)]);
+    return cardJson({ items: prepareSchoolCards(ctx, items, origin), signatureImages, stampImages });
   } catch { return cardJson({ error: "preparation_cartes_impossible" }, 503); }
 }

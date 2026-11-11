@@ -22,8 +22,9 @@ export default function SchoolCardsWorkspace() {
   const [files, setFiles] = useState<PdfFile[]>([]), [flip, setFlip] = useState<"long" | "short">("long"), [allowMissing, setAllowMissing] = useState(false);
   const prepared = useRef(new Map<string, PreparedCard>()), urls = useRef<string[]>([]);
   const signatureImages = useRef<CardRoster["signatureImages"]>({});
+  const stampImages = useRef<NonNullable<CardRoster["stampImages"]>>({});
   const [upload, setUpload] = useState<File | null>(null), [originalPreview, setOriginalPreview] = useState("");
-  const [slot, setSlot] = useState<CardSlot>("general"), [removeBackground, setRemoveBackground] = useState(false), [tolerance, setTolerance] = useState(24), [crop, setCrop] = useState(true);
+  const [slot, setSlot] = useState<CardSlot>("general"), [kind, setKind] = useState<"signature" | "stamp">("stamp"), [removeBackground, setRemoveBackground] = useState(false), [tolerance, setTolerance] = useState(24), [crop, setCrop] = useState(true);
   const [processedPreview, setProcessedPreview] = useState(""), [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
@@ -38,7 +39,7 @@ export default function SchoolCardsWorkspace() {
         combined = previous ? { ...previous, items: [...previous.items, ...data.items], nextOffset: data.nextOffset } : data;
         offset = data.nextOffset;
       } while (offset !== null);
-      if (current && combined) { setRoster(combined); signatureImages.current = combined.signatureImages; }
+      if (current && combined) { setRoster(combined); signatureImages.current = combined.signatureImages; stampImages.current = combined.stampImages || {}; }
     })().catch(e => { if (current && e.name !== "AbortError") { setError(e.message); setRoster(null); } }).finally(() => { if (current) setLoading(false); });
     return () => { current = false; controller.abort(); };
   }, [year, refresh]);
@@ -47,7 +48,7 @@ export default function SchoolCardsWorkspace() {
     const url = URL.createObjectURL(upload); setOriginalPreview(url);
     return () => URL.revokeObjectURL(url);
   }, [upload]);
-  useEffect(() => { setProcessedPreview(""); setAuthorized(false); }, [upload, removeBackground, tolerance, crop, slot]);
+  useEffect(() => { setProcessedPreview(""); setAuthorized(false); }, [upload, removeBackground, tolerance, crop, slot, kind]);
   useEffect(() => () => { urls.current.forEach(url => URL.revokeObjectURL(url)); }, []);
   const visible = useMemo(() => (roster?.items || []).filter(row =>
     (!classes.length || classes.includes(row.classId)) && (!level || row.level === level) && (!track || row.tracks.includes(track)) &&
@@ -65,6 +66,7 @@ export default function SchoolCardsWorkspace() {
       const response = await jsonRequest("/api/admin/school-cards", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ year: roster.year, enrollmentIds: missing.slice(i, i + 100) }) });
       response.items.forEach((row: PreparedCard) => prepared.current.set(row.enrollmentId, row));
       signatureImages.current = { ...signatureImages.current, ...response.signatureImages };
+      stampImages.current = { ...stampImages.current, ...response.stampImages };
     }
     return ids.map(id => prepared.current.get(id)!);
   }
@@ -76,7 +78,7 @@ export default function SchoolCardsWorkspace() {
     for (let start = 0; start < cards.length; start += CARD_PDF_BATCH) {
       setStatus(`Préparation du PDF : ${start + 1} à ${Math.min(start + CARD_PDF_BATCH, cards.length)} sur ${cards.length}…`);
       const subset = cards.slice(start, start + CARD_PDF_BATCH);
-      const { blob, missing } = await exportSchoolCardPdf(subset, roster.school, signatureImages.current, { individual, flip });
+      const { blob, missing } = await exportSchoolCardPdf(subset, roster.school, signatureImages.current, { individual, flip, stamps: stampImages.current });
       const url = URL.createObjectURL(blob); urls.current.push(url);
       const name = `Cartes-${roster.year}-${start + 1}-${start + subset.length}.pdf`;
       setFiles(previous => [...previous, { url, name, count: subset.length }]);
@@ -92,12 +94,12 @@ export default function SchoolCardsWorkspace() {
   }
   async function signatureAction(action: "preview" | "save") {
     if (!upload || !roster) return;
-    const form = new FormData(); form.set("file", upload); form.set("slot", slot); form.set("action", action);
+    const form = new FormData(); form.set("file", upload); form.set("slot", slot); form.set("kind", kind); form.set("action", action);
     form.set("removeBackground", String(removeBackground)); form.set("tolerance", String(tolerance)); form.set("crop", String(crop));
     form.set("revision", String(roster.revision)); form.set("authorized", String(authorized));
     const result = await jsonRequest("/api/admin/school-cards/signature", { method: "POST", body: form });
     if (action === "preview") setProcessedPreview(result.preview);
-    else { setUpload(null); setProcessedPreview(""); setRefresh(value => value + 1); setStatus("Image validée. L’original est conservé pour correction."); }
+    else { setUpload(null); setProcessedPreview(""); setRefresh(value => value + 1); setStatus(`${kind === "stamp" ? "Cachet" : "Signature"} validé(e). L’original est conservé pour correction.`); }
   }
   return <main className="mx-auto max-w-7xl space-y-6 p-4 text-slate-900 md:p-7">
     <header className="rounded-3xl bg-emerald-950 p-6 text-white"><p className="text-xs uppercase tracking-[.2em] text-emerald-200">Administration & services</p><h1 className="mt-2 text-3xl font-semibold">Cartes scolaires</h1><p className="mt-2 text-sm text-emerald-100">Recto verso · Sans QR code · Format 85,6 × 54 mm</p></header>
@@ -121,9 +123,10 @@ export default function SchoolCardsWorkspace() {
         {!!warnings.length && <label className="flex items-center gap-2 rounded-lg bg-amber-50 p-3 text-sm"><input type="checkbox" checked={allowMissing} onChange={e => setAllowMissing(e.target.checked)} />J’accepte d’imprimer les {warnings.length} carte(s) dont des informations ou photos manquent.</label>}
         <div className="flex flex-wrap gap-3"><button className={button} disabled={busy || !chosen.length || chosen.some(row => row.revoked)} onClick={() => run(async () => { const cards = await prepare([chosen[0].enrollmentId]); setPreview(cards[0]); })}>Aperçu recto verso</button><button className={button} disabled={busy || !chosen.length || chosen.some(row => row.revoked) || (!!warnings.length && !allowMissing)} onClick={() => run(() => exportPdfs())}>Générer les PDF A4 / Imprimer</button><button className={input} disabled={busy || chosen.length !== 1 || chosen[0]?.revoked || (!!warnings.length && !allowMissing)} onClick={() => run(() => exportPdfs(true))}>PDF individuel 85,6 × 54 mm</button></div>
         {preview && <div className="grid gap-4 xl:grid-cols-2">
-          <div aria-label="Aperçu recto" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md"><div className="grid grid-cols-[12%_1fr_12%] items-start gap-2"><div>{roster.school.logo_url && <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="aspect-square w-full object-contain" />}</div><div className="text-center text-[10px] text-emerald-900">{roster.school.country_name || "République de Côte d’Ivoire"}<br />{roster.school.country_motto || "Union - Discipline - Travail"}<br />{schoolCardMinistry(roster.school, preview.year)}</div><div>{documentNationalEmblem(roster.school.country_name) && <img src={documentNationalEmblem(roster.school.country_name)} alt="Armoiries de la République de Côte d’Ivoire" className="aspect-square w-full object-contain" />}</div></div><h3 className="mx-auto mt-1 w-fit rounded bg-emerald-800 px-6 font-bold text-white">CARTE SCOLAIRE</h3><p className="text-center text-[10px]">ANNÉE SCOLAIRE {preview.year}</p><div className="mt-3 flex gap-4">{preview.photoUrl ? <img alt="Photo de l’élève" className="aspect-[20/26] w-1/4 object-contain" src={preview.photoUrl} /> : <div className="grid w-1/4 place-items-center bg-slate-100 text-xs">Photo absente</div>}<div className="space-y-1 text-xs"><p>Matricule : <strong>{preview.matricule || "—"}</strong></p><p className="text-sm font-semibold">{preview.name}</p><p>Né(e) le : {preview.birthdate} · Sexe : {preview.gender}</p><p>Lieu : {preview.birthPlace}</p><p>Classe : {preview.classLabel}</p>{preview.signatureSlot && <img alt={`Signature de ${preview.signatoryName}`} src={signatureImages.current[preview.signatureSlot]} className="ml-auto h-9 max-w-28 object-contain" />}</div></div><p className="absolute inset-x-4 bottom-3 border-t-2 border-orange-400 pt-1 text-center text-[11px] font-semibold">{roster.school.name}</p></div>
+          <div aria-label="Aperçu recto" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md"><div className="grid grid-cols-[12%_1fr_12%] items-start gap-2"><div>{roster.school.logo_url && <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="aspect-square w-full object-contain" />}</div><div className="text-center text-[10px] text-emerald-900">{roster.school.country_name || "République de Côte d’Ivoire"}<br />{roster.school.country_motto || "Union - Discipline - Travail"}<br />{schoolCardMinistry(roster.school, preview.year)}</div><div>{documentNationalEmblem(roster.school.country_name) && <img src={documentNationalEmblem(roster.school.country_name)} alt="Armoiries de la République de Côte d’Ivoire" className="aspect-square w-full object-contain" />}</div></div><h3 className="mx-auto mt-1 w-fit rounded bg-emerald-800 px-6 font-bold text-white">CARTE SCOLAIRE</h3><p className="text-center text-[10px]">ANNÉE SCOLAIRE {preview.year}</p><div className="mt-3 flex gap-4">{preview.photoUrl ? <img alt="Photo de l’élève" className="aspect-[20/26] w-1/4 object-contain" src={preview.photoUrl} /> : <div className="grid w-1/4 place-items-center bg-slate-100 text-xs">Photo absente</div>}<div className="space-y-1 text-xs"><p>Matricule : <strong>{preview.matricule || "—"}</strong></p><p className="text-sm font-semibold">{preview.name}</p><p>Né(e) le : {preview.birthdate} · Sexe : {preview.gender}</p><p>Lieu : {preview.birthPlace}</p><p>Classe : {preview.classLabel}</p>{preview.signatureSlot && signatureImages.current[preview.signatureSlot] && <img alt={`Signature de ${preview.signatoryName}`} src={signatureImages.current[preview.signatureSlot]} className="ml-auto h-9 max-w-28 object-contain" />}</div></div><p className="absolute inset-x-4 bottom-3 border-t-2 border-orange-400 pt-1 text-center text-[11px] font-semibold">{roster.school.name}</p></div>
           <div aria-label="Aperçu verso" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md">
             {roster.school.logo_url ? <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="mx-auto h-[34%] max-w-[40%] object-contain" /> : <div className="mx-auto grid h-[34%] w-[40%] place-items-center text-xs text-slate-500">Logo de l’établissement</div>}
+            {preview.signatureSlot && stampImages.current[preview.signatureSlot] && <img alt={`Cachet de ${preview.signatoryName}`} src={stampImages.current[preview.signatureSlot]} className="absolute right-[4%] top-[4%] h-[41%] w-[27%] object-contain" />}
             <h3 className="mt-1 text-center text-xs font-bold text-emerald-900">{roster.school.name}</h3>
             <div className="mx-auto mt-3 max-w-[90%] space-y-2 text-center text-[11px] leading-snug">
               <p>Cette carte est strictement personnelle et obligatoire pour toutes les démarches scolaires et administratives.</p>
@@ -138,8 +141,9 @@ export default function SchoolCardsWorkspace() {
       {roster.canConfigure && <section className="space-y-4 rounded-2xl border bg-white p-5"><h2 className="text-lg font-semibold">Paramètres réservés à la direction</h2>
         <div className="flex flex-wrap gap-4"><label><input type="checkbox" disabled={busy} checked={roster.configuration.automaticSignature} onChange={e => run(() => saveOptions(e.target.checked, roster.configuration.enabled))} /> Signature/cachet automatiques sur les cartes</label><label><input type="checkbox" disabled={busy} checked={roster.configuration.enabled} onChange={e => run(() => saveOptions(roster.configuration.automaticSignature, e.target.checked))} /> Création des cartes active</label></div>
         <p className="text-sm text-slate-600">Cette autorisation concerne les cartes scolaires. Les bulletins, attestations et autres documents conservent leur circuit actuel. L’image apposée n’est pas une signature électronique certifiée.</p>
-        <div className="flex flex-wrap gap-4"><label className="grid gap-1 text-sm">Responsable<select className={input} value={slot} onChange={e => setSlot(e.target.value as CardSlot)}>{CARD_SLOTS.map(value => <option key={value} value={value}>{slotNames[value]}</option>)}</select></label><label className="grid gap-1 text-sm">Image signature et cachet (JPG/PNG, 5 Mo maximum)<input type="file" accept="image/jpeg,image/png" onChange={e => setUpload(e.target.files?.[0] || null)} /></label></div>
-        {roster.configuration.signatures[slot] && <a className="text-sm underline" href={`/api/admin/school-cards/signature?slot=${slot}`}>Récupérer l’original conservé de ce responsable</a>}
+        <div className="flex flex-wrap gap-4"><label className="grid gap-1 text-sm">Responsable<select className={input} value={slot} onChange={e => setSlot(e.target.value as CardSlot)}>{CARD_SLOTS.map(value => <option key={value} value={value}>{slotNames[value]}</option>)}</select></label><label className="grid gap-1 text-sm">Type de visuel<select className={input} value={kind} onChange={e => { setKind(e.target.value as "stamp" | "signature"); setUpload(null); }}><option value="stamp">Cachet</option><option value="signature">Signature</option></select></label><label className="grid gap-1 text-sm">Image du {kind === "stamp" ? "cachet" : "de la signature"} (JPG/PNG, 5 Mo maximum)<input type="file" accept="image/jpeg,image/png" onChange={e => setUpload(e.target.files?.[0] || null)} /></label></div>
+        {(kind === "stamp" ? roster.configuration.stamps?.[slot] : roster.configuration.signatures?.[slot]) &&
+          <a className="text-sm underline" href={`/api/admin/school-cards/signature?slot=${slot}&kind=${kind}`}>Récupérer l’original du {kind === "stamp" ? "cachet" : "signature"} conservé</a>}
         <div className="flex flex-wrap gap-4 text-sm"><label><input type="checkbox" checked={removeBackground} onChange={e => setRemoveBackground(e.target.checked)} /> Supprimer le fond uni</label><label><input type="checkbox" checked={crop} onChange={e => setCrop(e.target.checked)} /> Recadrer les marges transparentes</label><label>Tolérance <input type="range" min="0" max="100" value={tolerance} onChange={e => setTolerance(Number(e.target.value))} /> {tolerance}</label></div>
         <button className={button} disabled={busy || !upload} onClick={() => run(() => signatureAction("preview"))}>Voir le résultat avant validation</button>
         {processedPreview && <><div className="flex flex-wrap gap-5">{originalPreview && <figure><img alt="Original à conserver" className="h-32 max-w-xs object-contain" src={originalPreview} /><figcaption className="text-xs">Original</figcaption></figure>}<figure><img alt="Résultat à valider" className="h-32 max-w-xs border bg-slate-100 object-contain" src={processedPreview} /><figcaption className="text-xs">Résultat proposé — ajustez si des détails manquent</figcaption></figure></div><label className="block text-sm"><input type="checkbox" checked={authorized} onChange={e => setAuthorized(e.target.checked)} /> Je confirme l’autorisation de l’établissement et la fidélité de cette image.</label><button className={button} disabled={busy || !authorized} onClick={() => run(() => signatureAction("save"))}>Valider et conserver l’image</button></>}
