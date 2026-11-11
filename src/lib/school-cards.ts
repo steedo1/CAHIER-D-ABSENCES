@@ -63,8 +63,8 @@ export function cardWarnings(row: Pick<SchoolCard, "name" | "matricule" | "birth
 /** A bilingual pupil follows two programs, but each single-track class may
  * authorize its own director. Never infer a track from a class label. */
 export function cardTeachingTrackForClass(studentTracks: string[], classTracks: string[]): CardSlot | null {
-  if (classTracks.length === 1 && (classTracks[0] === "french" || classTracks[0] === "arabic") &&
-    studentTracks.includes(classTracks[0])) return classTracks[0];
+  if (classTracks.length === 1 && (classTracks[0] === "french" || classTracks[0] === "arabic"))
+    return studentTracks.includes(classTracks[0]) ? classTracks[0] : null;
   return studentTracks.length === 1 && (studentTracks[0] === "french" || studentTracks[0] === "arabic")
     ? studentTracks[0] : null;
 }

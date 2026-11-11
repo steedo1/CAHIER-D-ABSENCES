@@ -96,7 +96,7 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
 async function cardAssetImages(ctx: CardScope, kind: "signatures" | "stamps") {
   const images: Partial<Record<CardSlot, string>> = {};
   if (!ctx.configuration.automaticSignature) return images;
-  const configured = ctx.configuration[kind] || {};
+  const configured: Partial<Record<CardSlot, CardAsset>> = ctx.configuration[kind] || {};
   for (const slot of CARD_SLOTS) {
     const asset = configured[slot];
     if (!asset || !safeCardAsset(ctx.instId, asset)) continue;
@@ -116,7 +116,8 @@ export function prepareSchoolCards(ctx: CardScope, items: SchoolCard[], origin: 
   const cycles = parseSchoolCyclesSettings(ctx.school.settings_json), bilingual = isBilingualSchool(cycles);
   const signatories = readSchoolTeachingSignatories(ctx.school.settings_json);
   return items.map(item => {
-    const slot = signatureSlotForTracks(item.cardTrack ? [item.cardTrack] : item.tracks, bilingual);
+    const selectedTracks = item.cardTrack === undefined ? item.tracks : item.cardTrack ? [item.cardTrack] : [];
+    const slot = signatureSlotForTracks(selectedTracks, bilingual);
     const signatoryName = slot === "general" ? ctx.school.head_name || "" : slot ? signatories[slot]?.name || "" : "";
     // Bilingual images require a configured teaching director; no general fallback.
     const signatureSlot = ctx.configuration.automaticSignature && slot && signatoryName &&

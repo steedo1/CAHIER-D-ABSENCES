@@ -59,7 +59,7 @@ test("a bilingual pupil receives the stamp of the actual single-track class, nev
   assert.equal(cardTeachingTrackForClass(["french", "arabic"], ["arabic"]), "arabic");
   assert.equal(cardTeachingTrackForClass(["french", "arabic"], ["french"]), "french");
   assert.equal(cardTeachingTrackForClass(["french", "arabic"], ["french", "arabic"]), null);
-  assert.equal(cardTeachingTrackForClass(["french"], ["arabic"]), "french");
+  assert.equal(cardTeachingTrackForClass(["french"], ["arabic"]), null);
   assert.equal(cardTeachingTrackForClass([], ["arabic"]), null);
 });
 test("scan limiter bounds per-token, per-IP and total traffic then recovers", () => {
