@@ -20,6 +20,7 @@ import {
   getFinanceInstitutionIdForCurrentUser,
 } from "@/lib/finance-access";
 import { queueFounderFinanceExpenseNotification } from "@/lib/push/founder";
+import { ExpenseSubmitButton } from "./ExpenseSubmitButton";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -341,6 +342,7 @@ async function createExpenseBudgetAction(formData: FormData) {
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
   revalidatePath("/admin/finance");
+  redirect(`/admin/finance/expenses?academic_year=${encodeURIComponent(academicYear || "")}&saved=budget`);
 }
 
 async function toggleExpenseBudgetAction(formData: FormData) {
@@ -469,6 +471,7 @@ async function createExpenseBudgetLineAction(formData: FormData) {
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
   revalidatePath("/admin/finance");
+  redirect(`/admin/finance/expenses?academic_year=${encodeURIComponent(academicYear || "")}&saved=budget_line`);
 }
 
 async function toggleExpenseBudgetLineAction(formData: FormData) {
@@ -516,6 +519,7 @@ async function updateExpenseBudgetLineAmountAction(formData: FormData) {
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const id = cleanText(formData.get("id"));
+  const academicYear = cleanText(formData.get("academic_year"));
   const plannedAmount = toNumber(cleanText(formData.get("planned_amount")));
 
   if (!id) {
@@ -528,7 +532,7 @@ async function updateExpenseBudgetLineAmountAction(formData: FormData) {
 
   const admin = getSupabaseServiceClient();
 
-  const { error } = await admin
+  const { data: updated, error } = await admin
     .schema("finance")
     .from("expense_budget_lines")
     .update({
@@ -536,13 +540,17 @@ async function updateExpenseBudgetLineAmountAction(formData: FormData) {
       updated_at: new Date().toISOString(),
     } as any)
     .eq("id", id)
-    .eq("school_id", institutionId);
+    .eq("school_id", institutionId)
+    .select("id")
+    .maybeSingle();
 
   if (error) throw new Error(error.message);
+  if (!updated?.id) throw new Error("Ce poste budgétaire n’a pas été modifié.");
 
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
   revalidatePath("/admin/finance");
+  redirect(`/admin/finance/expenses?academic_year=${encodeURIComponent(academicYear || "")}&saved=budget_amount`);
 }
 
 async function createExpenseAction(formData: FormData) {
@@ -676,6 +684,7 @@ async function createExpenseAction(formData: FormData) {
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
   revalidatePath("/admin/finance");
+  redirect(`/admin/finance/expenses?academic_year=${encodeURIComponent(academicYear || "")}&saved=expense`);
 }
 
 async function updateExpenseAmountAction(formData: FormData) {
@@ -688,6 +697,7 @@ async function updateExpenseAmountAction(formData: FormData) {
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const id = cleanText(formData.get("id"));
+  const academicYear = cleanText(formData.get("academic_year"));
   const amount = toNumber(cleanText(formData.get("amount")));
 
   if (!id) {
@@ -700,7 +710,7 @@ async function updateExpenseAmountAction(formData: FormData) {
 
   const admin = getSupabaseServiceClient();
 
-  const { error } = await admin
+  const { data: updated, error } = await admin
     .schema("finance")
     .from("expenses")
     .update({
@@ -708,13 +718,17 @@ async function updateExpenseAmountAction(formData: FormData) {
       updated_at: new Date().toISOString(),
     } as any)
     .eq("id", id)
-    .eq("school_id", institutionId);
+    .eq("school_id", institutionId)
+    .select("id")
+    .maybeSingle();
 
   if (error) throw new Error(error.message);
+  if (!updated?.id) throw new Error("Cette dépense n’a pas été modifiée.");
 
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
   revalidatePath("/admin/finance");
+  redirect(`/admin/finance/expenses?academic_year=${encodeURIComponent(academicYear || "")}&saved=expense_amount`);
 }
 
 async function cancelExpenseAction(formData: FormData) {
@@ -860,6 +874,7 @@ export default async function FinanceExpensesPage({
     category_id?: string;
     budget_id?: string;
     academic_year?: string;
+    saved?: string;
   }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
@@ -873,6 +888,13 @@ export default async function FinanceExpensesPage({
   const statusFilter = String(params?.status || "").trim();
   const selectedBudgetFilter = String(params?.budget_id || "").trim();
   const requestedAcademicYear = String(params?.academic_year || "").trim();
+  const successNotice = ({
+    expense: "La dépense a été enregistrée. Elle figure désormais dans la liste.",
+    expense_amount: "Le montant de la dépense a été mis à jour.",
+    budget: "Le budget a été enregistré.",
+    budget_line: "Le poste budgétaire a été enregistré.",
+    budget_amount: "Le montant prévu du poste a été mis à jour.",
+  } as Record<string, string>)[String(params?.saved || "")] || "";
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = getSupabaseServiceClient();
@@ -941,15 +963,18 @@ export default async function FinanceExpensesPage({
         .schema("finance")
         .from("expenses")
         .select(
-          "id,category_id,budget_id,budget_line_id,expense_status,expense_date,label,beneficiary,amount,payment_method,reference_no,notes,created_at",
+          "id,academic_year,category_id,budget_id,budget_line_id,expense_status,expense_date,label,beneficiary,amount,payment_method,reference_no,notes,created_at",
         )
         .eq("school_id", institutionId);
 
-      if (selectedAcademicYearStart) {
-        query = query.gte("expense_date", selectedAcademicYearStart);
-      }
-      if (selectedAcademicYearEnd) {
-        query = query.lte("expense_date", selectedAcademicYearEnd);
+      // L’année scolaire affectée à la dépense prime sur sa date d’opération.
+      // Les écritures historiques sans année restent filtrées par leur date.
+      if (selectedAcademicYearCode && selectedAcademicYearStart && selectedAcademicYearEnd) {
+        query = query.or(
+          `academic_year.eq.${selectedAcademicYearCode},and(academic_year.is.null,expense_date.gte.${selectedAcademicYearStart},expense_date.lte.${selectedAcademicYearEnd})`,
+        );
+      } else if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
       }
 
       return query
@@ -1165,6 +1190,12 @@ export default async function FinanceExpensesPage({
         }}
       />
 
+      {successNotice ? (
+        <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+          {successNotice}
+        </div>
+      ) : null}
+
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={<FolderPlus className="h-6 w-6" />}
@@ -1257,10 +1288,10 @@ export default async function FinanceExpensesPage({
               </div>
 
               <div className="md:col-span-2">
-                <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800">
+                <ExpenseSubmitButton pendingLabel="Création en cours…" className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800">
                   <Layers className="h-4 w-4" />
                   Créer le budget
-                </button>
+                </ExpenseSubmitButton>
               </div>
             </form>
           </details>
@@ -1531,10 +1562,10 @@ export default async function FinanceExpensesPage({
       </div>
 
       <div className="md:col-span-2 flex flex-wrap gap-3">
-        <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
+        <ExpenseSubmitButton pendingLabel="Enregistrement en cours…" className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
           <Wallet className="h-4 w-4" />
           Enregistrer la dépense
-        </button>
+        </ExpenseSubmitButton>
 
         <Link
           href={`/admin/finance/reports?academic_year=${encodeURIComponent(selectedAcademicYearCode)}&view=depenses`}
@@ -1649,10 +1680,10 @@ export default async function FinanceExpensesPage({
       </div>
 
       <div className="md:col-span-2 flex flex-wrap gap-3">
-        <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800">
+        <ExpenseSubmitButton pendingLabel="Création en cours…" className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800">
           <FolderPlus className="h-4 w-4" />
           Créer le poste
-        </button>
+        </ExpenseSubmitButton>
 
         <Link
           href={`/admin/finance?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
@@ -1740,6 +1771,7 @@ Postes budgétaires
                       className="flex min-w-[220px] gap-2"
                     >
                       <input type="hidden" name="id" value={row.id} />
+                      <input type="hidden" name="academic_year" value={selectedAcademicYearCode || ""} />
                       <input
                         name="planned_amount"
                         type="number"
@@ -1748,9 +1780,9 @@ Postes budgétaires
                         defaultValue={row.planned}
                         className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-emerald-500"
                       />
-                      <button className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">
+                      <ExpenseSubmitButton pendingLabel="…" className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">
                         OK
-                      </button>
+                      </ExpenseSubmitButton>
                     </form>
                   </td>
                   <td className="px-4 py-3 text-right align-top">
@@ -1956,6 +1988,7 @@ Postes budgétaires
                         className="mt-1 flex w-full max-w-[280px] flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2 sm:flex-row lg:w-[280px]"
                       >
                         <input type="hidden" name="id" value={row.id} />
+                        <input type="hidden" name="academic_year" value={selectedAcademicYearCode || ""} />
                         <label className="sr-only">Modifier le montant de la dépense</label>
                         <input
                           name="amount"
@@ -1965,9 +1998,9 @@ Postes budgétaires
                           defaultValue={toNumber(row.amount)}
                           className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-emerald-500"
                         />
-                        <button className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">
+                        <ExpenseSubmitButton pendingLabel="…" className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">
                           Modifier
-                        </button>
+                        </ExpenseSubmitButton>
                       </form>
                     </div>
                   </div>
