@@ -15,12 +15,14 @@ import {
   XCircle,
 } from "lucide-react";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import {
   getFinanceAccessForCurrentUser,
   getFinanceInstitutionIdForCurrentUser,
 } from "@/lib/finance-access";
 import { queueFounderFinanceExpenseNotification } from "@/lib/push/founder";
 import { ExpenseSubmitButton } from "./ExpenseSubmitButton";
+import { ExpenseCancelButton } from "./ExpenseCancelButton";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -73,6 +75,8 @@ type ExpenseRow = {
   payment_method: string | null;
   reference_no: string | null;
   notes: string | null;
+  cancel_reason: string | null;
+  cancelled_at: string | null;
   created_at: string | null;
 };
 
@@ -719,6 +723,7 @@ async function updateExpenseAmountAction(formData: FormData) {
     } as any)
     .eq("id", id)
     .eq("school_id", institutionId)
+    .eq("expense_status", "posted")
     .select("id")
     .maybeSingle();
 
@@ -735,34 +740,42 @@ async function cancelExpenseAction(formData: FormData) {
   "use server";
 
   const access = await getFinanceAccessForCurrentUser();
-  if (!access.ok) {
-    redirect("/admin/finance/locked");
-  }
+  if (!access.ok) redirect("/admin/finance/locked");
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
-
   const id = cleanText(formData.get("id"));
-  if (!id) {
-    throw new Error("Dépense introuvable.");
-  }
+  const academicYear = cleanText(formData.get("academic_year"));
+  if (!id) throw new Error("Dépense introuvable.");
+
+  const supabase = await getSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Session expirée. Reconnectez-vous.");
 
   const admin = getSupabaseServiceClient();
-
-  const { error } = await admin
+  const nowIso = new Date().toISOString();
+  const { data: updated, error } = await admin
     .schema("finance")
     .from("expenses")
     .update({
       expense_status: "cancelled",
-      updated_at: new Date().toISOString(),
+      cancelled_at: nowIso,
+      cancelled_by: user.id,
+      cancel_reason: "Erreur de saisie – à ressaisir",
+      updated_at: nowIso,
     } as any)
     .eq("id", id)
-    .eq("school_id", institutionId);
+    .eq("school_id", institutionId)
+    .eq("expense_status", "posted")
+    .select("id")
+    .maybeSingle();
 
   if (error) throw new Error(error.message);
+  if (!updated?.id) throw new Error("Cette dépense est déjà annulée ou introuvable.");
 
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
   revalidatePath("/admin/finance");
+  redirect(`/admin/finance/expenses?academic_year=${encodeURIComponent(academicYear)}&saved=expense_cancelled&reenter=${encodeURIComponent(id)}#saisie-depense`);
 }
 
 function StatCard({
@@ -875,6 +888,7 @@ export default async function FinanceExpensesPage({
     budget_id?: string;
     academic_year?: string;
     saved?: string;
+    reenter?: string;
   }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
@@ -888,9 +902,11 @@ export default async function FinanceExpensesPage({
   const statusFilter = String(params?.status || "").trim();
   const selectedBudgetFilter = String(params?.budget_id || "").trim();
   const requestedAcademicYear = String(params?.academic_year || "").trim();
+  const requestedReentryId = String(params?.reenter || "").trim();
   const successNotice = ({
     expense: "La dépense a été enregistrée. Elle figure désormais dans la liste.",
     expense_amount: "Le montant de la dépense a été mis à jour.",
+    expense_cancelled: "La dépense est annulée et ne compte plus dans les dépenses validées. Corrigez les champs ci-dessous puis enregistrez la nouvelle saisie.",
     budget: "Le budget a été enregistré.",
     budget_line: "Le poste budgétaire a été enregistré.",
     budget_amount: "Le montant prévu du poste a été mis à jour.",
@@ -963,7 +979,7 @@ export default async function FinanceExpensesPage({
         .schema("finance")
         .from("expenses")
         .select(
-          "id,academic_year,category_id,budget_id,budget_line_id,expense_status,expense_date,label,beneficiary,amount,payment_method,reference_no,notes,created_at",
+          "id,academic_year,category_id,budget_id,budget_line_id,expense_status,expense_date,label,beneficiary,amount,payment_method,reference_no,notes,cancel_reason,cancelled_at,created_at",
         )
         .eq("school_id", institutionId);
 
@@ -992,6 +1008,9 @@ export default async function FinanceExpensesPage({
   const budgetEnvelopeRows = (budgets ?? []) as ExpenseBudgetRow[];
   const budgetRows = (budgetLines ?? []) as ExpenseBudgetLineRow[];
   const expenseRows = (expenses ?? []) as ExpenseRow[];
+  const reentryRow = requestedReentryId
+    ? expenseRows.find((row) => row.id === requestedReentryId && row.expense_status === "cancelled") || null
+    : null;
 
   const categoryMap = new Map(categoryRows.map((c) => [c.id, c]));
   const budgetEnvelopeMap = new Map(budgetEnvelopeRows.map((b) => [b.id, b]));
@@ -1407,7 +1426,7 @@ export default async function FinanceExpensesPage({
       </section>
 
 <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-  <div className="rounded-[28px] border border-emerald-200 bg-white p-5 shadow-sm">
+  <div id="saisie-depense" className="scroll-mt-5 rounded-[28px] border border-emerald-200 bg-white p-5 shadow-sm">
     <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
       <Wallet className="h-4 w-4 text-emerald-600" />
       Saisir une dépense
@@ -1418,7 +1437,14 @@ export default async function FinanceExpensesPage({
       Les catégories restent retirées de l’écran principal pour garder la saisie rapide.
     </p>
 
+    {reentryRow ? (
+      <p role="status" className="mt-3 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+        Reprise du poste : corrigez les informations reprises de la dépense annulée avant de les enregistrer à nouveau.
+      </p>
+    ) : null}
+
     <form
+      key={reentryRow?.id || "nouvelle-depense"}
       action={createExpenseAction}
       className="mt-5 grid gap-4 md:grid-cols-2"
     >
@@ -1440,7 +1466,7 @@ export default async function FinanceExpensesPage({
         </label>
         <select
           name="budget_id"
-          defaultValue={selectedBudgetSummary?.id || ""}
+          defaultValue={reentryRow?.budget_id && activeBudgetEnvelopeRows.some((budget) => budget.id === reentryRow.budget_id) ? reentryRow.budget_id : selectedBudgetSummary?.id || ""}
           className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
         >
           <option value="">Dépense libre / hors budget</option>
@@ -1458,13 +1484,13 @@ export default async function FinanceExpensesPage({
         </label>
         <select
           name="budget_line_id"
-          defaultValue=""
+          defaultValue={reentryRow?.budget_line_id && activeBudgetRows.some((line) => line.id === reentryRow.budget_line_id) ? reentryRow.budget_line_id : ""}
           className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
         >
           <option value="">Aucun poste précis</option>
           {budgetRowsWithStats
             .filter((row) => row.is_active)
-            .filter((row) => !selectedBudgetSummary || row.budget_id === selectedBudgetSummary.id)
+            .filter((row) => reentryRow || !selectedBudgetSummary || row.budget_id === selectedBudgetSummary.id)
             .map((row) => (
               <option key={row.id} value={row.id}>
                 [{row.budgetName}] {row.account_no ? `${row.account_no} — ` : ""}
@@ -1484,6 +1510,7 @@ export default async function FinanceExpensesPage({
         <input
           name="label"
           type="text"
+          defaultValue={reentryRow?.label || ""}
           placeholder="Ex. Achat de craies, réparation imprimante..."
           required
           className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
@@ -1497,6 +1524,7 @@ export default async function FinanceExpensesPage({
         <input
           name="amount"
           type="number"
+          defaultValue={reentryRow ? toNumber(reentryRow.amount) : undefined}
           min="0"
           step="1"
           required
@@ -1512,7 +1540,7 @@ export default async function FinanceExpensesPage({
         <input
           name="expense_date"
           type="date"
-          defaultValue={new Date().toISOString().slice(0, 10)}
+          defaultValue={reentryRow?.expense_date || new Date().toISOString().slice(0, 10)}
           className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
         />
       </div>
@@ -1524,6 +1552,7 @@ export default async function FinanceExpensesPage({
         <input
           name="beneficiary"
           type="text"
+          defaultValue={reentryRow?.beneficiary || ""}
           placeholder="Ex. Papeterie, technicien, station-service..."
           className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
         />
@@ -1536,6 +1565,7 @@ export default async function FinanceExpensesPage({
         <input
           name="payment_method"
           type="text"
+          defaultValue={reentryRow?.payment_method || ""}
           placeholder="Ex. Caisse, mobile money, banque..."
           className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
         />
@@ -1549,12 +1579,14 @@ export default async function FinanceExpensesPage({
           <input
             name="reference_no"
             type="text"
+            defaultValue={reentryRow?.reference_no || ""}
             placeholder="N° pièce, facture, reçu..."
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
           />
           <input
             name="notes"
             type="text"
+            defaultValue={reentryRow?.notes || ""}
             placeholder="Note interne, facultatif"
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
           />
@@ -1983,6 +2015,7 @@ Postes budgétaires
                       <div className="text-xs text-slate-500">
                         {formatExpenseDate(row.expense_date)}
                       </div>
+                      {row.expense_status === "posted" ? (
                       <form
                         action={updateExpenseAmountAction}
                         className="mt-1 flex w-full max-w-[280px] flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2 sm:flex-row lg:w-[280px]"
@@ -2002,6 +2035,7 @@ Postes budgétaires
                           Modifier
                         </ExpenseSubmitButton>
                       </form>
+                      ) : null}
                     </div>
                   </div>
 
@@ -2059,14 +2093,21 @@ Postes budgétaires
                     {row.expense_status === "posted" ? (
                       <form action={cancelExpenseAction}>
                         <input type="hidden" name="id" value={row.id} />
-                        <button className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50">
-                          <XCircle className="h-4 w-4" />
-                          Annuler cette dépense
-                        </button>
+                        <input type="hidden" name="academic_year" value={selectedAcademicYearCode || ""} />
+                        <ExpenseCancelButton />
                       </form>
                     ) : (
-                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-                        Dépense annulée
+                      <div className="flex flex-col gap-2">
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                          Dépense annulée{row.cancelled_at ? ` le ${formatExpenseDate(row.cancelled_at)}` : ""}
+                        </div>
+                        {row.cancel_reason ? <p className="text-xs text-slate-500">{row.cancel_reason}</p> : null}
+                        <Link
+                          href={`/admin/finance/expenses?academic_year=${encodeURIComponent(selectedAcademicYearCode || "")}&reenter=${encodeURIComponent(row.id)}#saisie-depense`}
+                          className="inline-flex items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100"
+                        >
+                          Reprendre la saisie
+                        </Link>
                       </div>
                     )}
                   </div>
