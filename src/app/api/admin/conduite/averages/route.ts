@@ -67,8 +67,13 @@ const DEFAULT_CONDUCT_SETTINGS: ConductSettings = {
   },
 };
 
-const num = (v: any, fallback: number): number =>
-  typeof v === "number" && Number.isFinite(v) ? v : fallback;
+const num = (v: unknown, fallback: number): number => {
+  // Supabase peut renvoyer un numeric PostgreSQL sous forme de chaîne :
+  // conserver les zéros configurés plutôt que les remplacer par les barèmes par défaut.
+  if (v === null || v === undefined || v === "") return fallback;
+  const value = typeof v === "number" ? v : Number(String(v).replace(",", "."));
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+};
 
 
 type InstitutionMeta = {
