@@ -2,15 +2,28 @@
 export const MANUAL_ABSENCE_REASON_PREFIX = "MC_MANUAL_ABSENCES_V1:";
 export const DIRECT_CONDUCT_REASON_PREFIX = "MC_DIRECT_CONDUCT_V1:";
 type PreviousConduct = { reason: string | null; override_total: number; calculated_total: number; from_date: string | null; to_date: string | null };
-export function directConductSource(reason: unknown): { previous: PreviousConduct | null } | null {
+/** Information printed on the report only: it never changes the conduct average. */
+export type DirectConductAttendance = { total: number; justified: number };
+export function directConductSource(reason: unknown): { previous: PreviousConduct | null; attendance?: DirectConductAttendance } | null {
   if (typeof reason !== "string" || !reason.startsWith(DIRECT_CONDUCT_REASON_PREFIX)) return null;
   const source = JSON.parse(reason.slice(DIRECT_CONDUCT_REASON_PREFIX.length));
   if (!source || !("previous" in source)) throw new Error("Source de conduite illisible");
-  return source;
+  const total = parseAbsenceHours(source.attendance?.total);
+  const justified = parseAbsenceHours(source.attendance?.justified);
+  const attendance = total !== null && justified !== null && justified <= total
+    ? { total, justified } : undefined;
+  return { previous: source.previous, ...(attendance ? { attendance } : {}) };
 }
-export function directConductReason(previous: PreviousConduct | null): string {
+export function directConductReason(previous: PreviousConduct | null, attendance?: DirectConductAttendance | null): string {
   const existing = directConductSource(previous?.reason);
-  return DIRECT_CONDUCT_REASON_PREFIX + JSON.stringify({ previous: existing ? existing.previous : previous });
+  const selected = attendance === undefined ? existing?.attendance : attendance;
+  return DIRECT_CONDUCT_REASON_PREFIX + JSON.stringify({
+    previous: existing ? existing.previous : previous,
+    ...(selected ? { attendance: selected } : {}),
+  });
+}
+export function directConductAttendance(reason: unknown): DirectConductAttendance | null {
+  return directConductSource(reason)?.attendance ?? null;
 }
 export const MANUAL_CONDUCT_ROLES = ["admin", "educator", "super_admin"] as const;
 export type ManualAbsenceSource = { hours: number; periodId: string; sanctionPoints?: number; useDigitalAbsences?: boolean };

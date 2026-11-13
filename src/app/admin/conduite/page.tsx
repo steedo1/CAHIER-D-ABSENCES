@@ -3,6 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import ManualConductAbsences from "@/components/admin/ManualConductAbsences";
+import { parseAbsenceHours } from "@/lib/manual-conduct-absences";
 import { useAdminRole } from "@/app/admin/ui/admin-role-context";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import {
@@ -166,6 +167,8 @@ type ConductItem = {
   override_total?: number | null;
   is_overridden?: boolean;
   override_updated_at?: string | null;
+  manual_report_absence_total?: number | null;
+  manual_report_absence_justified?: number | null;
   appreciation: string;
 };
 
@@ -403,6 +406,8 @@ export default function ConduitePage() {
   // mais l'usage principal devient la modification par rubriques.
   const [editingItem, setEditingItem] = useState<ConductItem | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [editAbsenceTotal, setEditAbsenceTotal] = useState("");
+  const [editAbsenceJustified, setEditAbsenceJustified] = useState("");
   const [savingOverride, setSavingOverride] = useState(false);
   const [overrideError, setOverrideError] = useState<string | null>(null);
 
@@ -971,6 +976,8 @@ export default function ConduitePage() {
 
     setEditingItem(item);
     setEditValue(fmtNote(item.total));
+    setEditAbsenceTotal(item.manual_report_absence_total == null ? "" : String(item.manual_report_absence_total).replace(".", ","));
+    setEditAbsenceJustified(item.manual_report_absence_justified == null ? "" : String(item.manual_report_absence_justified).replace(".", ","));
     setOverrideError(null);
     setNotice(null);
   }
@@ -979,6 +986,8 @@ export default function ConduitePage() {
     if (savingOverride) return;
     setEditingItem(null);
     setEditValue("");
+    setEditAbsenceTotal("");
+    setEditAbsenceJustified("");
     setOverrideError(null);
   }
 
@@ -1001,6 +1010,15 @@ export default function ConduitePage() {
 
     if (n < 0 || n > maxes.total) {
       setOverrideError(`La moyenne doit être comprise entre 0 et ${maxes.total}.`);
+      return;
+    }
+
+    // Optional attendance figures are display-only. Never recompute the official note.
+    const emptyAttendance = !editAbsenceTotal.trim() && !editAbsenceJustified.trim();
+    const attendanceTotal = emptyAttendance ? null : parseAbsenceHours(editAbsenceTotal);
+    const attendanceJustified = emptyAttendance ? null : parseAbsenceHours(editAbsenceJustified.trim() || "0");
+    if (!emptyAttendance && (attendanceTotal === null || attendanceJustified === null || attendanceJustified > attendanceTotal)) {
+      setOverrideError("Indiquez un total d’absences valide et des absences justifiées inférieures ou égales au total.");
       return;
     }
 
@@ -1029,6 +1047,8 @@ export default function ConduitePage() {
           calculated_total: calculatedTotal,
           override_total: n,
           direct_entry: true,
+          attendance_total: attendanceTotal,
+          attendance_justified: attendanceJustified,
         }),
       });
 
@@ -1053,7 +1073,9 @@ export default function ConduitePage() {
 
       setEditingItem(null);
       setEditValue("");
-      setNotice("Moyenne finale enregistrée.");
+      setEditAbsenceTotal("");
+      setEditAbsenceJustified("");
+      setNotice("Moyenne de conduite et absences enregistrées.");
       await validate();
     } catch (e: any) {
       console.error("[Conduite] Erreur enregistrement override", e);
@@ -2221,6 +2243,31 @@ export default function ConduitePage() {
                 demandé.
               </div>
             </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block text-xs font-medium text-slate-600">
+                Absences (total)
+                <Input aria-label="Absences (total)" value={editAbsenceTotal}
+                  onChange={(event) => setEditAbsenceTotal(event.target.value)}
+                  inputMode="decimal" placeholder="Ex : 5" className="mt-1" />
+              </label>
+              <label className="block text-xs font-medium text-slate-600">
+                Justifiées
+                <Input aria-label="Absences justifiées" value={editAbsenceJustified}
+                  onChange={(event) => setEditAbsenceJustified(event.target.value)}
+                  inputMode="decimal" placeholder="Ex : 2" className="mt-1" />
+              </label>
+            </div>
+            {(() => {
+              const total = parseAbsenceHours(editAbsenceTotal);
+              const justified = parseAbsenceHours(editAbsenceJustified.trim() || "0");
+              return total !== null && justified !== null && justified <= total
+                ? <p className="mt-2 text-xs text-slate-600">Non justifiées (calculées) : {Number((total - justified).toFixed(2))}</p>
+                : null;
+            })()}
+            <p className="mt-1 text-[11px] text-slate-500">
+              Ces données alimentent le bulletin sans recalculer la moyenne de conduite.
+            </p>
 
             {overrideError && (
               <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">

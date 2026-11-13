@@ -363,6 +363,8 @@ type ConductItem = {
   conduct_teacher_name?: string | null;
   appreciation: string;
   absence_count?: number;
+  bulletin_absences?: number;
+  justified_absences?: number;
   tardy_count?: number;
   absence_minutes?: number;
   tardy_minutes?: number;
@@ -2217,7 +2219,11 @@ function StudentBulletinCard({
             <div className="mt-[2px] space-y-[2px]">
               <div>
                 Absences :{" "}
-                <span className="font-semibold">{conduct.absence_count ?? 0}</span>
+                <span className="font-semibold">{conduct.bulletin_absences ?? conduct.absence_count ?? 0}</span>
+              </div>
+              <div>
+                Justifiées :{" "}
+                <span className="font-semibold">{conduct.justified_absences ?? 0}</span>
               </div>
               <div>
                 Retards :{" "}
@@ -2225,21 +2231,18 @@ function StudentBulletinCard({
               </div>
               {conductRubricMax && conduct?.breakdown && (
                 <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[9px] text-slate-700">
-                  <div>
-                    Assiduité : {conduct.breakdown.assiduite} /{" "}
-                    {conductRubricMax.assiduite}
-                  </div>
-                  <div>
-                    Tenue : {conduct.breakdown.tenue} / {conductRubricMax.tenue}
-                  </div>
-                  <div>
-                    Moralité : {conduct.breakdown.moralite} /{" "}
-                    {conductRubricMax.moralite}
-                  </div>
-                  <div>
-                    Discipline : {conduct.breakdown.discipline} /{" "}
-                    {conductRubricMax.discipline}
-                  </div>
+                  {conductRubricMax.assiduite > 0 && (
+                    <div>Assiduité : {conduct.breakdown.assiduite} / {conductRubricMax.assiduite}</div>
+                  )}
+                  {conductRubricMax.tenue > 0 && (
+                    <div>Tenue : {conduct.breakdown.tenue} / {conductRubricMax.tenue}</div>
+                  )}
+                  {conductRubricMax.moralite > 0 && (
+                    <div>Moralité : {conduct.breakdown.moralite} / {conductRubricMax.moralite}</div>
+                  )}
+                  {conductRubricMax.discipline > 0 && (
+                    <div>Discipline : {conduct.breakdown.discipline} / {conductRubricMax.discipline}</div>
+                  )}
                 </div>
               )}
             </div>
