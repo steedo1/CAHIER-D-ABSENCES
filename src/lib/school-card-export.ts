@@ -21,7 +21,7 @@ async function browserImage(url: string, maxWidth: number, maxHeight: number): P
   context.fillStyle = "#FFFFFF"; context.fillRect(0, 0, canvas.width, canvas.height); context.drawImage(image, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL("image/jpeg", 0.93);
 }
-export async function exportSchoolCardPdf(cards: PreparedCard[], school: CardSchool, signatures: Partial<Record<CardSlot, string>>, options: { individual?: boolean; flip?: "long" | "short" } = {}) {
+export async function exportSchoolCardPdf(cards: PreparedCard[], school: CardSchool, signatures: Partial<Record<CardSlot, string>>, options: { individual?: boolean; flip?: "long" | "short"; stamps?: Partial<Record<CardSlot, string>> } = {}) {
   if (!cards.length || cards.length > 100) throw Error("Le PDF accepte de 1 à 100 cartes par lot.");
   const PDFDocument = (await import("pdfkit/js/pdfkit.standalone.js")).default;
   // All batches/reprints share the immutable font in this page session.
@@ -42,7 +42,7 @@ export async function exportSchoolCardPdf(cards: PreparedCard[], school: CardSch
     doc.on("error", reject);
     doc.on("end", () => resolve(new Blob(chunks as BlobPart[], { type: "application/pdf" })));
   });
-  renderCardPages(doc, cards, school, { font, logo, photos, signatures }, options);
+  renderCardPages(doc, cards, school, { font, logo, photos, signatures, stamps: options.stamps }, options);
   doc.end();
   return { blob: await result, missing };
 }

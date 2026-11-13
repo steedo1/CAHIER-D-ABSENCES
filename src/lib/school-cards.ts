@@ -10,12 +10,13 @@ export type CardAsset = { original: string; processed: string; updatedAt: string
 export type CardConfiguration = {
   enabled: boolean;
   signatures: Partial<Record<CardSlot, CardAsset>>;
+  stamps?: Partial<Record<CardSlot, CardAsset>>;
   automaticSignature: boolean;
   // Separate choices; existing bulletin/attestation engines are untouched.
   documentPolicies: { cards: boolean; bulletins: false; attestations: false; other: false };
 };
 export function defaultCardConfiguration(): CardConfiguration {
-  return { enabled: true, signatures: {}, automaticSignature: false,
+  return { enabled: true, signatures: {}, stamps: {}, automaticSignature: false,
     documentPolicies: { cards: false, bulletins: false, attestations: false, other: false } };
 }
 export type CardSchool = {
@@ -28,7 +29,7 @@ export type CardClass = { id: string; label: string; level: string | null; acade
 export type SchoolCard = {
   enrollmentId: string; studentId: string; classId: string; year: string;
   name: string; matricule: string; birthdate: string; birthPlace: string; gender: string;
-  classLabel: string; level: string; tracks: string[]; photoUrl: string | null;
+  classLabel: string; level: string; tracks: string[]; cardTrack?: CardSlot | null; photoUrl: string | null;
   revoked: boolean; warnings: string[];
 };
 export type PreparedCard = SchoolCard & {
@@ -51,12 +52,21 @@ export type CardRoster = {
   items: SchoolCard[]; configuration: CardConfiguration; revision: number;
   canConfigure: boolean; nextOffset: number | null;
   signatureImages: Partial<Record<CardSlot, string>>;
+  stampImages?: Partial<Record<CardSlot, string>>;
 };
 export function cardWarnings(row: Pick<SchoolCard, "name" | "matricule" | "birthdate" | "birthPlace" | "gender" | "photoUrl">) {
   return [[row.name, "Nom absent"], [row.matricule, "Matricule absent"],
     [row.birthdate, "Date de naissance absente"], [row.birthPlace, "Lieu de naissance absent"],
     [row.gender, "Sexe absent"], [row.photoUrl, "Photo absente"]]
     .filter(([value]) => !value).map(([, warning]) => warning as string);
+}
+/** A bilingual pupil follows two programs, but each single-track class may
+ * authorize its own director. Never infer a track from a class label. */
+export function cardTeachingTrackForClass(studentTracks: string[], classTracks: string[]): CardSlot | null {
+  if (classTracks.length === 1 && (classTracks[0] === "french" || classTracks[0] === "arabic"))
+    return studentTracks.includes(classTracks[0]) ? classTracks[0] : null;
+  return studentTracks.length === 1 && (studentTracks[0] === "french" || studentTracks[0] === "arabic")
+    ? studentTracks[0] : null;
 }
 export function signatureSlotForTracks(tracks: string[], bilingual: boolean): CardSlot | null {
   if (!bilingual) return "general";

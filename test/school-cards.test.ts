@@ -3,7 +3,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { issueCardToken, openCardToken, createCardScanLimiter } from "../src/lib/school-card-token";
-import { cardSheetPosition, signatureSlotForTracks, schoolCardMinistry } from "../src/lib/school-cards";
+import { cardSheetPosition, signatureSlotForTracks, cardTeachingTrackForClass, schoolCardMinistry } from "../src/lib/school-cards";
 import { processSchoolCardSignature } from "../src/lib/school-card-image";
 import { schoolCardTextRuns } from "../src/lib/school-card-bidi";
 
@@ -54,6 +54,13 @@ test("French/Arabic director selected only from an unambiguous configured progra
   assert.equal(signatureSlotForTracks(["french","arabic"],true),null);
   assert.equal(signatureSlotForTracks([],true),null);
   assert.equal(signatureSlotForTracks([],false),"general");
+});
+test("a bilingual pupil receives the stamp of the actual single-track class, never an ambiguous stamp", () => {
+  assert.equal(cardTeachingTrackForClass(["french", "arabic"], ["arabic"]), "arabic");
+  assert.equal(cardTeachingTrackForClass(["french", "arabic"], ["french"]), "french");
+  assert.equal(cardTeachingTrackForClass(["french", "arabic"], ["french", "arabic"]), null);
+  assert.equal(cardTeachingTrackForClass(["french"], ["arabic"]), null);
+  assert.equal(cardTeachingTrackForClass([], ["arabic"]), null);
 });
 test("scan limiter bounds per-token, per-IP and total traffic then recovers", () => {
   let time=0; const allow=createCardScanLimiter(()=>time);

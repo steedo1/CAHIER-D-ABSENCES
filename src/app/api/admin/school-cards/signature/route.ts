@@ -11,7 +11,8 @@ export async function GET(req: NextRequest) {
   try {
     const ctx = await cardScope(true); if ("error" in ctx) return ctx.error;
     const slot = req.nextUrl.searchParams.get("slot") as CardSlot;
-    const asset = ctx.configuration.signatures?.[slot];
+    const kind = req.nextUrl.searchParams.get("kind") === "stamp" ? "stamps" : "signatures";
+    const asset = ctx.configuration[kind]?.[slot];
     if (!asset || !safeCardAsset(ctx.instId, asset)) return cardJson({ error: "image_absente" }, 404);
     const result = await ctx.service.storage.from("signatures").download(asset.original);
     if (result.error || !result.data) return cardJson({ error: "image_indisponible" }, 503);
@@ -48,6 +49,7 @@ export async function POST(req: NextRequest) {
       body: new Blob([new Uint8Array(Buffer.concat(chunks))]),
     }).formData();
     const file = form.get("file"), slot = form.get("slot") as CardSlot;
+    const kind = form.get("kind") === "stamp" ? "stamps" : "signatures";
     if (!(file instanceof File) || !CARD_SLOTS.includes(slot) || !["image/jpeg", "image/png"].includes(file.type) || file.size > 5 * 1024 * 1024) return cardJson({ error: "image_invalide_maximum_5_mo" }, 400);
     const input = Buffer.from(await file.arrayBuffer());
     const processed = await processSchoolCardSignature(input, { removeBackground: form.get("removeBackground") === "true", tolerance: Number(form.get("tolerance") || 24), crop: form.get("crop") === "true" });
@@ -56,13 +58,14 @@ export async function POST(req: NextRequest) {
     // The bucket must already exist and remain private. Never create a public bucket.
     const bucket = await ctx.service.storage.getBucket("signatures");
     if (bucket.error || bucket.data.public) return cardJson({ error: "stockage_prive_indisponible" }, 503);
-    const base = `school-cards/${ctx.instId}/${slot}/${randomUUID()}`;
+    const base = `school-cards/${ctx.instId}/${slot}/${kind}/${randomUUID()}`;
     const original = `${base}/original.${file.type === "image/png" ? "png" : "jpg"}`, output = `${base}/processed.png`;
     const first = await ctx.service.storage.from("signatures").upload(original, input, { contentType: file.type, upsert: false });
     if (first.error) throw Error("upload_failed");
     const second = await ctx.service.storage.from("signatures").upload(output, processed, { contentType: "image/png", upsert: false });
     if (second.error) { await ctx.service.storage.from("signatures").remove([original]); throw Error("upload_failed"); }
-    const configuration = { ...ctx.configuration, signatures: { ...ctx.configuration.signatures, [slot]: { original, processed: output, updatedAt: new Date().toISOString() } } };
+    const configuration = { ...ctx.configuration,
+      [kind]: { ...(ctx.configuration[kind] || {}), [slot]: { original, processed: output, updatedAt: new Date().toISOString() } } };
     const record = { institution_id: ctx.instId, configuration, revision: ctx.revision + 1, updated_by: ctx.user.id, updated_at: new Date().toISOString() };
     const result = ctx.revision === 0
       ? await ctx.service.from("school_card_settings").insert(record).select("revision").single()
