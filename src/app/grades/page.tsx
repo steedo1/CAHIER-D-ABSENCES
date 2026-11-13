@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
 import { openGradeRegisterPdf } from "@/lib/grades/grade-register-print";
+import { deduplicateTeacherClassOptions } from "@/lib/grades/teacher-class-options";
 import { parsePrimaryEventTitle, type PrimaryEvent } from "@/lib/grades/primary-evaluation-events";
 import Link from "next/link";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
@@ -702,14 +703,23 @@ export default function TeacherNotesPage() {
           "/api/grades/classes",
           gradesClassesKey("teacher")
         );
-        const arr = (j.items || []) as TeachClass[];
+        if (j?.mode !== "teacher") throw new Error("Session professeur absente ou expirée.");
+        const arr = deduplicateTeacherClassOptions(
+          (Array.isArray(j.items) ? j.items : []) as TeachClass[]
+        );
         setTeachClasses(arr);
-        if (!selKey && arr.length) {
+        setSelKey((previous) => {
+          const available = arr.some((tc) =>
+            `${tc.class_id}|${tc.subject_id ?? ""}|${tc.teaching_track ?? ""}` === previous
+          );
+          if (available) return previous;
           const first = arr[0];
-          setSelKey(`${first.class_id}|${first.subject_id ?? ""}|${first.teaching_track ?? ""}`);
-        }
-      } catch {
+          return first ? `${first.class_id}|${first.subject_id ?? ""}|${first.teaching_track ?? ""}` : "";
+        });
+      } catch (error) {
         setTeachClasses([]);
+        setSelKey("");
+        setMsg(error instanceof Error ? error.message : "Impossible de charger les affectations du professeur.");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
