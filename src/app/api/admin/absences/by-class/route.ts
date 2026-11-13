@@ -74,14 +74,21 @@ export async function GET(req: NextRequest) {
 
   const absAgg = new Map<string, number>();
   const absCountAgg = new Map<string, number>();
+  const absTotalAgg = new Map<string, number>();
+  const absJustifiedAgg = new Map<string, number>();
   for (const m of absMarks || []) {
     const mark_id = String((m as any).id || "");
     const reason = String(absReasonById.get(mark_id) ?? "").trim();
-    if (reason) continue; // ✅ absence justifiée → on ignore
-
     const sid = String((m as any).student_id);
     const v = Number((m as any).minutes || 0);
-    if (!sid || !v) continue;
+    if (!sid || !Number.isFinite(v) || v <= 0) continue;
+    // Separate information for bulletins from the *unjustified-only*
+    // figures used by the existing conduct penalty calculation.
+    absTotalAgg.set(sid, (absTotalAgg.get(sid) || 0) + v);
+    if (reason) {
+      absJustifiedAgg.set(sid, (absJustifiedAgg.get(sid) || 0) + v);
+      continue;
+    }
     absAgg.set(sid, (absAgg.get(sid) || 0) + v);
     absCountAgg.set(sid, (absCountAgg.get(sid) || 0) + 1);
   }
@@ -140,7 +147,7 @@ export async function GET(req: NextRequest) {
   }
 
   // --- Élèves (union des ids présents dans absences/retards non justifiés)
-  const stuIds = Array.from(new Set([...absAgg.keys(), ...tarAgg.keys()]));
+  const stuIds = Array.from(new Set([...absAgg.keys(), ...absTotalAgg.keys(), ...tarAgg.keys()]));
   if (stuIds.length === 0) return NextResponse.json({ items: [] });
 
   const { data: students } = await srv
@@ -160,6 +167,8 @@ export async function GET(req: NextRequest) {
     .map((student_id) => {
       const absence_minutes = Number(absAgg.get(student_id) || 0);
       const absence_count = Number(absCountAgg.get(student_id) || 0);
+      const absence_total_hours = Number(((absTotalAgg.get(student_id) || 0) / 60).toFixed(2));
+      const absence_justified_hours = Number(((absJustifiedAgg.get(student_id) || 0) / 60).toFixed(2));
       const tardy_minutes = Number(tarAgg.get(student_id) || 0);
       const tardy_count = Number(tarCountAgg.get(student_id) || 0);
       const minutes_total = absence_minutes + tardy_minutes;
@@ -169,7 +178,9 @@ export async function GET(req: NextRequest) {
         full_name: nameOf.get(student_id) || "—",
         minutes: absence_minutes, // compat ancien champ
         absence_minutes,
-        absence_count,
+        absence_count, // historical conduct input: unjustified marks only
+        absence_total_hours,
+        absence_justified_hours,
         tardy_minutes,
         tardy_count,
         minutes_total,

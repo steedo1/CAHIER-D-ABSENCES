@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { calculateAssiduity, deductManualSanctions, DEFAULT_ASSIDUITY_RULES, manualAbsenceReason, manualConductForRange, manualHoursForRange, parseAbsenceHours, parseManualAbsenceReason, parseSanctionPoints, previewManualConduct } from "../src/lib/manual-conduct-absences";
+import { calculateAssiduity, deductManualSanctions, DEFAULT_ASSIDUITY_RULES, manualAbsenceReason, manualConductForRange, manualHoursForRange, directConductReason, directConductSource, directConductAttendance, parseAbsenceHours, parseManualAbsenceReason, parseSanctionPoints, previewManualConduct } from "../src/lib/manual-conduct-absences";
 test("Heures : zéro, décimales françaises ; vides, notes et valeurs invalides refusées", () => {
   for (const [value, expected] of [[0,0],["0",0],["2,5",2.5],["4.25",4.25]] as const) assert.equal(parseAbsenceHours(value), expected);
   for (const value of ["", " ", -1, "abc", "0x10", true, null, NaN, Infinity, 5001, "2,555"]) assert.equal(parseAbsenceHours(value), null);
@@ -58,4 +58,22 @@ test("Une sanction seule laisse les absences numériques actives ; anciennes sai
   assert.deepEqual(manualConductForRange([row],"2026-09-14","2026-12-04"),{hours:null,sanctionPoints:1});
   const updated={...row,reason:manualAbsenceReason({hours:4,periodId:"p",sanctionPoints:2}),updated_at:"2026-10-14T13:00:00Z"};
   assert.deepEqual(manualConductForRange([row,updated],"2026-09-14","2026-12-04"),{hours:4,sanctionPoints:2});
+});
+
+test("Conduite saisie directement : absences affichées sans changer la note", () => {
+  const previous = {
+    reason: manualAbsenceReason({ hours: 4, periodId: "T1-id" }),
+    override_total: 18, calculated_total: 18,
+    from_date: "2026-09-14", to_date: "2026-12-04",
+  };
+  const first = directConductReason(previous, { total: 5, justified: 2 });
+  assert.deepEqual(directConductAttendance(first), { total: 5, justified: 2 });
+  assert.equal(parseManualAbsenceReason(first)?.hours, 4, "les anciennes absences automatiques restent sauvegardées");
+  const edited = directConductReason({ ...previous, reason: first, override_total: 16 });
+  assert.deepEqual(directConductAttendance(edited), { total: 5, justified: 2 }, "une nouvelle note conserve les absences");
+  assert.equal(directConductSource(edited)?.previous?.override_total, 18, "la réinitialisation restaure la source initiale");
+  const cleared = directConductReason({ ...previous, reason: edited }, null);
+  assert.equal(directConductAttendance(cleared), null, "des champs vides effacent les valeurs du bulletin");
+  assert.equal(parseManualAbsenceReason(cleared)?.hours, 4);
+  assert.equal(directConductAttendance("Correction administrative"), null);
 });

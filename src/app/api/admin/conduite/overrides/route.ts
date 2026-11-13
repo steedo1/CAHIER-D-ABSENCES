@@ -1,5 +1,5 @@
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
-import { directConductReason, directConductSource, DIRECT_CONDUCT_REASON_PREFIX, MANUAL_ABSENCE_REASON_PREFIX } from "@/lib/manual-conduct-absences";
+import { directConductReason, directConductSource, parseAbsenceHours, type DirectConductAttendance, DIRECT_CONDUCT_REASON_PREFIX, MANUAL_ABSENCE_REASON_PREFIX } from "@/lib/manual-conduct-absences";
 // src/app/api/admin/conduite/overrides/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
@@ -217,6 +217,33 @@ export async function POST(req: NextRequest) {
     );
 
     const overrideRaw = toNumber(body.override_total);
+    // Attendance is independent of the official conduct average. Omitted values
+    // preserve previously entered attendance; two blanks explicitly clear it.
+    const hasTotal = Object.prototype.hasOwnProperty.call(body, "attendance_total");
+    const hasJustified = Object.prototype.hasOwnProperty.call(body, "attendance_justified");
+    let reportAttendance: DirectConductAttendance | null | undefined;
+    if (hasTotal || hasJustified) {
+      if (body.direct_entry !== true || !hasTotal || !hasJustified) {
+        return NextResponse.json({ error: "invalid_attendance_fields" }, { status: 400 });
+      }
+      const totalRaw = body.attendance_total;
+      const justifiedRaw = body.attendance_justified;
+      const emptyTotal = totalRaw === null || totalRaw === "";
+      const emptyJustified = justifiedRaw === null || justifiedRaw === "";
+      if (emptyTotal && emptyJustified) {
+        reportAttendance = null;
+      } else {
+        const total = parseAbsenceHours(totalRaw);
+        const justified = parseAbsenceHours(emptyJustified ? 0 : justifiedRaw);
+        if (total === null || justified === null || justified > total) {
+          return NextResponse.json({
+            error: "invalid_attendance_totals",
+            message: "Les absences et les justifications doivent être positives, et les justifiées ne peuvent pas dépasser le total.",
+          }, { status: 400 });
+        }
+        reportAttendance = { total, justified };
+      }
+    }
     let reason = cleanText(body.reason) || "Correction administrative";
     if (reason.startsWith(MANUAL_ABSENCE_REASON_PREFIX) || reason.startsWith(DIRECT_CONDUCT_REASON_PREFIX)) {
       return NextResponse.json({ error: "reserved_reason" }, { status: 400 });
@@ -311,7 +338,7 @@ export async function POST(req: NextRequest) {
         .eq("institution_id", institution_id).eq("class_id", class_id).eq("student_id", student_id)
         .eq("academic_year", academic_year).eq("period_code", period_code).maybeSingle();
       if (existing.error) throw existing.error;
-      reason = directConductReason(existing.data);
+      reason = directConductReason(existing.data, reportAttendance);
     }
 
     const now = new Date().toISOString();

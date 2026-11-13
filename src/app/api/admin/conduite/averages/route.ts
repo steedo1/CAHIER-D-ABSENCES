@@ -1,5 +1,5 @@
 import { overlayDirectConductSubjects } from "@/lib/server/direct-conduct-subject-averages";
-import { directConductSource } from "@/lib/manual-conduct-absences";
+import { directConductSource, directConductAttendance } from "@/lib/manual-conduct-absences";
 import { deductManualSanctions, MANUAL_ABSENCE_REASON_PREFIX, manualConductForRange, parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
 //src/app/api/conduite/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -465,6 +465,8 @@ function appreciationFromTotal(total: number): string {
 type MinutesRec = {
   absenceMinutes: number;
   absenceCount: number;
+  totalAbsenceHours: number;
+  justifiedAbsenceHours: number;
   tardyMinutes: number;
   tardyCount: number;
 };
@@ -1210,6 +1212,8 @@ export async function GET(req: NextRequest) {
       for (const it of j.items) {
         const abs = Number((it as any).absence_minutes ?? 0);
         const absCount = Number((it as any).absence_count ?? 0);
+        const totalHours = Number((it as any).absence_total_hours ?? absCount);
+        const justifiedHours = Number((it as any).absence_justified_hours ?? 0);
         const tar = Number((it as any).tardy_minutes ?? 0);
         const tardyCount = Number((it as any).tardy_count ?? 0);
         const sid = String((it as any).student_id);
@@ -1219,6 +1223,8 @@ export async function GET(req: NextRequest) {
         minutesMap.set(sid, {
           absenceMinutes: Number.isFinite(abs) ? abs : 0,
           absenceCount: Number.isFinite(absCount) ? absCount : 0,
+          totalAbsenceHours: Number.isFinite(totalHours) ? totalHours : 0,
+          justifiedAbsenceHours: Number.isFinite(justifiedHours) ? justifiedHours : 0,
           tardyMinutes: Number.isFinite(tar) ? tar : 0,
           tardyCount: Number.isFinite(tardyCount) ? tardyCount : 0,
         });
@@ -1345,6 +1351,8 @@ export async function GET(req: NextRequest) {
       const minutesRec = minutesMap.get(student_id) || {
         absenceMinutes: 0,
         absenceCount: 0,
+        totalAbsenceHours: 0,
+        justifiedAbsenceHours: 0,
         tardyMinutes: 0,
         tardyCount: 0,
       };
@@ -1564,6 +1572,13 @@ export async function GET(req: NextRequest) {
       const finalTotal = isOverridden
         ? Number(clamp(rawOverrideTotal, 0, officialTotalMax).toFixed(2))
         : calculatedTotal;
+      // Values for the printed report are informational; never feed them into
+      // assiduité penalties, sanctions or the CSCA composite score.
+      const directAttendance = directConductAttendance(override?.reason);
+      const bulletinAbsences = directAttendance?.total ??
+        (manualHours !== undefined ? manualHours : minutesRec.totalAbsenceHours);
+      const justifiedAbsences = directAttendance?.justified ??
+        (manualHours !== undefined ? 0 : minutesRec.justifiedAbsenceHours);
 
       const finalAvg20 =
         officialTotalMax === 20
@@ -1595,6 +1610,11 @@ export async function GET(req: NextRequest) {
         override_reason: override?.reason ?? null,
         override_updated_at: override?.updated_at ?? null,
         override_edited_by: override?.edited_by ?? null,
+        is_direct_conduct: !!directConductSource(override?.reason),
+        manual_report_absence_total: directAttendance?.total ?? null,
+        manual_report_absence_justified: directAttendance?.justified ?? null,
+        bulletin_absences: bulletinAbsences,
+        justified_absences: justifiedAbsences,
 
         // ✅ Politique spéciale éventuelle : total reste le champ officiel final.
         // Les champs ci-dessous permettent de contrôler le détail sans casser l'ancien front.
