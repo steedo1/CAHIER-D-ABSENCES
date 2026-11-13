@@ -83,6 +83,27 @@ export function gradesLockKey(role: GradesOfflineRole, evaluationId: string) {
 }
 
 export async function gradesGetJson<T = any>(url: string, key: string): Promise<T> {
+  // Les anciennes clés "grades:teacher:*" ne contiennent pas l'identité du
+  // professeur. Ne jamais réutiliser les classes, élèves ou notes en cache
+  // après un changement de compte sur le même téléphone.
+  // La saisie des notes requiert déjà Internet : lecture réseau sans repli
+  // sur un cache appartenant potentiellement à un autre utilisateur.
+  if (key.startsWith("grades:teacher:")) {
+    const response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "Accept": "application/json" },
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(String(data?.message || data?.error || `HTTP ${response.status}`));
+    }
+    if (!data || typeof data !== "object") {
+      throw new Error("Réponse invalide lors du chargement des données du professeur.");
+    }
+    return data as T;
+  }
   return await offlineGetJson<T>(url, key);
 }
 
