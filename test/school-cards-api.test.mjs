@@ -111,6 +111,45 @@ test("private composite signature: preview before save, retained original, stale
   assert.equal(loaded.configuration.signatures.general.original,"");assert.equal(JSON.stringify(loaded).includes(asset.original),false);
 });
 
+test("EPC cards load only the selected section's private signature and seal", async () => {
+  const db = schoolCardFixture(2, true);
+  const assets = db.admin("src/app/api/admin/school-cards/signature/route.ts");
+  const bytes = await sharp({ create: { width: 80, height: 40, channels: 3, background: "#163096" } }).png().toBuffer();
+  const config = await db.admin(settings).PUT(request("/api/admin/school-cards/settings", {
+    revision: 0, enabled: true, automaticSignature: true,
+  }, "PUT"));
+  assert.equal(config.status, 200);
+  let revision = 1;
+  for (const slot of ["french", "arabic"]) for (const kind of ["signature", "stamp"]) {
+    const url = new URL("https://cards.example.invalid/api/admin/school-cards/signature");
+    const form = new FormData();
+    form.set("file", new File([bytes], "test.png", { type: "image/png" }));
+    for (const [key, value] of Object.entries({ slot, kind, action: "save", revision: String(revision), authorized: "true" })) {
+      form.set(key, value);
+    }
+    const req = Object.assign(new Request(url, { method: "POST", headers: { origin: url.origin }, body: form }), { nextUrl: url });
+    const response = await assets.POST(req);
+    assert.equal(response.status, 200);
+    revision = (await response.json()).revision;
+  }
+  assert.equal(db.files.size, 8);
+  const roster = await (await db.admin(path).GET(request("/api/admin/school-cards"))).json();
+  assert.deepEqual(roster.signatureImages, {});
+  assert.deepEqual(roster.stampImages, {});
+  assert.equal(roster.configuration.stamps.french.original, "");
+
+  const cards = await Promise.all(db.tables.class_enrollments.map(async row => (await prepare(db, [row.id])).json()));
+  for (const [index, slot] of ["french", "arabic"].entries()) {
+    const card = cards[index];
+    assert.equal(card.items[0].signatureSlot, slot);
+    assert.deepEqual(Object.keys(card.signatureImages), [slot]);
+    assert.deepEqual(Object.keys(card.stampImages), [slot]);
+  }
+  const original = await assets.GET(request("/api/admin/school-cards/signature?slot=arabic&kind=stamp"));
+  assert.equal(original.status, 200);
+  assert.deepEqual(Buffer.from(await original.arrayBuffer()), bytes);
+});
+
 test("chunked signature upload rejects more than 6 MiB before multipart parsing or storage writes", async () => {
   const db = schoolCardFixture(1);
   const url = new URL("https://cards.example.invalid/api/admin/school-cards/signature");

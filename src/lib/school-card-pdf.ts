@@ -3,7 +3,7 @@ import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
 import { documentNationalEmblem } from "./document-national-emblem";
 import { CARD_WIDTH_MM, CARD_HEIGHT_MM, cardSheetPosition, schoolCardMinistry, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
 
-export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>> };
+export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>>; stamps?: Partial<Record<CardSlot, string>> };
 const mm = (value: number) => value * 72 / 25.4;
 const green = "#13633E", orange = "#F08426";
 function rtlText(doc: PDFKit.PDFDocument, label: string, x: number, y: number, w: number, h: number, size: number, align: "left" | "center" | "right") {
@@ -100,11 +100,11 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     text(doc, "Lieu de naissance :", 28, 38.6, 21, 3.1, 5.3);
     text(doc, card.birthPlace || "Non renseigné", 49, 38.4, 33, 3.8, 5.9);
     text(doc, "Classe :", 28, 42.7, 11.5, 3.2, 6.0);
-    text(doc, card.classLabel, 39.5, 42.5, card.signatureSlot ? 20 : 42.5, 4, 6.5);
+    const signature = card.signatureSlot ? assets.signatures[card.signatureSlot] : undefined;
+    text(doc, card.classLabel, 39.5, 42.5, signature ? 20 : 42.5, 4, 6.5);
 
-    // Signature/cachet remains optional, per institution and document policy.
-    if (card.signatureSlot) {
-      imageFit(doc, assets.signatures[card.signatureSlot], 61, 41.3, 21, 5.7);
+    if (signature) {
+      imageFit(doc, signature, 61, 41.3, 21, 5.7);
       doc.fillColor("#526058");
       text(doc, card.signatoryName, 58.5, 46.4, 24, 1.9, 3.7, "center");
     }
@@ -115,12 +115,16 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     // QR-free reverse: institutional identity and legal notices from the visual reference.
     // No scanning, QR drawing, or per-card PDF work on the server.
     imageFit(doc, assets.logo, 29, 3.1, 27.6, 17.5);
+    const stamp = card.signatureSlot ? assets.stamps?.[card.signatureSlot] : undefined;
+    // Each card reuses the once-loaded school seal, never another HTTP request.
+    // The seal stays on the reverse, without obscuring student details.
+    imageFit(doc, stamp, 59.3, 2.0, 22.5, 22.5);
     doc.fillColor("#17211B");
-    text(doc, school.name, 4.5, 22, 76.6, 4.6, 7.1, "center");
+    text(doc, school.name, 4.5, stamp ? 25.0 : 22, 76.6, stamp ? 3.7 : 4.6, stamp ? 6.5 : 7.1, "center");
 
     doc.fillColor("#27342B");
     text(doc, "Cette carte est strictement personnelle et obligatoire pour toutes les démarches scolaires et administratives.",
-      8, 29, 69.6, 6.5, 5.8, "center");
+      8, stamp ? 30.0 : 29, 69.6, stamp ? 6.0 : 6.5, 5.8, "center");
     text(doc, "Toute reproduction, altération ou utilisation frauduleuse est formellement interdite.",
       8, 36.5, 69.6, 5.6, 5.7, "center");
     text(doc, `En cas de perte, prière de contacter l’établissement au : ${school.phone || "coordonnées à renseigner"}`,
