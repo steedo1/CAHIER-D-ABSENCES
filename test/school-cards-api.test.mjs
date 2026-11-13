@@ -150,6 +150,64 @@ test("EPC cards load only the selected section's private signature and seal", as
   assert.deepEqual(Buffer.from(await original.arrayBuffer()), bytes);
 });
 
+test("EPC section cards use the real teaching class and scope each requested export", async () => {
+  const db = schoolCardFixture(2, true);
+  const school = db.tables.institutions[0];
+  school.code = "E020684";
+  const [french, arabic] = db.tables.classes;
+  const [home, arabicOnly] = db.tables.class_enrollments;
+  const policy = school.settings_json.school_student_programs_v1.years[year].classes;
+  policy[arabic.id].linkedStudentIds = [home.student_id];
+  db.tables.students[0].full_name_ar = "عبد الرحمن محمد أمين";
+  const api = db.admin(path);
+  const enabled = await db.admin(settings).PUT(request("/api/admin/school-cards/settings", {
+    revision: 0, enabled: true, automaticSignature: true,
+  }, "PUT"));
+  assert.equal(enabled.status, 200);
+  const configuration = db.tables.school_card_settings[0].configuration;
+  configuration.signatures = {};
+  for (const track of ["french", "arabic"]) {
+    const file = `school-cards/${db.legacyId}/${track}/processed.png`;
+    configuration.signatures[track] = { original: file, processed: file };
+    db.files.set(file, Buffer.from(track));
+  }
+
+  const roster = await (await api.GET(request("/api/admin/school-cards"))).json();
+  assert.deepEqual(new Set(roster.items.map(row => `${row.enrollmentId}:${row.classId}:${row.cardTrack}`)), new Set([
+    `${home.id}:${french.id}:french`, `${arabicOnly.id}:${arabic.id}:arabic`, `${home.id}:${arabic.id}:arabic`,
+  ]));
+  const linked = roster.items.find(row => row.administrativeClassId);
+  assert.equal(linked.name, "عبد الرحمن محمد أمين");
+  assert.deepEqual(roster.classes.find(row => row.id === arabic.id).tracks, ["arabic"]);
+
+  const prepareClasses = cards => api.POST(request("/api/admin/school-cards", { year, cards }));
+  const arabicResponse = await prepareClasses([{ enrollmentId: home.id, classId: arabic.id }]);
+  assert.equal(arabicResponse.status, 200);
+  const arabicPdf = await arabicResponse.json();
+  assert.equal(arabicPdf.items[0].signatureSlot, "arabic");
+  assert.deepEqual(Object.keys(arabicPdf.signatureImages), ["arabic"]);
+
+  const both = await (await prepareClasses([
+    { enrollmentId: home.id, classId: french.id },
+    { enrollmentId: home.id, classId: arabic.id },
+  ])).json();
+  assert.deepEqual(both.items.map(row => row.signatureSlot), ["french", "arabic"]);
+  assert.equal((await prepareClasses([{ enrollmentId: arabicOnly.id, classId: french.id }])).status, 403);
+  const legacy = await (await prepare(db, [home.id])).json();
+  assert.deepEqual(legacy.items.map(row => row.classId), [french.id]);
+
+  const educator = db.addActor("educator");
+  db.tables.educator_class_assignments = [
+    { institution_id: db.legacyId, profile_id: educator, class_id: arabic.id, level: null },
+  ];
+  const scopedApi = db.load(educator)(path);
+  const scoped = await (await scopedApi.GET(request("/api/admin/school-cards"))).json();
+  assert.deepEqual(scoped.items.map(row => row.cardTrack), ["arabic", "arabic"]);
+  assert.equal((await scopedApi.POST(request("/api/admin/school-cards", {
+    year, cards: [{ enrollmentId: home.id, classId: french.id }],
+  }))).status, 403);
+});
+
 test("chunked signature upload rejects more than 6 MiB before multipart parsing or storage writes", async () => {
   const db = schoolCardFixture(1);
   const url = new URL("https://cards.example.invalid/api/admin/school-cards/signature");
