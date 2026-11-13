@@ -775,8 +775,8 @@ function outboxRetryDelayMs(attempts: number) {
  */
 export async function offlineGetJson<T = any>(url: string, cacheKey: string): Promise<T> {
   const scoped = isTeacherCacheKey(cacheKey);
-  const isAdminBulletin = /^\/api\/admin\/grades\/bulletin(?:\?|$)/.test(url);
-  // Online official bulletins must not display an older cached NC snapshot.
+  const isAdminBulletin = /^\/api\/admin\/(?:grades\/bulletin|conduite\/averages)(?:\?|$)/.test(url);
+  // Online official bulletins AND conduct summaries must never show stale cached values.
   const canUseBulletinCache = () =>
     !isAdminBulletin || (typeof navigator !== "undefined" && navigator.onLine === false);
   const actor = scoped ? await attendanceCacheActor() : null;
