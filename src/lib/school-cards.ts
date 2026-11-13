@@ -1,3 +1,5 @@
+import { EPC_DIMBOKRO_CODE } from "./school-student-programs";
+
 export const CARD_WIDTH_MM = 85.6;
 export const CARD_HEIGHT_MM = 54;
 export const CARDS_PER_SHEET = 10;
@@ -20,10 +22,21 @@ export function defaultCardConfiguration(): CardConfiguration {
     documentPolicies: { cards: false, bulletins: false, attestations: false, other: false } };
 }
 export type CardSchool = {
-  id: string; name: string; phone: string | null; logo_url: string | null;
+  id: string; code?: string | null; name: string; phone: string | null; logo_url: string | null;
   country_name: string | null; country_motto: string | null; ministry_name: string | null;
   head_name: string | null; head_title: string | null;
 };
+export function usesEpcSchoolCardLayout(school: Pick<CardSchool, "code">) {
+  return school.code === EPC_DIMBOKRO_CODE;
+}
+
+export const EPC_CARD_USAGE = "Carte personnelle, à présenter pour les démarches scolaires et administratives.";
+export const EPC_CARD_REPRODUCTION = "Toute reproduction ou utilisation frauduleuse est interdite.";
+export const EPC_CARD_DIRECTOR = {
+  french: "Directeur des études françaises",
+  arabic: "Directeur des études arabes",
+} as const;
+
 export type CardYear = { code: string; start_date: string; end_date: string; is_current: boolean };
 export type CardClass = { id: string; label: string; level: string | null; academic_year: string };
 export type SchoolCard = {

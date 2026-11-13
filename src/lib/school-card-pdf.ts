@@ -1,7 +1,7 @@
 import type PDFKit from "pdfkit";
 import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
 import { documentNationalEmblem } from "./document-national-emblem";
-import { CARD_WIDTH_MM, CARD_HEIGHT_MM, cardSheetPosition, schoolCardMinistry, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
+import { CARD_WIDTH_MM, CARD_HEIGHT_MM, cardSheetPosition, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
 
 export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>>; stamps?: Partial<Record<CardSlot, string>> };
 const mm = (value: number) => value * 72 / 25.4;
@@ -51,6 +51,88 @@ function text(doc: PDFKit.PDFDocument, value: unknown, x: number, y: number, w: 
 function imageFit(doc: PDFKit.PDFDocument, source: string | undefined, x: number, y: number, w: number, h: number) {
   if (source) doc.image(source, mm(x), mm(y), { fit: [mm(w), mm(h)], align: "center", valign: "center" });
 }
+function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: CardSchool, assets: CardPrintAssets, side: "front" | "back") {
+  const ink = "#192923", muted = "#485D53", darkGreen = "#134A35", paper = "#F3F7F4";
+  const rect = (x: number, y: number, w: number, h: number, color: string, radius = 0) =>
+    doc.roundedRect(mm(x), mm(y), mm(w), mm(h), mm(radius)).fill(color);
+
+  if (side === "front") {
+    imageFit(doc, assets.logo, 4.5, 2.2, 8, 9.1);
+    imageFit(doc, documentNationalEmblem(school.country_name), 73, 2.2, 8.1, 9.1);
+    doc.fillColor(darkGreen);
+    text(doc, (school.country_name || "République de Côte d’Ivoire").toLocaleUpperCase("fr"), 14, 2.0, 57.6, 3.4, 6.6, "center");
+    doc.fillColor(muted);
+    text(doc, school.country_motto || "Union - Discipline - Travail", 14, 5.2, 57.6, 2.7, 5.35, "center");
+    const ministry = schoolCardMinistry(school, card.year);
+    if (ministry) text(doc, ministry, 14, 7.9, 57.6, 5, 5.05, "center");
+
+    rect(4, 13.5, 77.6, 7, darkGreen, 1.2);
+    doc.fillColor("#FFFFFF");
+    text(doc, "CARTE SCOLAIRE", 7.1, 14.6, 49, 5, 10);
+    text(doc, card.year, 59, 15.3, 19.2, 4, 7.6, "right");
+
+    rect(4, 23, 20, 24, paper, 1.4);
+    const photo = assets.photos.get(card.studentId);
+    imageFit(doc, photo, 4.6, 23.6, 18.8, 22.8);
+    if (!photo) {
+      doc.fillColor(muted);
+      text(doc, "Photo absente", 4.5, 33.1, 19, 5, 5.7, "center");
+    }
+
+    doc.fillColor(muted);
+    text(doc, "NOM ET PRÉNOMS", 28, 22.5, 53.6, 3.3, 5.7);
+    doc.fillColor(darkGreen);
+    text(doc, card.name, 28, 25.5, 53.6, 6.3, 10.5);
+    doc.fillColor(muted);
+    text(doc, "MATRICULE", 28, 32.0, 25, 2.6, 5.7);
+    text(doc, "CLASSE", 55, 32.0, 26.6, 2.6, 5.7);
+    doc.fillColor(ink);
+    text(doc, card.matricule, 28, 34.9, 25, 4, 8.1);
+    text(doc, card.classLabel, 55, 34.9, 26.6, 4, 8.1);
+    doc.fillColor(muted);
+    text(doc, "NÉ(E) LE", 28, 40.0, 23, 2.6, 5.7);
+    text(doc, "À", 51, 40.0, 23.5, 2.6, 5.7);
+    text(doc, "SEXE", 75, 40.0, 6.6, 2.6, 5.7);
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(card.birthdate) ? card.birthdate.split("-").reverse().join("/") : "";
+    doc.fillColor(ink);
+    text(doc, date, 28, 43.1, 22, 3.8, 7.5);
+    text(doc, card.birthPlace, 51, 43.1, 23.5, 5.8, 7.4);
+    text(doc, card.gender, 75, 43.1, 6.6, 3.8, 7.5);
+  } else {
+    rect(4, 3.9, 77.6, 7.6, paper, 1.2);
+    imageFit(doc, assets.logo, 5.4, 4.8, 5.8, 5.7);
+    doc.fillColor(darkGreen);
+    text(doc, school.name, 13, 5.6, 67, 4.8, 7.9);
+    const slot = card.signatureSlot;
+    const signature = slot ? assets.signatures[slot] : undefined;
+    const stamp = slot ? assets.stamps?.[slot] : undefined;
+    const showDirector = (slot === "french" || slot === "arabic") && Boolean(signature || stamp);
+    const noticeWidth = showDirector ? 33.8 : 75.6;
+    const noticeAlign = showDirector ? "left" : "center";
+    doc.fillColor(darkGreen);
+    text(doc, "UTILISATION DE LA CARTE", 5, 15.4, noticeWidth, 3.3, 6.2, noticeAlign);
+    doc.fillColor(ink);
+    text(doc, EPC_CARD_USAGE, 5, 19.2, noticeWidth, 11, 6.0, noticeAlign);
+    doc.fillColor(darkGreen);
+    text(doc, school.phone ? "En cas de perte, appeler le" : "En cas de perte, contacter", 5, 31.5, noticeWidth, 3.0, 6.1, noticeAlign);
+    text(doc, school.phone || "l’établissement.", 5, 35.0, noticeWidth, 4, 6.5, noticeAlign);
+    doc.fillColor(muted);
+    text(doc, EPC_CARD_REPRODUCTION, 5, 41.0, noticeWidth, 7.1, 5.6, noticeAlign);
+    if (showDirector && (slot === "french" || slot === "arabic")) {
+      rect(40, 14.1, 0.28, 33.1, "#CBDAD1");
+      doc.fillColor(darkGreen);
+      text(doc, EPC_CARD_DIRECTOR[slot].toLocaleUpperCase("fr"), 41, 14.3, 41.2, 3, 5.2, "center");
+      imageFit(doc, stamp, 50.6, 18.1, 22, 20.4);
+      imageFit(doc, signature, 49.1, 39.1, 25, 6.3);
+      doc.fillColor(ink);
+      text(doc, card.signatoryName, 41, 45.8, 41.2, 3.5, 6.5, "center");
+    }
+  }
+  rect(4, 50, 77.6, 0.35, "#DAA754");
+  doc.fillColor(side === "front" ? darkGreen : muted);
+  text(doc, side === "front" ? school.name : "Mon Cahier · www.mon-cahier.com", 4, 50.9, 77.6, 2.9, 5.5);
+}
+
 /** Shared by the browser exporter and the Node layout/performance tests.
  * Vector text and physical units: no screenshot scaling or server PDF work. */
 export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: CardSchool, assets: CardPrintAssets, side: "front" | "back", x = 0, y = 0) {
@@ -58,7 +140,9 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
   doc.roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).fillAndStroke("#FFFFFF", "#D7E1DB");
   doc.save().roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).clip();
   doc.font("card").fillColor(green);
-  if (side === "front") {
+  if (usesEpcSchoolCardLayout(school)) {
+    drawEpcSchoolCard(doc, card, school, assets, side);
+  } else if (side === "front") {
     // Reference-inspired identity layout. All assets are reused from the current
     // client-side PDF export; this section makes no additional HTTP/SQL calls.
     const nationalEmblem = documentNationalEmblem(school.country_name);

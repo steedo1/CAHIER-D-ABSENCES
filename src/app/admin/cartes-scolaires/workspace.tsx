@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { documentNationalEmblem } from "@/lib/document-national-emblem";
-import { CARD_PDF_BATCH, CARD_SLOTS, schoolCardMinistry, type CardRoster, type CardSlot, type PreparedCard } from "@/lib/school-cards";
+import { CARD_PDF_BATCH, CARD_SLOTS, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardRoster, type CardSchool, type CardSlot, type PreparedCard } from "@/lib/school-cards";
 
 const button = "rounded-xl bg-emerald-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40";
 const input = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900";
@@ -13,6 +13,76 @@ async function jsonRequest(url: string, init?: RequestInit) {
   return body;
 }
 type PdfFile = { url: string; name: string; count: number };
+function EpcCardPreview({ card, school, signature, stamp }: {
+  card: PreparedCard;
+  school: CardSchool;
+  signature?: string;
+  stamp?: string;
+}) {
+  const ministry = schoolCardMinistry(school, card.year);
+  const emblem = documentNationalEmblem(school.country_name);
+  const slot = card.signatureSlot;
+  const director = (slot === "french" || slot === "arabic") && (signature || stamp) ? EPC_CARD_DIRECTOR[slot] : null;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(card.birthdate) ? card.birthdate.split("-").reverse().join("/") : "—";
+  const frame = "relative aspect-[85.6/54] w-full max-w-lg overflow-hidden rounded-xl border border-[#CBDAD1] bg-white text-[#192923] shadow-md [container-type:inline-size]";
+  const label = "block text-[2.25cqw] font-semibold uppercase leading-tight text-[#485D53]";
+  return <>
+    <div aria-label="Aperçu recto" className={frame}>
+      <header className="absolute inset-x-[5%] top-[4%] grid grid-cols-[11%_1fr_11%] items-start gap-[4%] text-center leading-tight">
+        <div>{school.logo_url && <img src={school.logo_url} alt="Logo de l’établissement" className="aspect-square w-full object-contain" />}</div>
+        <div>
+          <p className="text-[2.8cqw] font-bold uppercase text-[#134A35]">{school.country_name || "République de Côte d’Ivoire"}</p>
+          <p className="text-[2.2cqw]">{school.country_motto || "Union - Discipline - Travail"}</p>
+          {ministry && <p className="text-[2.1cqw]">{ministry}</p>}
+        </div>
+        <div>{emblem && <img src={emblem} alt="Armoiries de la République de Côte d’Ivoire" className="aspect-square w-full object-contain" />}</div>
+      </header>
+      <div className="absolute inset-x-[4.7%] top-[25%] flex h-[13%] items-center justify-between rounded-md bg-[#134A35] px-[4%] font-bold text-white">
+        <h3 className="text-[4.1cqw]">CARTE SCOLAIRE</h3><p className="text-[3.15cqw]">{card.year}</p>
+      </div>
+      <div className="absolute inset-x-[4.7%] top-[42.6%] grid h-[45%] grid-cols-[26%_1fr] gap-[5%] leading-tight">
+        <div className="grid min-h-0 place-items-center overflow-hidden rounded-md bg-[#F3F7F4] text-[2.3cqw] text-[#485D53]">
+          {card.photoUrl ? <img alt="Photo de l’élève" src={card.photoUrl} className="h-full min-h-0 w-full object-contain" /> : "Photo absente"}
+        </div>
+        <div className="min-w-0 text-[3cqw]">
+          <p className={label}>Nom et prénoms</p>
+          <p dir="auto" className="line-clamp-2 font-bold leading-none text-[4.2cqw] text-[#134A35]">{card.name}</p>
+          <div className="mt-[2%] grid grid-cols-2 gap-x-[4%]">
+            <p className="min-w-0"><span className={label}>Matricule</span>{card.matricule || "—"}</p>
+            <p className="min-w-0"><span className={label}>Classe</span><bdi>{card.classLabel}</bdi></p>
+          </div>
+          <div className="mt-[2%] grid grid-cols-[40%_44%_16%]">
+            <p><span className={label}>Né(e) le</span>{date}</p>
+            <p className="min-w-0"><span className={label}>À</span><bdi>{card.birthPlace || "—"}</bdi></p>
+            <p><span className={label}>Sexe</span>{card.gender || "—"}</p>
+          </div>
+        </div>
+      </div>
+      <p className="absolute inset-x-[4.7%] top-[92.6%] truncate border-t border-[#DAA754] pt-[0.5%] text-[2.3cqw] font-semibold text-[#134A35]">{school.name}</p>
+    </div>
+    <div aria-label="Aperçu verso" className={frame}>
+      <header className="absolute inset-x-[4.7%] top-[7.2%] flex h-[14%] items-center gap-[3%] rounded-md bg-[#F3F7F4] px-[2%] text-[3.2cqw] font-bold leading-tight text-[#134A35]">
+        {school.logo_url && <img src={school.logo_url} alt="Logo de l’établissement" className="h-[76%] w-[8%] object-contain" />}
+        <h3>{school.name}</h3>
+      </header>
+      <div className={`absolute inset-x-[5.8%] top-[26.5%] grid h-[64%] gap-[3%] ${director ? "grid-cols-[43%_1fr]" : "text-center"}`}>
+        <div className="space-y-[8%] text-[2.55cqw] leading-tight">
+          <div><h4 className="mb-[5%] font-bold text-[#134A35]">UTILISATION DE LA CARTE</h4><p>{EPC_CARD_USAGE}</p></div>
+          <p className="font-semibold text-[#134A35]">{school.phone ? <>En cas de perte, appeler le<br />{school.phone}</> : "En cas de perte, contacter l’établissement."}</p>
+          <p className="text-[#485D53]">{EPC_CARD_REPRODUCTION}</p>
+        </div>
+        {director && <div className="grid min-h-0 grid-rows-[11%_58%_18%_13%] place-items-center border-l border-[#CBDAD1] pl-[3%] text-center leading-tight">
+          <h4 className="text-[2.15cqw] font-bold uppercase text-[#134A35]">{director}</h4>
+          <div className="h-full min-h-0 w-full">{stamp && <img src={stamp} alt={`Cachet de ${card.signatoryName}`} className="mx-auto h-full w-[60%] object-contain" />}</div>
+          <div className="h-full min-h-0 w-full">{signature && <img src={signature} alt={`Signature de ${card.signatoryName}`} className="mx-auto h-full w-[65%] object-contain" />}</div>
+          <p className="text-[2.65cqw] font-semibold">{card.signatoryName}</p>
+        </div>}
+      </div>
+      <p className="absolute inset-x-[4.7%] top-[92.6%] border-t border-[#DAA754] pt-[0.5%] text-[2.3cqw] text-[#485D53]">Mon Cahier · www.mon-cahier.com</p>
+    </div>
+  </>;
+}
+
 export default function SchoolCardsWorkspace() {
   const [roster, setRoster] = useState<CardRoster | null>(null), [year, setYear] = useState("");
   const [query, setQuery] = useState(""), [level, setLevel] = useState(""), [track, setTrack] = useState("");
@@ -122,7 +192,12 @@ export default function SchoolCardsWorkspace() {
         <label className="flex items-center gap-2 text-sm">Retournement duplex<select className={input} value={flip} onChange={e => setFlip(e.target.value as "long" | "short")}><option value="long">Bord long (habituel)</option><option value="short">Bord court</option></select></label>
         {!!warnings.length && <label className="flex items-center gap-2 rounded-lg bg-amber-50 p-3 text-sm"><input type="checkbox" checked={allowMissing} onChange={e => setAllowMissing(e.target.checked)} />J’accepte d’imprimer les {warnings.length} carte(s) dont des informations ou photos manquent.</label>}
         <div className="flex flex-wrap gap-3"><button className={button} disabled={busy || !chosen.length || chosen.some(row => row.revoked)} onClick={() => run(async () => { const cards = await prepare([chosen[0].enrollmentId]); setPreview(cards[0]); })}>Aperçu recto verso</button><button className={button} disabled={busy || !chosen.length || chosen.some(row => row.revoked) || (!!warnings.length && !allowMissing)} onClick={() => run(() => exportPdfs())}>Générer les PDF A4 / Imprimer</button><button className={input} disabled={busy || chosen.length !== 1 || chosen[0]?.revoked || (!!warnings.length && !allowMissing)} onClick={() => run(() => exportPdfs(true))}>PDF individuel 85,6 × 54 mm</button></div>
-        {preview && <div className="grid gap-4 xl:grid-cols-2">
+        {preview && usesEpcSchoolCardLayout(roster.school) && <div className="grid gap-4 xl:grid-cols-2">
+          <EpcCardPreview card={preview} school={roster.school}
+            signature={preview.signatureSlot ? signatureImages.current[preview.signatureSlot] : undefined}
+            stamp={preview.signatureSlot ? stampImages.current[preview.signatureSlot] : undefined} />
+        </div>}
+        {preview && !usesEpcSchoolCardLayout(roster.school) && <div className="grid gap-4 xl:grid-cols-2">
           <div aria-label="Aperçu recto" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md"><div className="grid grid-cols-[12%_1fr_12%] items-start gap-2"><div>{roster.school.logo_url && <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="aspect-square w-full object-contain" />}</div><div className="text-center text-[10px] text-emerald-900">{roster.school.country_name || "République de Côte d’Ivoire"}<br />{roster.school.country_motto || "Union - Discipline - Travail"}<br />{schoolCardMinistry(roster.school, preview.year)}</div><div>{documentNationalEmblem(roster.school.country_name) && <img src={documentNationalEmblem(roster.school.country_name)} alt="Armoiries de la République de Côte d’Ivoire" className="aspect-square w-full object-contain" />}</div></div><h3 className="mx-auto mt-1 w-fit rounded bg-emerald-800 px-6 font-bold text-white">CARTE SCOLAIRE</h3><p className="text-center text-[10px]">ANNÉE SCOLAIRE {preview.year}</p><div className="mt-3 flex gap-4">{preview.photoUrl ? <img alt="Photo de l’élève" className="aspect-[20/26] w-1/4 object-contain" src={preview.photoUrl} /> : <div className="grid w-1/4 place-items-center bg-slate-100 text-xs">Photo absente</div>}<div className="space-y-1 text-xs"><p>Matricule : <strong>{preview.matricule || "—"}</strong></p><p className="text-sm font-semibold">{preview.name}</p><p>Né(e) le : {preview.birthdate} · Sexe : {preview.gender}</p><p>Lieu : {preview.birthPlace}</p><p>Classe : {preview.classLabel}</p>{preview.signatureSlot && signatureImages.current[preview.signatureSlot] && <img alt={`Signature de ${preview.signatoryName}`} src={signatureImages.current[preview.signatureSlot]} className="ml-auto h-9 max-w-28 object-contain" />}</div></div><p className="absolute inset-x-4 bottom-3 border-t-2 border-orange-400 pt-1 text-center text-[11px] font-semibold">{roster.school.name}</p></div>
           <div aria-label="Aperçu verso" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md">
             {roster.school.logo_url ? <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="mx-auto h-[34%] max-w-[40%] object-contain" /> : <div className="mx-auto grid h-[34%] w-[40%] place-items-center text-xs text-slate-500">Logo de l’établissement</div>}

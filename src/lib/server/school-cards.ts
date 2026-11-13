@@ -26,7 +26,7 @@ export async function cardScope(write = false) {
   const roles = await getRequestRoles(client, service, access.user.id);
   const applicableRoles = (roles.data || []).filter(row => !row.institution_id || row.institution_id === access.instId || row.role === "super_admin").map(row => row.role);
   const [school, stored] = await Promise.all([
-    service.from("institutions").select("id,name,phone,logo_url,head_name,head_title,country_name,country_motto,ministry_name,settings_json,subscription_expires_at").eq("id", access.instId).single(),
+    service.from("institutions").select("id,code,name,phone,logo_url,head_name,head_title,country_name,country_motto,ministry_name,settings_json,subscription_expires_at").eq("id", access.instId).single(),
     service.from("school_card_settings").select("configuration,revision").eq("institution_id", access.instId).maybeSingle(),
   ]);
   if (school.error || stored.error) return { error: cardJson({ error: "configuration_cartes_indisponible" }, 503) } as const;
