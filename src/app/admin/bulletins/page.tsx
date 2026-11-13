@@ -398,6 +398,7 @@ type ConductItem = {
   absence_count?: number;
   bulletin_absences?: number;
   justified_absences?: number;
+  is_direct_conduct?: boolean;
   tardy_count?: number;
   absence_minutes?: number;
   tardy_minutes?: number;
@@ -2446,7 +2447,7 @@ function StudentBulletinCard({
                 <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
               </div>
               {/* Les rubriques désactivées à zéro ne figurent pas sur le bulletin. */}
-              {conductRubricMax && conduct?.breakdown && (
+              {conductRubricMax && conduct?.breakdown && !conduct.is_direct_conduct && (
                 <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[9px] text-slate-700">
                   {Number(conductRubricMax.assiduite) > 0 && (
                     <div>Assiduité : {conduct.breakdown.assiduite} / {conductRubricMax.assiduite}</div>
