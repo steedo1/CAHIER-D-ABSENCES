@@ -16,6 +16,7 @@ import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/l
 import { resolvePrimaryTeachingTrack } from "@/lib/grades/primary-evaluation-kind";
 import { primarySubjectScale, primarySubjectTeachingTrack, primarySubjectTeachingTracks } from "@/lib/grades/primary-subject-scale";
 import { readClassSubjects } from "@/lib/school-class-subjects";
+import { deduplicateTeacherClassOptions } from "@/lib/grades/teacher-class-options";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -241,7 +242,7 @@ export async function GET(_req: NextRequest) {
         const primary = it.school_cycle === "primary";
         const tracks = primary && subjectId
           ? primarySubjectTeachingTracks(institutionContext.settings, it.academic_year, it.class_id, subjectId) : [];
-        return (tracks.length ? tracks : [it.teaching_track]).map(track => ({ ...it, subject_name: subjectName, teaching_track: track,
+        return (tracks.length ? tracks : [it.teaching_track]).map(track => ({ ...it, subject_id: subjectId || it.subject_id, subject_name: subjectName, teaching_track: track,
           configured_scale: primary ? (track && subjectId ? primarySubjectScale(institutionContext.settings, {
             year: it.academic_year, classId: it.class_id, level: it.level, track,
             subjectId, subjectName: subjectName || "",
@@ -344,7 +345,10 @@ export async function GET(_req: NextRequest) {
       isTeacher ? "teacher" : isClassDevice ? "class_device" : "other";
 
     const hydrated = await hydrateSubjects(items);
-    return NextResponse.json({ mode, items: hydrated });
+    // Dédoublonner après la conversion alias établissement -> matière canonique.
+    // Le compte professeur n'affiche que les affectations lues pour son profil.
+    const visible = isTeacher ? deduplicateTeacherClassOptions(hydrated) : hydrated;
+    return NextResponse.json({ mode, items: visible });
   } catch (e: any) {
     console.error("[grades/classes] unexpected", e);
     return NextResponse.json({ mode: null, items: [] as TeachClass[] }, { status: 500 });
