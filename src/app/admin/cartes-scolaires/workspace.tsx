@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { documentNationalEmblem } from "@/lib/document-national-emblem";
-import { CARD_PDF_BATCH, CARD_SLOTS, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardRoster, type CardSchool, type CardSlot, type PreparedCard } from "@/lib/school-cards";
+import { CARD_PDF_BATCH, CARD_SLOTS, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, schoolCardSelectionKey, type SchoolCard, type CardRoster, type CardSchool, type CardSlot, type PreparedCard } from "@/lib/school-cards";
 
 const button = "rounded-xl bg-emerald-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40";
 const input = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900";
@@ -100,7 +100,7 @@ export default function SchoolCardsWorkspace() {
   useEffect(() => {
     const controller = new AbortController(); let current = true;
     setLoading(true); setError(""); setSelected(new Set()); setPreview(null); prepared.current.clear();
-    setClasses([]); setLevel(""); setTrack("");
+    setClasses([]); setLevel("");
     (async () => {
       let offset: number | null = 0, combined: CardRoster | null = null;
       do {
@@ -120,29 +120,51 @@ export default function SchoolCardsWorkspace() {
   }, [upload]);
   useEffect(() => { setProcessedPreview(""); setAuthorized(false); }, [upload, removeBackground, tolerance, crop, slot, kind]);
   useEffect(() => () => { urls.current.forEach(url => URL.revokeObjectURL(url)); }, []);
-  const visible = useMemo(() => (roster?.items || []).filter(row =>
-    (!classes.length || classes.includes(row.classId)) && (!level || row.level === level) && (!track || row.tracks.includes(track)) &&
-    `${row.name} ${row.matricule}`.toLocaleLowerCase("fr").includes(query.toLocaleLowerCase("fr"))), [roster, classes, level, track, query]);
-  const chosen = useMemo(() => (roster?.items || []).filter(row => selected.has(row.enrollmentId)), [roster, selected]);
+  const epc = roster ? usesEpcSchoolCardLayout(roster.school) : false;
+  const sectionItems = useMemo(() => (roster?.items || []).filter(row =>
+    !track || (epc ? row.cardTrack === track : row.tracks.includes(track))), [roster, epc, track]);
+  const sectionClasses = useMemo(() => (roster?.classes || []).filter(row =>
+    !epc || !track || row.tracks?.includes(track)), [roster, epc, track]);
+  const visible = useMemo(() => sectionItems.filter(row =>
+    (!classes.length || classes.includes(row.classId)) && (!level || row.level === level) &&
+    `${row.name} ${row.matricule}`.toLocaleLowerCase("fr").includes(query.toLocaleLowerCase("fr"))), [sectionItems, classes, level, query]);
+  const chosen = useMemo(() => sectionItems.filter(row => selected.has(schoolCardSelectionKey(row))), [sectionItems, selected]);
   const warnings = chosen.filter(row => row.warnings.length);
   async function run(action: () => Promise<void>) {
     setBusy(true); setError(""); setStatus("");
     try { await action(); } catch (e) { setError(e instanceof Error ? e.message : "Opération impossible"); } finally { setBusy(false); }
   }
-  async function prepare(ids: string[]) {
+  function selectSection(value: string) {
+    setTrack(value);
+    setClasses([]);
+    setLevel("");
+    setSelected(new Set());
+    setPreview(null);
+    setStatus("");
+    setError("");
+    setAllowMissing(false);
+    urls.current.forEach(url => URL.revokeObjectURL(url));
+    urls.current = [];
+    setFiles([]);
+  }
+  async function prepare(cards: SchoolCard[]) {
     if (!roster) return [];
-    const missing = ids.filter(id => !prepared.current.has(id));
-    for (let i = 0; i < missing.length; i += 100) {
-      const response = await jsonRequest("/api/admin/school-cards", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ year: roster.year, enrollmentIds: missing.slice(i, i + 100) }) });
-      response.items.forEach((row: PreparedCard) => prepared.current.set(row.enrollmentId, row));
+    const missing = cards.filter(card => !prepared.current.has(schoolCardSelectionKey(card)));
+    for (let i = 0; i < missing.length; i += CARD_PDF_BATCH) {
+      const refs = missing.slice(i, i + CARD_PDF_BATCH).map(({ enrollmentId, classId }) => ({ enrollmentId, classId }));
+      const response = await jsonRequest("/api/admin/school-cards", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year: roster.year, cards: refs }),
+      });
+      response.items.forEach((row: PreparedCard) => prepared.current.set(schoolCardSelectionKey(row), row));
       signatureImages.current = { ...signatureImages.current, ...response.signatureImages };
       stampImages.current = { ...stampImages.current, ...response.stampImages };
     }
-    return ids.map(id => prepared.current.get(id)!);
+    return cards.map(card => prepared.current.get(schoolCardSelectionKey(card))!);
   }
   async function exportPdfs(individual = false) {
     if (!roster) return;
-    const cards = await prepare(chosen.map(row => row.enrollmentId));
+    const cards = await prepare(chosen);
     const { exportSchoolCardPdf } = await import("@/lib/school-card-export");
     urls.current.forEach(url => URL.revokeObjectURL(url)); urls.current = []; setFiles([]);
     for (let start = 0; start < cards.length; start += CARD_PDF_BATCH) {
@@ -150,12 +172,25 @@ export default function SchoolCardsWorkspace() {
       const subset = cards.slice(start, start + CARD_PDF_BATCH);
       const { blob, missing } = await exportSchoolCardPdf(subset, roster.school, signatureImages.current, { individual, flip, stamps: stampImages.current });
       const url = URL.createObjectURL(blob); urls.current.push(url);
-      const name = `Cartes-${roster.year}-${start + 1}-${start + subset.length}.pdf`;
+      const section = track === "french" ? "-francais" : track === "arabic" ? "-arabe" : "";
+      const name = `Cartes${section}-${roster.year}-${start + 1}-${start + subset.length}.pdf`;
       setFiles(previous => [...previous, { url, name, count: subset.length }]);
       if (missing.length) setError(`Images non chargées : ${missing.join(", ")}. Rechargez les élèves avant de relancer l’export.`);
       await new Promise(resolve => setTimeout(resolve, 0));
     }
     setStatus(`${cards.length} carte(s) préparée(s). Téléchargez ou ouvrez les PDF ci-dessous pour imprimer.`);
+  }
+  async function changeRevocation(revoked: boolean) {
+    if (!roster) return;
+    const enrollmentIds = [...new Set(chosen.map(card => card.enrollmentId))];
+    for (let start = 0; start < enrollmentIds.length; start += CARD_PDF_BATCH) {
+      await jsonRequest("/api/admin/school-cards/revoke", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year: roster.year, enrollmentIds: enrollmentIds.slice(start, start + CARD_PDF_BATCH), revoked }),
+      });
+    }
+    setRefresh(value => value + 1);
+    setStatus(revoked ? "Cartes sélectionnées invalidées." : "Cartes sélectionnées réactivées.");
   }
   async function saveOptions(automaticSignature: boolean, enabled: boolean) {
     if (!roster) return;
@@ -180,18 +215,19 @@ export default function SchoolCardsWorkspace() {
         <div className="flex flex-wrap gap-3">
           <label className="grid gap-1 text-sm">Année scolaire<select aria-label="Année scolaire" className={input} value={roster.year} disabled={busy || loading} onChange={e => setYear(e.target.value)}>{roster.years.map(y => <option key={y.code}>{y.code}</option>)}</select></label>
           <label className="grid gap-1 text-sm">Recherche<input className={input} value={query} onChange={e => setQuery(e.target.value)} placeholder="Nom ou matricule" /></label>
-          <label className="grid gap-1 text-sm">Niveau<select className={input} value={level} onChange={e => setLevel(e.target.value)}><option value="">Tous</option>{[...new Set(roster.items.map(row => row.level))].filter(Boolean).sort().map(value => <option key={value}>{value}</option>)}</select></label>
-          <label className="grid gap-1 text-sm">Section<select className={input} value={track} onChange={e => setTrack(e.target.value)}><option value="">Toutes</option><option value="french">Française</option><option value="arabic">Arabe</option></select></label>
-          <label className="grid gap-1 text-sm">Classes (sélection multiple)<select className={input} multiple size={3} value={classes} onChange={e => setClasses(Array.from(e.target.selectedOptions).map(option => option.value))}>{roster.classes.map(row => <option value={row.id} key={row.id}>{row.label}</option>)}</select></label>
+          <label className="grid gap-1 text-sm">Niveau<select className={input} value={level} onChange={e => setLevel(e.target.value)}><option value="">Tous</option>{[...new Set(sectionItems.map(row => row.level))].filter(Boolean).sort().map(value => <option key={value}>{value}</option>)}</select></label>
+          <label className="grid gap-1 text-sm">Section<select className={input} value={track} disabled={busy || loading} onChange={e => selectSection(e.target.value)}><option value="">Toutes</option><option value="french">Français</option><option value="arabic">Arabe</option></select></label>
+          <label className="grid gap-1 text-sm">Classes (sélection multiple)<select className={input} multiple size={3} value={classes} onChange={e => setClasses(Array.from(e.target.selectedOptions).map(option => option.value))}>{sectionClasses.map(row => <option value={row.id} key={row.id}>{row.label}</option>)}</select></label>
         </div>
-        <div className="flex flex-wrap items-center gap-3"><button className={button} disabled={busy} onClick={() => setSelected(new Set(visible.map(row => row.enrollmentId)))}>Sélectionner les résultats ({visible.length})</button><button className={input} disabled={busy} onClick={() => setSelected(new Set(roster.items.map(row => row.enrollmentId)))}>Tout l’établissement ({roster.items.length})</button><button className={input} onClick={() => setSelected(new Set())}>Effacer la sélection</button><strong>{chosen.length} sélectionnée(s)</strong></div>
-        <div className="max-h-96 overflow-auto"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-slate-100"><tr><th className="p-2">Choix</th><th>Élève</th><th>Matricule</th><th>Classe</th><th>Contrôle</th></tr></thead><tbody>{visible.map(row => <tr key={row.enrollmentId} className="border-b"><td className="p-2"><input type="checkbox" aria-label={`Sélectionner ${row.name} ${row.classLabel}`} checked={selected.has(row.enrollmentId)} onChange={e => setSelected(previous => { const next = new Set(previous); e.target.checked ? next.add(row.enrollmentId) : next.delete(row.enrollmentId); return next; })} /></td><td className="py-3 font-medium">{row.name}</td><td>{row.matricule || "—"}</td><td>{row.classLabel}</td><td className={row.revoked ? "text-red-700" : "text-amber-800"}>{row.revoked ? "Carte invalidée" : row.warnings.join(" · ") || "Informations complètes"}</td></tr>)}</tbody></table></div>
+        <div className="flex flex-wrap items-center gap-3"><button className={button} disabled={busy} onClick={() => setSelected(new Set(visible.map(schoolCardSelectionKey)))}>Sélectionner les résultats ({visible.length})</button><button className={input} disabled={busy} onClick={() => setSelected(new Set(sectionItems.map(schoolCardSelectionKey)))}>{track ? "Toute la section" : "Tout l’établissement"} ({sectionItems.length})</button><button className={input} onClick={() => setSelected(new Set())}>Effacer la sélection</button><strong>{chosen.length} sélectionnée(s)</strong></div>
+        {!loading && visible.length === 0 && <p className="text-sm text-slate-600">Aucun élève ne correspond aux filtres.</p>}
+        <div className="max-h-96 overflow-auto"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-slate-100"><tr><th className="p-2">Choix</th><th>Élève</th><th>Matricule</th><th>Classe</th><th>Contrôle</th></tr></thead><tbody>{visible.map(row => <tr key={schoolCardSelectionKey(row)} className="border-b"><td className="p-2"><input type="checkbox" aria-label={`Sélectionner ${row.name} ${row.classLabel}`} checked={selected.has(schoolCardSelectionKey(row))} onChange={e => setSelected(previous => { const next = new Set(previous); e.target.checked ? next.add(schoolCardSelectionKey(row)) : next.delete(schoolCardSelectionKey(row)); return next; })} /></td><td className="py-3 font-medium">{row.name}</td><td>{row.matricule || "—"}</td><td>{row.classLabel}</td><td className={row.revoked ? "text-red-700" : "text-amber-800"}>{row.revoked ? "Carte invalidée" : row.warnings.join(" · ") || "Informations complètes"}</td></tr>)}</tbody></table></div>
       </section>
       <section className="space-y-4 rounded-2xl border bg-white p-5"><h2 className="text-lg font-semibold">Prévisualiser et imprimer</h2>
         <p className="text-sm">A4 : 2 colonnes × 5 cartes. Imprimez à <strong>100 % / taille réelle</strong>, sans ajustement. Faites d’abord un essai recto verso d’une feuille et mesurez une carte avant de lancer le lot.</p>
         <label className="flex items-center gap-2 text-sm">Retournement duplex<select className={input} value={flip} onChange={e => setFlip(e.target.value as "long" | "short")}><option value="long">Bord long (habituel)</option><option value="short">Bord court</option></select></label>
         {!!warnings.length && <label className="flex items-center gap-2 rounded-lg bg-amber-50 p-3 text-sm"><input type="checkbox" checked={allowMissing} onChange={e => setAllowMissing(e.target.checked)} />J’accepte d’imprimer les {warnings.length} carte(s) dont des informations ou photos manquent.</label>}
-        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy || !chosen.length || chosen.some(row => row.revoked)} onClick={() => run(async () => { const cards = await prepare([chosen[0].enrollmentId]); setPreview(cards[0]); })}>Aperçu recto verso</button><button className={button} disabled={busy || !chosen.length || chosen.some(row => row.revoked) || (!!warnings.length && !allowMissing)} onClick={() => run(() => exportPdfs())}>Générer les PDF A4 / Imprimer</button><button className={input} disabled={busy || chosen.length !== 1 || chosen[0]?.revoked || (!!warnings.length && !allowMissing)} onClick={() => run(() => exportPdfs(true))}>PDF individuel 85,6 × 54 mm</button></div>
+        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy || !chosen.length || chosen.some(row => row.revoked)} onClick={() => run(async () => { const cards = await prepare(chosen.slice(0, 1)); setPreview(cards[0]); })}>Aperçu recto verso</button><button className={button} disabled={busy || !chosen.length || chosen.some(row => row.revoked) || (!!warnings.length && !allowMissing)} onClick={() => run(() => exportPdfs())}>Générer les PDF A4 / Imprimer</button><button className={input} disabled={busy || chosen.length !== 1 || chosen[0]?.revoked || (!!warnings.length && !allowMissing)} onClick={() => run(() => exportPdfs(true))}>PDF individuel 85,6 × 54 mm</button></div>
         {preview && usesEpcSchoolCardLayout(roster.school) && <div className="grid gap-4 xl:grid-cols-2">
           <EpcCardPreview card={preview} school={roster.school}
             signature={preview.signatureSlot ? signatureImages.current[preview.signatureSlot] : undefined}
@@ -224,7 +260,10 @@ export default function SchoolCardsWorkspace() {
           <button className={button} disabled={busy || !upload} onClick={() => run(() => signatureAction("preview"))}>Voir le résultat avant validation</button>
           {processedPreview && <><div className="flex flex-wrap gap-5">{originalPreview && <figure><img alt="Original à conserver" className="h-32 max-w-xs object-contain" src={originalPreview} /><figcaption className="text-xs">Original</figcaption></figure>}<figure><img alt="Résultat à valider" className="h-32 max-w-xs border bg-slate-100 object-contain" src={processedPreview} /><figcaption className="text-xs">Résultat proposé — ajustez si des détails manquent</figcaption></figure></div><label className="block text-sm"><input type="checkbox" checked={authorized} onChange={e => setAuthorized(e.target.checked)} /> Je confirme l’autorisation de l’établissement et la fidélité de cette image.</label><button className={button} disabled={busy || !authorized} onClick={() => run(() => signatureAction("save"))}>Valider et conserver l’image</button></>}
         </fieldset>
-        <div className="flex flex-wrap gap-3 border-t pt-4"><button className={input} disabled={busy || !chosen.length} onClick={() => run(async () => { for (let i = 0; i < chosen.length; i += 100) await jsonRequest("/api/admin/school-cards/revoke", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ year: roster.year, enrollmentIds: chosen.slice(i,i+100).map(row => row.enrollmentId), revoked: true }) }); setRefresh(value => value + 1); setStatus("Cartes sélectionnées invalidées."); })}>Invalider les cartes sélectionnées</button><button className={input} disabled={busy || !chosen.length} onClick={() => run(async () => { for (let i = 0; i < chosen.length; i += 100) await jsonRequest("/api/admin/school-cards/revoke", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ year: roster.year, enrollmentIds: chosen.slice(i,i+100).map(row => row.enrollmentId), revoked: false }) }); setRefresh(value => value + 1); setStatus("Cartes sélectionnées réactivées."); })}>Réactiver les cartes sélectionnées</button></div>
+        <div className="flex flex-wrap gap-3 border-t pt-4">
+          <button className={input} disabled={busy || !chosen.length} onClick={() => run(() => changeRevocation(true))}>Invalider les cartes sélectionnées</button>
+          <button className={input} disabled={busy || !chosen.length} onClick={() => run(() => changeRevocation(false))}>Réactiver les cartes sélectionnées</button>
+        </div>
       </section>}
     </>}
   </main>;

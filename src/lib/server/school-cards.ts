@@ -4,9 +4,9 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getRequestRoles, requireInstitutionRole } from "@/lib/auth/server-context";
 import { educatorNeedsAssignedClasses, educatorAssignmentCoversClass, loadEducatorAssignments } from "@/lib/auth/educator-class-scope";
-import { CARD_READ_ROLES, CARD_WRITE_ROLES, CARD_SLOTS, defaultCardConfiguration, cardWarnings, signatureSlotForTracks, cardTeachingTrackForClass, type CardConfiguration, type SchoolCard, type CardSlot, type CardAsset } from "@/lib/school-cards";
+import { CARD_READ_ROLES, CARD_WRITE_ROLES, CARD_SLOTS, defaultCardConfiguration, cardWarnings, signatureSlotForTracks, cardTeachingTrackForClass, usesEpcSchoolCardLayout, type CardConfiguration, type SchoolCard, type CardSlot, type CardAsset } from "@/lib/school-cards";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
-import { readStudentProgramSettings, programsForStudent, isBilingualSchool } from "@/lib/school-student-programs";
+import { readStudentProgramSettings, programsForStudent, isBilingualSchool, expandPedagogicalEnrollments } from "@/lib/school-student-programs";
 import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
 import { issueCardToken, cardFingerprint } from "@/lib/school-card-token";
 import { isTrustedAppOrigin } from "@/lib/request-origin";
@@ -47,51 +47,84 @@ export async function loadCardClasses(ctx: CardScope, year: string) {
   const { data, error } = await ctx.service.from("classes").select("id,label,level,academic_year,education_type")
     .eq("institution_id", ctx.instId).eq("academic_year", year).order("id");
   if (error) throw Error("classes_unavailable");
-  return (data || []).filter(row => !ctx.educatorAssignments || educatorAssignmentCoversClass(row, ctx.educatorAssignments));
+  return data || [];
 }
 export async function loadCardEnrollments(ctx: CardScope, year: string, options: { offset?: number; enrollmentIds?: string[] } = {}) {
-  const classes = await loadCardClasses(ctx, year);
+  const allClasses = await loadCardClasses(ctx, year);
+  const classes = allClasses.filter(row => !ctx.educatorAssignments || educatorAssignmentCoversClass(row, ctx.educatorAssignments));
   if (!classes.length) return { items: [] as SchoolCard[], classes, nextOffset: null };
-  let query = ctx.service.from("class_enrollments").select("id,student_id,class_id,start_date,end_date,students:student_id!inner(id,institution_id,full_name,first_name,last_name,matricule,birthdate,birth_place,gender,photo_path,lifecycle_status)")
-    .eq("institution_id", ctx.instId).is("end_date", null).in("class_id", classes.map(row => row.id))
+  const includeLinks = usesEpcSchoolCardLayout(ctx.school);
+  const enrollmentClasses = includeLinks ? allClasses : classes;
+  let query = ctx.service.from("class_enrollments").select("id,student_id,class_id,start_date,end_date,students:student_id!inner(id,institution_id,full_name,full_name_ar,first_name,last_name,matricule,birthdate,birth_place,gender,photo_path,lifecycle_status)")
+    .eq("institution_id", ctx.instId).is("end_date", null).in("class_id", enrollmentClasses.map(row => row.id))
     .eq("students.institution_id", ctx.instId).order("id");
   if (options.enrollmentIds) query = query.in("id", options.enrollmentIds);
   else query = query.range(options.offset || 0, (options.offset || 0) + 499);
   const { data, error } = await query;
   if (error) throw Error("roster_unavailable");
-  const rows = (data || []).filter((row: any) => (!row.students.lifecycle_status || row.students.lifecycle_status === "active") &&
+  type EnrollmentStudent = NonNullable<NonNullable<typeof data>[number]["students"]>[number];
+  type CardEnrollment = Omit<NonNullable<typeof data>[number], "students"> & { students: EnrollmentStudent };
+  // The student_id foreign key embeds a single student in PostgREST.
+  const rows = ((data || []) as unknown as CardEnrollment[]).filter(row =>
+    (!row.students.lifecycle_status || row.students.lifecycle_status === "active") &&
     row.start_date && Date.parse(row.start_date + "T00:00:00Z") <= Date.now());
+  const cycles = parseSchoolCyclesSettings(ctx.school.settings_json);
+  const policy = readStudentProgramSettings(ctx.school.settings_json).years[year];
+  const byClass = new Map(enrollmentClasses.map(row => [row.id, {
+    ...row, cycle: resolveSchoolCycleForClass(row, cycles),
+  }]));
+  const permittedClasses = new Set(classes.map(row => row.id));
+  const memberships = rows.map(row => ({ row, classId: row.class_id }));
+  if (includeLinks) {
+    const homes = new Map(rows.map(row => [row.student_id, row]));
+    const administrativePairs = new Set(rows.map(row => `${row.student_id}:${row.class_id}`));
+    for (const link of expandPedagogicalEnrollments(cycles, policy, [...byClass.values()], rows)) {
+      const home = homes.get(link.student_id);
+      if (home && !administrativePairs.has(`${link.student_id}:${link.class_id}`)) {
+        memberships.push({ row: home, classId: link.class_id });
+      }
+    }
+  }
+  const visibleMemberships = memberships.filter(({ classId }) => permittedClasses.has(classId));
+  const visibleRows = [...new Set(visibleMemberships.map(({ row }) => row))];
   const revocations = new Set<string>();
-  for (let start = 0; start < rows.length; start += 100) {
+  for (let start = 0; start < visibleRows.length; start += 100) {
     const revoked = await ctx.service.from("school_card_revocations").select("enrollment_id,revoked")
-      .eq("institution_id", ctx.instId).in("enrollment_id", rows.slice(start,start+100).map(row => row.id));
+      .eq("institution_id", ctx.instId).in("enrollment_id", visibleRows.slice(start,start+100).map(row => row.id));
     if (revoked.error) throw Error("revocations_unavailable");
     (revoked.data || []).filter(row => row.revoked).forEach(row => revocations.add(row.enrollment_id));
   }
-  const paths = [...new Set(rows.map((row: any) => row.students.photo_path as string)
-    .filter((path, i) => path?.startsWith(`${ctx.instId}/${rows[i].student_id}/`)))];
+  const paths = [...new Set(visibleRows.flatMap(row => {
+    const path = row.students.photo_path;
+    return typeof path === "string" && path.startsWith(`${ctx.instId}/${row.student_id}/`) ? [path] : [];
+  }))];
   const photos = new Map<string, string>();
   if (paths.length) {
     const signed = await ctx.service.storage.from("student-photos").createSignedUrls(paths, 1800);
     if (signed.error) throw Error("photos_unavailable");
     (signed.data || []).forEach(row => { if (row.path && row.signedUrl) photos.set(row.path, row.signedUrl); });
   }
-  const cycles = parseSchoolCyclesSettings(ctx.school.settings_json), programs = readStudentProgramSettings(ctx.school.settings_json);
-  const byClass = new Map(classes.map(row => [row.id, row]));
-  const items: SchoolCard[] = rows.map((row: any) => {
-    const student = row.students, classe = byClass.get(row.class_id)!;
-    const cycle = resolveSchoolCycleForClass(classe, cycles);
-    const policy = programs.years[year]?.classes[row.class_id];
-    const tracks = programsForStudent(policy, row.student_id, cycles.teachingTracksByCycle[cycle] || []);
-    const item: SchoolCard = { enrollmentId: row.id, studentId: row.student_id, classId: row.class_id, year,
-      name: student.full_name || [student.last_name, student.first_name].filter(Boolean).join(" "), matricule: student.matricule || "",
-      birthdate: student.birthdate || "", birthPlace: student.birth_place || "", gender: student.gender || "",
-      classLabel: classe.label, level: classe.level || "", photoUrl: photos.get(student.photo_path) || null,
-      tracks, cardTrack: cardTeachingTrackForClass(tracks, policy?.tracks || []),
-      revoked: revocations.has(row.id), warnings: [] };
-    item.warnings = cardWarnings(item); return item;
-  });
-  return { items, classes, nextOffset: !options.enrollmentIds && data?.length === 500 ? (options.offset || 0) + 500 : null };
+  const items: SchoolCard[] = [];
+  for (const { row, classId } of visibleMemberships) {
+    const linked = row.class_id !== classId;
+    const student = row.students, classe = byClass.get(classId)!;
+    const classPolicy = policy?.classes[classe.id];
+    const tracks = linked ? classPolicy?.tracks || [] :
+      programsForStudent(classPolicy, row.student_id, cycles.teachingTracksByCycle[classe.cycle] || []);
+    const cardTrack = cardTeachingTrackForClass(tracks, classPolicy?.tracks || []);
+    const name = (includeLinks && cardTrack === "arabic" ? student.full_name_ar?.trim() : "") ||
+      student.full_name || [student.last_name, student.first_name].filter(Boolean).join(" ");
+    const item: SchoolCard = { enrollmentId: row.id, studentId: row.student_id, classId: classe.id, year,
+      ...(linked ? { administrativeClassId: row.class_id } : {}),
+      name, matricule: student.matricule || "", birthdate: student.birthdate || "", birthPlace: student.birth_place || "",
+      gender: student.gender || "", classLabel: classe.label, level: classe.level || "", photoUrl: photos.get(student.photo_path) || null,
+      tracks, cardTrack, revoked: revocations.has(row.id), warnings: [] };
+    item.warnings = cardWarnings(item);
+    items.push(item);
+  }
+  return { items, classes: classes.map(classe => ({
+    ...classe, tracks: policy?.classes[classe.id]?.tracks || [],
+  })), nextOffset: !options.enrollmentIds && data?.length === 500 ? (options.offset || 0) + 500 : null };
 }
 async function cardAssetImages(ctx: CardScope, kind: "signatures" | "stamps", slots: ReadonlySet<CardSlot>) {
   const images: Partial<Record<CardSlot, string>> = {};
@@ -123,7 +156,7 @@ export function prepareSchoolCards(ctx: CardScope, items: SchoolCard[], origin: 
     // Bilingual images require a configured teaching director; no general fallback.
     const signatureSlot = ctx.configuration.automaticSignature && slot && signatoryName &&
       (ctx.configuration.signatures?.[slot] || ctx.configuration.stamps?.[slot]) ? slot : null;
-    const token = issueCardToken({ institutionId: ctx.instId, studentId: item.studentId, enrollmentId: item.enrollmentId, classId: item.classId, year: item.year });
+    const token = issueCardToken({ institutionId: ctx.instId, studentId: item.studentId, enrollmentId: item.enrollmentId, classId: item.administrativeClassId ?? item.classId, year: item.year });
     return { ...item, token, verificationUrl: `${origin}/verifier-carte#${token}`, fingerprint: cardFingerprint(token), signatureSlot, signatoryName,
       warnings: ctx.configuration.automaticSignature && !signatureSlot ? [...item.warnings, "Signature non appliquée : responsable ou section à configurer"] : item.warnings };
   });
