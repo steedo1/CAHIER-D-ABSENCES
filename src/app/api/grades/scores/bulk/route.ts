@@ -1,3 +1,4 @@
+import { gradeClassAccess } from "@/lib/server/teacher-grade-assignments";
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
@@ -48,6 +49,7 @@ type EvaluationRow = {
   scale: number | null;
   class_id: string;
   subject_id: string | null;
+  teacher_id: string | null;
   grading_period_id: string | null;
   is_published: boolean | null;
   published_at: string | null;
@@ -255,7 +257,7 @@ function assertEvaluationEditable(ge: EvaluationRow) {
 ========================================== */
 export async function POST(req: NextRequest) {
   try {
-    const { user, profile, srv } = await getContext();
+    const { supa, user, profile, srv } = await getContext();
 
     if (!user || !profile || !srv) {
       return bad("UNAUTHENTICATED", 401);
@@ -304,6 +306,7 @@ export async function POST(req: NextRequest) {
           "scale",
           "class_id",
           "subject_id",
+          "teacher_id",
           "grading_period_id",
           "is_published",
           "published_at",
@@ -343,6 +346,10 @@ export async function POST(req: NextRequest) {
         institution_id: profile.institution_id,
       });
 
+      return bad("FORBIDDEN", 403);
+    }
+
+    if (!await gradeClassAccess(supa, srv, user.id, profile.institution_id, ge.class_id, ge.subject_id, { evaluationOwner: ge.teacher_id })) {
       return bad("FORBIDDEN", 403);
     }
 

@@ -1,3 +1,4 @@
+import { gradeClassAccess, resolveTeacherGradeSubject } from "@/lib/server/teacher-grade-assignments";
 import { mayReadDirectAverages } from "@/lib/server/direct-average-access";
 import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
@@ -163,7 +164,7 @@ export async function GET(req: NextRequest) {
 
     const class_id = String(searchParams.get("class_id") || "").trim();
     const rawSubject = searchParams.get("subject_id");
-    const subject_id = rawSubject ? String(rawSubject).trim() || null : null;
+    let subject_id = rawSubject ? String(rawSubject).trim() || null : null;
 
     const grading_period_id =
       normalizeUuidLike(searchParams.get("grading_period_id")) ??
@@ -238,6 +239,15 @@ export async function GET(req: NextRequest) {
       | null
       | undefined;
 
+    if (!institution_id || !cls) return bad("FORBIDDEN", 403);
+    if (subject_id) {
+      subject_id = await resolveTeacherGradeSubject(svc, institution_id, subject_id);
+      if (!subject_id) return bad("FORBIDDEN", 403);
+    }
+    const access = await gradeClassAccess(supabase, svc, auth.user.id, institution_id, class_id, subject_id, { allowFileCorrespondent: true });
+    if (access !== "teacher" && access !== "staff") return bad("FORBIDDEN", 403);
+    if (subject_id) searchParams.set("subject_id", subject_id);
+
     const lycee = isLyceeLevel(classLevel ?? null);
     let primaryFrancoArabic = false;
     let componentSettings: unknown = null;
@@ -264,7 +274,7 @@ export async function GET(req: NextRequest) {
 
     console.log(LOG_PREFIX, "class info", cls);
 
-    let academic_year = academic_year_param || computeAcademicYear(new Date());
+    let academic_year = academic_year_param || cls.academic_year || computeAcademicYear(new Date());
 
     if (grading_period_id) {
       if (!institution_id) {
@@ -297,8 +307,10 @@ export async function GET(req: NextRequest) {
       academic_year = period.academic_year;
     }
 
+    if (access === "teacher" && academic_year !== cls.academic_year) return bad("FORBIDDEN", 403);
+
     // 1) Évaluations concernées
-    let qEvals = supabase
+    let qEvals = svc
       .from("grade_evaluations")
       .select(
         "id, scale, coeff, class_id, subject_id, subject_component_id, grading_period_id, is_published, eval_kind, title"
@@ -313,6 +325,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (published_only) qEvals = qEvals.eq("is_published", true);
+    else if (access === "teacher") qEvals = qEvals.eq("teacher_id", auth.user.id);
 
     const { data: evals, error: eErr } = await qEvals;
     if (eErr) return bad(eErr.message || "EVALS_FETCH_FAILED", 400);
@@ -398,9 +411,7 @@ export async function GET(req: NextRequest) {
       ? "v_grade_scores_official_for_reports"
       : "student_grades";
 
-    const gradesClient = published_only ? svc : supabase;
-
-    const { data: grades, error: gErr } = await gradesClient
+    const { data: grades, error: gErr } = await svc
       .from(gradesSource)
       .select("evaluation_id, student_id, score")
       .in("evaluation_id", evaluationIds);

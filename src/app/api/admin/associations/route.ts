@@ -1,7 +1,6 @@
 // src/app/api/admin/associations/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireInstitutionAccess } from "../_helpers/institutionAccess";
 import { normalizePhone as toE164 } from "@/lib/phone";
 import { isEducationType, type EducationType } from "@/lib/education-organization";
 
@@ -114,23 +113,9 @@ async function resolveOrCreateParent(
 }
 
 export async function POST(req: NextRequest) {
-  const supa = await getSupabaseServerClient();
-  const srv  = getSupabaseServiceClient();
-
-  // Auth appelant
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  // Etablissement
-  const { data: me, error: meErr } = await supa
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
-
-  const inst = (me?.institution_id as string) || null;
-  if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  const access = await requireInstitutionAccess({ allowedRoles: ["admin", "super_admin", "file_correspondent", "educator"] });
+  if ("error" in access) return access.error;
+  const { srv, institutionId: inst, roles } = access;
 
   // Payload
   const body = await req.json();
@@ -144,6 +129,11 @@ export async function POST(req: NextRequest) {
     | "parent_students"
     | "guardian_notifications"
     | "teacher_discipline";
+
+  const assignmentChange = type?.startsWith("teacher_") || type === "class_set_head_teacher";
+  if (assignmentChange && !["admin", "super_admin", "file_correspondent"].some(role => roles.has(role))) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
 
   /* ───────────────────────────────────────────────────
      AFFECTATIONS / INSERT (existant)

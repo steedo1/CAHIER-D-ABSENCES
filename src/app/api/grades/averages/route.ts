@@ -1,3 +1,4 @@
+import { gradeClassAccess } from "@/lib/server/teacher-grade-assignments";
 import { mayReadDirectAverages } from "@/lib/server/direct-average-access";
 import { directAverageMap, finalSubjectAverage } from "@/lib/grades/direct-subject-averages";
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
@@ -456,6 +457,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 1) Évaluations concernées
+    const access = await gradeClassAccess(supabase, svc, auth.user.id, cls.institution_id, class_id, effectiveSubjectId, { allowFileCorrespondent: true });
+    if (!access || (access === "teacher" && academic_year !== cls.academic_year)) return bad("FORBIDDEN", 403);
+
     let qEvals = svc
       .from("grade_evaluations")
       .select(
@@ -474,6 +478,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (published_only) qEvals = qEvals.eq("is_published", true);
+    else if (access === "teacher") qEvals = qEvals.eq("teacher_id", auth.user.id);
 
     const { data: evals, error: eErr } = await qEvals;
 

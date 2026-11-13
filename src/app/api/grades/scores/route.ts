@@ -1,3 +1,4 @@
+import { gradeClassAccess } from "@/lib/server/teacher-grade-assignments";
 // src/app/api/grades/scores/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -63,7 +64,7 @@ async function ensureEvalAccess(
 ) {
   const { data: ev, error } = await srv
     .from("grade_evaluations")
-    .select("id,class_id")
+    .select("id,class_id,subject_id,teacher_id")
     .eq("id", evalId)
     .maybeSingle();
 
@@ -120,9 +121,9 @@ export async function GET(req: NextRequest) {
       }, 400);
     }
 
-    const { profile, srv } = await getContext();
+    const { supa, user, profile, srv } = await getContext();
 
-    if (!profile || !srv) {
+    if (!user || !profile || !srv) {
       return json(
         {
           ok: false,
@@ -136,7 +137,7 @@ export async function GET(req: NextRequest) {
 
     const ev = await ensureEvalAccess(srv, evalId, profile.institution_id);
 
-    if (!ev) {
+    if (!ev || !await gradeClassAccess(supa, srv, user.id, profile.institution_id, ev.class_id, ev.subject_id, { evaluationOwner: ev.teacher_id })) {
       return json(
         {
           ok: false,

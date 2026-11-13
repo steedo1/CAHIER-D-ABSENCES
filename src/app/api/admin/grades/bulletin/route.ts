@@ -2410,7 +2410,7 @@ async function loadBulletin(
   /* 4) Evaluations publiées (peut être vide) */
   let evals: EvalRow[] = [];
   {
-    let evalQuery = supabase
+    let evalQuery = srvClient
       .from("grade_evaluations")
       .select(
         "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id"
@@ -3094,7 +3094,7 @@ async function loadBulletin(
       for (let from = 0; ; from += PAGE_SIZE) {
         const to = from + PAGE_SIZE - 1;
 
-        const { data, error } = await supabase
+        const { data, error } = await srvClient
           .from("v_grade_scores_official_for_reports")
           .select("evaluation_id, student_id, score")
           .in("evaluation_id", evalIds)
@@ -3805,7 +3805,7 @@ async function loadBulletin(
     // 1) Matières vues sur toute l'année (évaluations publiées)
     const annualSubjectIds = new Set<string>(orderedSubjectIds);
     if (yearFrom && yearTo) {
-      const { data: yEvals, error: yErr } = await supabase
+      const { data: yEvals, error: yErr } = await srvClient
         .from("grade_evaluations")
         .select("subject_id")
         .eq("class_id", classId)
@@ -3971,7 +3971,7 @@ async function loadBulletin(
       });
 
       // evals publiées sur la période
-      const { data: eData, error: eErr } = await supabase
+      const { data: eData, error: eErr } = await srvClient
         .from("grade_evaluations")
         .select("id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id")
         .eq("class_id", classId)

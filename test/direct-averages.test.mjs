@@ -11,9 +11,10 @@ const year='2026-2027', period=n=>`50000000-0000-0000-0000-00000000000${n}`;
 function state() {
   const s=fixtureState();
   s.tables.subjects=[{id:subject,name:'Mathématiques',code:'MATH'}];
-  s.tables.institution_subjects=[{id:local,institution_id:school,subject_id:subject,subjects:s.tables.subjects[0]}];
+  s.tables.institution_subjects=[{id:local,institution_id:school,subject_id:subject,is_active:true,subjects:s.tables.subjects[0]}];
   s.tables.institution_subject_coeffs=[{institution_id:school,subject_id:subject,level:'3e',coeff:2,include_in_average:true}];
   s.tables.class_teachers=[{id:randomUUID(),institution_id:school,class_id:classroom,teacher_id:user,subject_id:local,start_date:'2026-09-14',end_date:null}];
+  s.tables.academic_years=[{institution_id:school,code:year,is_current:true}];
   s.tables.grade_adjustments=[];
   s.calls=[];return s;
 }
@@ -23,7 +24,13 @@ function sdk(s) {
   s.calls.push({table,method});
   if(s.failReadTable===table&&method==='GET')return Response.json({code:'XX000',message:'lecture indisponible'},{status:503});
   let rows=[...(s.tables[table]||[])];
-  const matches=(r,key,condition)=>{
+  if(table==='class_teachers'&&url.searchParams.get('select')?.includes('institution_subjects!inner')) {
+   rows=rows.map(row=>({...row,classes:s.tables.classes.find(item=>item.id===row.class_id),
+    institution_subjects:s.tables.institution_subjects.find(item=>item.id===row.subject_id)}));
+  }
+  const matches=(row,key,condition)=>{
+   const actual=key.split('.').reduce((item, field)=>item?.[field],row);
+   const r={[key]:actual};
    const i=condition.indexOf('.'), op=condition.slice(0,i), value=condition.slice(i+1);
    if(op==='eq')return String(r[key])===value;
    if(op==='is')return value==='null'?r[key]==null:String(r[key])===value;

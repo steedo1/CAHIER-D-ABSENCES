@@ -1,3 +1,4 @@
+import { teacherHasGradeAssignment } from "@/lib/server/teacher-grade-assignments";
 // src/app/api/teacher/grades/scores/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -191,40 +192,9 @@ export async function GET(req: NextRequest) {
       return bad("FORBIDDEN", 403);
     }
 
-    // 5) Vérification accès enseignant si non admin/éducateur
-    if (!privileged) {
-      let allowed = ev.teacher_id === user.id;
-
-      if (!allowed) {
-        const { data: ctRows, error: ctErr } = await srv
-          .from("class_teachers")
-          .select("id")
-          .eq("institution_id", profile.institution_id)
-          .eq("class_id", ev.class_id)
-          .eq("teacher_id", user.id)
-          .limit(1);
-
-        if (ctErr) {
-          console.error("[teacher/grades/scores] class_teachers error", {
-            evaluation_id,
-            class_id: ev.class_id,
-            teacher_id: user.id,
-            error: ctErr,
-          });
-        }
-
-        allowed = Array.isArray(ctRows) && ctRows.length > 0;
-      }
-
-      if (!allowed) {
-        console.warn("[teacher/grades/scores] access denied", {
-          evaluation_id,
-          class_id: ev.class_id,
-          teacher_id: user.id,
-        });
-
-        return bad("Accès refusé à cette évaluation", 403);
-      }
+    if (!privileged && (!roles.has("teacher") || ev.teacher_id !== user.id ||
+        !await teacherHasGradeAssignment(srv, profile.institution_id, user.id, ev.class_id, ev.subject_id))) {
+      return bad("Accès refusé à cette évaluation", 403);
     }
 
     // 6) Lecture réelle des notes avec le client service

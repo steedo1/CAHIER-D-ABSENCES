@@ -16,12 +16,11 @@ import { getConfiguredScoringScale, parseFrancoArabicReportsSettings } from "@/l
 import { resolvePrimaryTeachingTrack } from "@/lib/grades/primary-evaluation-kind";
 import { primarySubjectScale, primarySubjectTeachingTrack, primarySubjectTeachingTracks } from "@/lib/grades/primary-subject-scale";
 import { readClassSubjects } from "@/lib/school-class-subjects";
+import { loadTeacherGradeAssignments } from "@/lib/server/teacher-grade-assignments";
 import { deduplicateTeacherClassOptions } from "@/lib/grades/teacher-class-options";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type Mode = "teacher" | "class_device" | "other";
 
 type TeachClass = {
   class_id: string;
@@ -129,6 +128,7 @@ function classContext(
 }
 
 export async function GET(_req: NextRequest) {
+  const headers = { "Cache-Control": "private, no-store" };
   try {
     const supabase = await getSupabaseServerClient();
     const {
@@ -136,7 +136,7 @@ export async function GET(_req: NextRequest) {
     } = await supabase.auth.getUser();
 
     if (!user) {
-      return NextResponse.json({ mode: null, items: [] as TeachClass[] });
+      return NextResponse.json({ mode: null, items: [] as TeachClass[] }, { headers });
     }
 
     // 1) Profil + établissement
@@ -148,10 +148,10 @@ export async function GET(_req: NextRequest) {
 
     if (profErr) {
       console.error("[grades/classes] profile error", profErr);
-      return NextResponse.json({ mode: null, items: [] as TeachClass[] });
+      return NextResponse.json({ mode: null, items: [] as TeachClass[] }, { headers });
     }
     if (!profile?.institution_id) {
-      return NextResponse.json({ mode: null, items: [] as TeachClass[] });
+      return NextResponse.json({ mode: null, items: [] as TeachClass[] }, { headers });
     }
 
     // 2) Rôles
@@ -253,30 +253,42 @@ export async function GET(_req: NextRequest) {
 
     /* ───────── Mode PROF ───────── */
     if (isTeacher) {
-      const { data: rows, error } = await supabase
-        .from("class_teachers")
-        .select("class_id,subject_id,classes:class_id(label,level,academic_year,education_type,formation_code,formation_level_code)")
-        .eq("teacher_id", profile.id)
-        .eq("institution_id", profile.institution_id)
-        .is("end_date", null);
+      const assignments = await loadTeacherGradeAssignments(srv, teacherInstitutionId, profile.id);
+      for (const row of assignments) {
+        const cls = row.classes;
+        const subject = row.institution_subjects;
+        const subjectId = subject.subject_id;
+        const selectedSubjects = classCurriculum?.years[cls.academic_year]?.classes[row.class_id];
+        if (selectedSubjects && !selectedSubjects.includes(subjectId)) continue;
 
-      if (error) {
-        console.error("[grades/classes] teacher class_teachers error", error);
-      } else {
-        (rows ?? []).forEach((row: any) => {
-          const cls = row.classes || {};
-          if (!row.class_id || !cls) return;
-          pushUnique({
+        const subjectName = subject.custom_name || subject.subjects.name;
+        const context = classContext(cls, formationLabels, row.class_id, cls.academic_year, subjectId, school, programs, reports);
+        const tracks = context.school_cycle === "primary"
+          ? primarySubjectTeachingTracks(institutionContext.settings, cls.academic_year, row.class_id, subjectId)
+          : [];
+        for (const track of tracks.length ? tracks : [context.teaching_track]) {
+          items.push({
+            ...context,
             class_id: row.class_id,
-            class_label: String(cls.label ?? "—"),
-            level: String(cls.level ?? "—"),
-            subject_id: row.subject_id || null,
-            subject_name: null,
-              academic_year: String(cls.academic_year || ""),
-            ...classContext(cls, formationLabels, String(row.class_id), String(cls.academic_year || ""), row.subject_id || null, school, programs, reports),
+            class_label: cls.label,
+            level: cls.level,
+            subject_id: subjectId,
+            subject_name: subjectName,
+            academic_year: cls.academic_year,
+            teaching_track: track,
+            configured_scale: context.school_cycle === "primary" && track
+              ? primarySubjectScale(institutionContext.settings, {
+                  year: cls.academic_year, classId: row.class_id, level: cls.level,
+                  track, subjectId, subjectName,
+                })
+              : context.configured_scale,
           });
-        });
+        }
       }
+      const visible = deduplicateTeacherClassOptions(items).sort((a, b) =>
+        a.class_label.localeCompare(b.class_label, "fr", { numeric: true }) ||
+        (a.subject_name || "").localeCompare(b.subject_name || "", "fr"));
+      return NextResponse.json({ mode: "teacher", profile_id: profile.id, items: visible }, { headers });
     }
 
     /* ───────── Mode COMPTE CLASSE ───────── */
@@ -337,20 +349,12 @@ export async function GET(_req: NextRequest) {
       }
 
       const hydrated = await hydrateSubjects(items);
-      return NextResponse.json({ mode: "class_device", items: hydrated });
+      return NextResponse.json({ mode: "class_device", items: hydrated }, { headers });
     }
 
-    // ───────── Mode par défaut (autres rôles) ─────────
-    const mode: Mode =
-      isTeacher ? "teacher" : isClassDevice ? "class_device" : "other";
-
-    const hydrated = await hydrateSubjects(items);
-    // Dédoublonner après la conversion alias établissement -> matière canonique.
-    // Le compte professeur n'affiche que les affectations lues pour son profil.
-    const visible = isTeacher ? deduplicateTeacherClassOptions(hydrated) : hydrated;
-    return NextResponse.json({ mode, items: visible });
+    return NextResponse.json({ mode: "other", items: [] }, { headers });
   } catch (e: any) {
     console.error("[grades/classes] unexpected", e);
-    return NextResponse.json({ mode: null, items: [] as TeachClass[] }, { status: 500 });
+    return NextResponse.json({ mode: null, items: [] as TeachClass[] }, { status: 500, headers });
   }
 }

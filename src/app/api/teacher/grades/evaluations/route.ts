@@ -1,3 +1,4 @@
+import { teacherHasGradeAssignment } from "@/lib/server/teacher-grade-assignments";
 import { primaryScaleTitle, primaryStorageScale, withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { createHash } from "node:crypto";
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
@@ -289,45 +290,6 @@ async function resolveSubjectIds(
   }
 
   return { raw, globalId: raw, instId: null };
-}
-
-async function teacherHasAccessToClass(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
-  institutionId: string,
-  profileId: string,
-  classId: string,
-  subjectCandidates: string[],
-  requireExactSubjectAssignment = false,
-) {
-  if (subjectCandidates.length > 0) {
-    const { data } = await srv
-      .from("class_teachers")
-      .select("id")
-      .eq("institution_id", institutionId)
-      .eq("class_id", classId)
-      .eq("teacher_id", profileId)
-      .is("end_date", null)
-      .in("subject_id", subjectCandidates)
-      .limit(1);
-
-    if (Array.isArray(data) && data.length > 0) return true;
-  }
-
-  // Franco-Arabic programmes cannot authorize an unrelated discipline
-  // solely because a teacher has another assignment in the same class.
-  // The fallback stays available for classic schools.
-  if (requireExactSubjectAssignment) return false;
-
-  const { data: anyRow } = await srv
-    .from("class_teachers")
-    .select("id")
-    .eq("institution_id", institutionId)
-    .eq("class_id", classId)
-    .eq("teacher_id", profileId)
-    .is("end_date", null)
-    .limit(1);
-
-  return !!(Array.isArray(anyRow) && anyRow.length > 0);
 }
 
 /** Only the assigned subject of the authenticated primary class-device can be accessed. */
@@ -696,15 +658,8 @@ export async function GET(req: NextRequest) {
     const classDeviceAccess = await primaryClassDeviceAccess(
       srv, roles, institutionId, profileId, classId, subjectCandidates, schoolCtx,
     );
-    const accessOk = isPrivileged(roles) || classDeviceAccess
-      ? true
-      : await teacherHasAccessToClass(
-          srv,
-          institutionId,
-          profileId,
-          classId,
-          subjectCandidates
-        );
+    const accessOk = isPrivileged(roles) || classDeviceAccess ||
+      (roles.has("teacher") && await teacherHasGradeAssignment(srv, institutionId, profileId, classId, globalId));
 
     if (!accessOk) {
       return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
@@ -740,6 +695,7 @@ export async function GET(req: NextRequest) {
       .select(EVALUATION_SELECT)
       .eq("class_id", classId);
 
+    if (roles.has("teacher") && !isPrivileged(roles)) q = q.eq("academic_year", schoolCtx.year);
     if (!isPrivileged(roles) && !classDeviceAccess) {
       q = q.eq("teacher_id", profileId);
     }
@@ -748,13 +704,13 @@ export async function GET(req: NextRequest) {
       q = q.eq("grading_period_id", gradingPeriodId);
     }
 
-    if (subjectComponentId) {
-      q = q.eq("subject_component_id", subjectComponentId);
-    } else if (subjectParam === null) {
+    if (subjectParam === null) {
       q = q.is("subject_id", null);
     } else {
       q = q.eq("subject_id", globalId as string);
     }
+
+    if (subjectComponentId) q = q.eq("subject_component_id", subjectComponentId);
 
     const { data, error } = await q.order("eval_date", { ascending: true });
 
@@ -971,21 +927,11 @@ export async function POST(req: NextRequest) {
       (x): x is string => !!x
     );
 
-    const requireExactSubjectAssignment =
-      !isPrivileged(roles) && await requiresDirectGradePublication(srv, institutionId);
     const classDeviceAccess = await primaryClassDeviceAccess(
       srv, roles, institutionId, profileId, class_id, subjectCandidates, schoolCtx,
     );
-    const accessOk = isPrivileged(roles) || classDeviceAccess
-      ? true
-      : await teacherHasAccessToClass(
-          srv,
-          institutionId,
-          profileId,
-          class_id,
-          subjectCandidates,
-          requireExactSubjectAssignment
-        );
+    const accessOk = isPrivileged(roles) || classDeviceAccess ||
+      (roles.has("teacher") && await teacherHasGradeAssignment(srv, institutionId, profileId, class_id, globalId));
 
     if (!accessOk) {
       return NextResponse.json(
@@ -1011,6 +957,10 @@ export async function POST(req: NextRequest) {
         { ok: false, error: "invalid_eval_date" },
         { status: 400 }
       );
+    }
+
+    if (roles.has("teacher") && !isPrivileged(roles) && academic_year !== schoolCtx.year) {
+      return NextResponse.json({ ok: false, error: "evaluation_year_mismatch" }, { status: 400 });
     }
 
     let grading_period_id: string | null = null;
@@ -1219,7 +1169,8 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    if (!isPrivileged(roles) && ev.teacher_id !== profileId) {
+    if (!isPrivileged(roles) && (!roles.has("teacher") || ev.teacher_id !== profileId ||
+        !await teacherHasGradeAssignment(srv, institutionId, profileId, ev.class_id, ev.subject_id))) {
       return NextResponse.json(
         { ok: false, error: "forbidden" },
         { status: 403 }
@@ -1421,7 +1372,8 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    if (!isPrivileged(roles) && ev.teacher_id !== profileId) {
+    if (!isPrivileged(roles) && (!roles.has("teacher") || ev.teacher_id !== profileId ||
+        !await teacherHasGradeAssignment(srv, institutionId, profileId, ev.class_id, ev.subject_id))) {
       return NextResponse.json(
         { ok: false, error: "forbidden" },
         { status: 403 }

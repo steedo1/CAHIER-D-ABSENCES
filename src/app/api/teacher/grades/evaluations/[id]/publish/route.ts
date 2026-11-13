@@ -1,3 +1,4 @@
+import { gradeClassAccess } from "@/lib/server/teacher-grade-assignments";
 // src/app/api/teacher/grades/evaluations/[id]/publish/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -43,7 +44,7 @@ export async function PATCH(
     // Vérifier accès/présence de l'évaluation (RLS)
     const { data: row, error: qErr } = await supabase
       .from("grade_evaluations")
-      .select("id, is_published, class_id")
+      .select("id, is_published, class_id, subject_id, teacher_id")
       .eq("id", cleanId)
       .single();
 
@@ -62,21 +63,20 @@ export async function PATCH(
     const { data: schoolClass, error: classError } = await service.from("classes")
       .select("institution_id").eq("id", row.class_id).maybeSingle();
     if (classError || !schoolClass?.institution_id) return bad("SCHOOL_SCOPE_UNAVAILABLE", 503);
+    const access = await gradeClassAccess(supabase, service, auth.user.id, schoolClass.institution_id,
+      row.class_id, row.subject_id, { evaluationOwner: row.teacher_id });
+    if (access !== "teacher" && access !== "staff") return bad("FORBIDDEN", 403);
     if (await requiresDirectGradePublication(service, schoolClass.institution_id)) {
       return bad("USE_OFFICIAL_DIRECT_PUBLICATION_WORKFLOW", 409);
     }
 
-    // Update (idempotent)
-    const { data: upd, error: uErr } = await supabase
-      .from("grade_evaluations")
-      .update({ is_published }) // published_at géré par trigger côté DB (false->true)
-      .eq("id", cleanId)
-      .select("*")
-      .single();
+    const { PATCH: publishEvaluation } = await import("../../route");
+    return publishEvaluation(new NextRequest(req.url, {
+      method: "PATCH",
+      headers: req.headers,
+      body: JSON.stringify({ evaluation_id: cleanId, is_published }),
+    }));
 
-    if (uErr) return bad(uErr.message || "UPDATE_FAILED", 400);
-
-    return NextResponse.json({ ok: true, item: upd });
   } catch (e: any) {
     return bad(e?.message || "INTERNAL_ERROR", 500);
   }

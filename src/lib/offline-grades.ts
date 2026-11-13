@@ -82,7 +82,7 @@ export function gradesLockKey(role: GradesOfflineRole, evaluationId: string) {
   return `${prefix(role)}:lock:${part(evaluationId)}`;
 }
 
-export async function gradesGetJson<T = any>(url: string, key: string): Promise<T> {
+export async function gradesGetJson<T = any>(url: string, key: string, signal?: AbortSignal): Promise<T> {
   // Les anciennes clés "grades:teacher:*" ne contiennent pas l'identité du
   // professeur. Ne jamais réutiliser les classes, élèves ou notes en cache
   // après un changement de compte sur le même téléphone.
@@ -93,6 +93,7 @@ export async function gradesGetJson<T = any>(url: string, key: string): Promise<
       method: "GET",
       credentials: "include",
       cache: "no-store",
+      signal,
       headers: { "Accept": "application/json" },
     });
     const data = await response.json().catch(() => null);

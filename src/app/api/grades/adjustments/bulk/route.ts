@@ -1,3 +1,4 @@
+import { teacherHasGradeAssignment } from "@/lib/server/teacher-grade-assignments";
 import { DIRECT_AVERAGES_PREFIX } from "@/lib/grades/direct-subject-averages";
 // src/app/api/grades/adjustments/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -102,20 +103,7 @@ async function getAccessModeForClass(
     return { mode: "admin", institutionId: cls.institution_id as string };
   }
 
-  if (roleSet.has("teacher")) {
-    const { data: ct } = await svc
-      .from("class_teachers")
-      .select("id")
-      .eq("class_id", classId)
-      .eq("teacher_id", profile.id)
-      .eq("institution_id", profile.institution_id)
-      .is("end_date", null)
-      .maybeSingle();
-
-    if (ct) {
-      return { mode: "teacher", institutionId: cls.institution_id as string };
-    }
-  }
+  if (roleSet.has("teacher")) return { mode: "teacher", institutionId: cls.institution_id as string };
 
   if (roleSet.has("class_device")) {
     if (await classDeviceMayAccessClass({
@@ -317,6 +305,15 @@ export async function POST(req: NextRequest) {
 
       academic_year = period.academic_year;
       grading_period_id = period.id;
+    }
+
+    if (mode === "teacher") {
+      const { data: classroom, error } = await svc.from("classes").select("academic_year")
+        .eq("id", class_id).eq("institution_id", institutionId).maybeSingle();
+      if (error || classroom?.academic_year !== academic_year ||
+          !await teacherHasGradeAssignment(svc, institutionId, auth.user.id, class_id, subject_id)) {
+        return bad("FORBIDDEN", 403);
+      }
     }
 
     if (

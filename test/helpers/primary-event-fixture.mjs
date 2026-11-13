@@ -38,7 +38,7 @@ function setup(level = "CP1", bilingual = true) {
   db.users.set(teacher, { user: db.user(teacher, "teacher@example.invalid") });
   db.tables.profiles.push({ id: teacher, institution_id: db.legacyId, display_name: "Instituteur titulaire" });
   db.tables.user_roles.push({ profile_id: teacher, institution_id: db.legacyId, role: "teacher" });
-  db.tables.class_teachers = [{ id: "assignment", teacher_id: teacher, institution_id: db.legacyId, class_id: cls, subject_id: math, end_date: null, classes: db.tables.classes[0] }];
+  db.tables.class_teachers = [{ id: "assignment", teacher_id: teacher, institution_id: db.legacyId, class_id: cls, subject_id: db.tables.institution_subjects[0].id, start_date: "2026-08-01", end_date: null, classes: db.tables.classes[0] }];
   db.tables.academic_years = [{ institution_id: db.legacyId, code: year, is_current: true }];
   db.tables.institution_grade_publication_settings = [{ institution_id: db.legacyId, require_admin_validation: true, auto_push_on_publish: false }];
   db.tables.grade_periods = []; db.tables.grade_evaluations = []; db.tables.grade_published_scores = [];

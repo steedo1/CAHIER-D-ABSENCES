@@ -1,3 +1,4 @@
+import { gradeClassAccess } from "@/lib/server/teacher-grade-assignments";
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { parsePrimaryEventTitle } from "@/lib/grades/primary-evaluation-events";
 import { specializedGradeStudentsAllowed } from "@/lib/server/school-linked-class-roster";
@@ -36,6 +37,7 @@ type GradePeriodRow = {
 type EvaluationRow = {
   title: string | null;
   teacher_id: string | null;
+  subject_id: string | null;
   id: string;
   scale: number | null;
   class_id: string;
@@ -156,27 +158,6 @@ function assertEvaluationEditable(ge: EvaluationRow) {
   };
 }
 
-async function isPrivilegedUser(userId: string) {
-  const svc = getSupabaseServiceClient();
-
-  const { data, error } = await svc
-    .from("user_roles")
-    .select("role")
-    .eq("profile_id", userId);
-
-  if (error) return false;
-
-  const roles = Array.isArray(data)
-    ? data.map((r: any) => String(r.role || ""))
-    : [];
-
-  return (
-    roles.includes("super_admin") ||
-    roles.includes("admin") ||
-    roles.includes("educator")
-  );
-}
-
 export async function POST(req: NextRequest) {
   try {
     const supabase = await getSupabaseServerClient();
@@ -232,6 +213,7 @@ export async function POST(req: NextRequest) {
           "scale",
           "class_id",
           "teacher_id",
+          "subject_id",
           "is_published",
           "published_at",
           "publication_status",
@@ -264,7 +246,13 @@ export async function POST(req: NextRequest) {
 
     // ✅ CHECK CLÔTURE PAR FIN DE PÉRIODE
     // On vérifie seulement pour les profils non privilégiés.
-    const privileged = await isPrivilegedUser(auth.user.id);
+    const { data: gradeClass, error: classError } = await srv.from("classes")
+      .select("id,institution_id,level").eq("id", ge.class_id).maybeSingle();
+    if (classError || !gradeClass?.institution_id) return bad("TEACHER_CLASS_LOOKUP_FAILED", 503);
+    const access = await gradeClassAccess(supabase, srv, auth.user.id, gradeClass.institution_id,
+      ge.class_id, ge.subject_id, { evaluationOwner: ge.teacher_id });
+    if (access !== "teacher" && access !== "staff") return bad("FORBIDDEN", 403);
+    const privileged = access === "staff";
 
     if (!privileged && ge.grading_period_id) {
       const { data: periodRow, error: periodErr } = await srv
@@ -296,28 +284,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Primaire : toute sauvegarde de l'enseignant devient officielle.
-    // Le cycle est résolu depuis l'établissement, jamais depuis le navigateur.
-    const { data: gradeClass, error: classError } = await srv.from("classes")
-      .select("id,institution_id,level").eq("id", ge.class_id).maybeSingle();
-    if (classError || !gradeClass) return bad("TEACHER_CLASS_LOOKUP_FAILED", 503);
     const primaryClass = /^(CP[12]|CE[12]|CM[12])(?:\b|$)/i
       .test(String(gradeClass.level || "").trim());
     let autoPublishPrimary = false;
-    if (ge.teacher_id === auth.user.id) {
-      const cls = gradeClass;
-      if (cls?.institution_id) {
-        const { data: inst, error: instError } = await srv.from("institutions")
-          .select("settings_json").eq("id", cls.institution_id).maybeSingle();
-        if (instError || !inst) return bad("TEACHER_INSTITUTION_LOOKUP_FAILED", 503);
-        const settings = parseSchoolCyclesSettings(inst.settings_json);
-        if (settings.enabled && resolveSchoolCycleForClass(cls, settings) === "primary") {
-          const { data: roles, error: rolesError } = await srv.from("user_roles")
-            .select("role").eq("profile_id", auth.user.id).eq("institution_id", cls.institution_id);
-          if (rolesError) return bad("TEACHER_ROLE_LOOKUP_FAILED", 503);
-          autoPublishPrimary = (roles || []).some((row: any) => row.role === "teacher");
-        }
-      }
+    if (access === "teacher" && primaryClass) {
+      const { data: inst, error: instError } = await srv.from("institutions")
+        .select("settings_json").eq("id", gradeClass.institution_id).maybeSingle();
+      if (instError || !inst) return bad("TEACHER_INSTITUTION_LOOKUP_FAILED", 503);
+      const settings = parseSchoolCyclesSettings(inst.settings_json);
+      autoPublishPrimary = settings.enabled && resolveSchoolCycleForClass(gradeClass, settings) === "primary";
     }
 
     // Le primaire peut reprendre une ancienne soumission et corriger ses notes.

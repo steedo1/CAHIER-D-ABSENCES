@@ -1,6 +1,7 @@
 // src/app/api/admin/create-users/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { isTrustedAppOrigin } from "@/lib/request-origin";
+import { requireInstitutionAccess } from "../_helpers/institutionAccess";
 
 type NewUserInput = {
   email: string;
@@ -14,11 +15,20 @@ type Body = {
 };
 
 export async function POST(req: NextRequest) {
-  const supabase = getSupabaseServiceClient();
-  const { institution_id, users }: Body = await req.json();
+  const access = await requireInstitutionAccess({ allowedRoles: ["admin", "super_admin"] });
+  if ("error" in access) return access.error;
+  const supabase = access.srv;
+  if (!isTrustedAppOrigin(req)) return NextResponse.json({ error: "invalid_origin" }, { status: 403 });
+  const { institution_id, users } = (await req.json().catch(() => ({}))) as Body;
 
   if (!institution_id || !Array.isArray(users))
     return NextResponse.json({ error: "payload invalide" }, { status: 400 });
+
+  const validRoles = new Set(["teacher", "parent", "educator", "student", "infirmier"]);
+  if (access.roles.has("super_admin")) validRoles.add("admin");
+  if (institution_id !== access.institutionId || users.some(user => !user || !validRoles.has(user.role))) {
+    return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  }
 
   const results: Array<{ email: string; ok: boolean; user_id?: string; error?: string }> = [];
 

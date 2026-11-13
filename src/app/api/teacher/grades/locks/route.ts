@@ -1,3 +1,4 @@
+import { gradeClassAccess } from "@/lib/server/teacher-grade-assignments";
 // src/app/api/teacher/grades/locks/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest) {
   // 1) Valider accès à l'évaluation via RLS (côté prof)
   const { data: ev, error: evErr } = await supa
     .from("grade_evaluations")
-    .select("id,class_id")
+    .select("id,class_id,subject_id,teacher_id")
     .eq("id", evaluation_id)
     .single();
 
@@ -100,7 +101,8 @@ export async function GET(req: NextRequest) {
   }
 
   // 2) Sécurité supplémentaire : classe ∈ établissement
-  const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id);
+  const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id) &&
+    await gradeClassAccess(supa, srv, user.id, profile.institution_id, ev.class_id, ev.subject_id, { evaluationOwner: ev.teacher_id });
   if (!allowed) return NextResponse.json({ ok: true, locked: false }, { status: 200 });
 
   // 3) Lire le lock via service role
@@ -163,7 +165,8 @@ export async function POST(req: NextRequest) {
   }
 
   // 2) Sécurité supplémentaire : classe ∈ établissement
-  const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id);
+  const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id) &&
+    await gradeClassAccess(supa, srv, user.id, profile.institution_id, ev.class_id, ev.subject_id, { evaluationOwner: ev.teacher_id });
   if (!allowed) return bad("FORBIDDEN", 403);
 
   // 3) Feature absente ?

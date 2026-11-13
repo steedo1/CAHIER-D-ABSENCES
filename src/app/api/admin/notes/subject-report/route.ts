@@ -1,3 +1,4 @@
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 // src/app/api/admin/notes/subject-report/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -249,7 +250,7 @@ export async function GET(req: NextRequest) {
   /* ───────── Notes pour cette classe + matière ─────────
      On part de la vue GRADE_FLAT_MARKS pour récupérer directement mark_20 & eval_coeff
   ─────────────────────────────────────────────────────── */
-  let marksQuery = supabase
+  let marksQuery = getSupabaseServiceClient()
     .from("grade_flat_marks")
     .select(
       "evaluation_id, student_id, mark_20, eval_coeff, eval_date, academic_year"

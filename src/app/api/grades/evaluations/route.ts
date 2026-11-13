@@ -1,3 +1,4 @@
+import { gradeClassAccess } from "@/lib/server/teacher-grade-assignments";
 import { withPrimaryDisplayScale } from "@/lib/grades/primary-storage-scale";
 import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
@@ -725,7 +726,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as EvalRow[] });
     }
 
-    const { user, profile, srv } = await getContext();
+    const { supa, user, profile, srv } = await getContext();
 
     if (!user || !profile || !srv) {
       console.warn("[grades/evaluations] GET unauthorized", {
@@ -800,6 +801,9 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const access = await gradeClassAccess(supa, srv, user.id, profile.institution_id, classId, effectiveSubjectId);
+    if (!access) return NextResponse.json({ items: [] as EvalRow[] }, { status: 403 });
+
     let q = srv
       .from("grade_evaluations")
       .select(EVALUATION_SELECT)
@@ -809,6 +813,9 @@ export async function GET(req: NextRequest) {
       q = q.eq("grading_period_id", gradingPeriodId);
     }
 
+    if (access === "teacher") {
+      q = q.eq("teacher_id", user.id).eq("subject_id", effectiveSubjectId);
+    }
     // 🔹 Priorité à la sous-matière si présente
     if (subjectComponentId) {
       q = q.eq("subject_component_id", subjectComponentId);
@@ -886,7 +893,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { user, profile, srv } = await getContext();
+    const { supa, user, profile, srv } = await getContext();
 
     if (!user || !profile || !srv) {
       console.warn("[grades/evaluations] POST unauthorized", {
@@ -935,6 +942,11 @@ export async function POST(req: NextRequest) {
       profile.institution_id,
       subjRaw
     );
+
+    const access = await gradeClassAccess(supa, srv, user.id, profile.institution_id, class_id, resolvedSubjectId);
+    if (!access) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+    }
 
     const componentValidation = await validateSubjectComponentForClass(
       srv,
@@ -991,6 +1003,14 @@ export async function POST(req: NextRequest) {
         { ok: false, error: "INVALID_EVAL_DATE" },
         { status: 400 }
       );
+    }
+
+    if (access === "teacher") {
+      const { data: classroom, error } = await srv.from("classes").select("academic_year")
+        .eq("id", class_id).eq("institution_id", profile.institution_id).maybeSingle();
+      if (error || classroom?.academic_year !== academic_year) {
+        return NextResponse.json({ ok: false, error: "evaluation_year_mismatch" }, { status: 400 });
+      }
     }
 
     let grading_period_id: string | null = null;
@@ -1134,9 +1154,9 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    const { profile, srv } = await getContext();
+    const { supa, user, profile, srv } = await getContext();
 
-    if (!profile || !srv) {
+    if (!user || !profile || !srv) {
       return NextResponse.json(
         { ok: false, error: "unauthorized" },
         { status: 401 }
@@ -1145,7 +1165,7 @@ export async function PATCH(req: NextRequest) {
 
     const { data: evalRow, error: evErr } = await srv
       .from("grade_evaluations")
-      .select("id,class_id,is_published,publication_status,grading_period_id")
+      .select("id,class_id,subject_id,teacher_id,is_published,publication_status,grading_period_id")
       .eq("id", evaluation_id)
       .maybeSingle();
 
@@ -1175,6 +1195,10 @@ export async function PATCH(req: NextRequest) {
         { ok: false, error: "forbidden" },
         { status: 403 }
       );
+    }
+
+    if (!await gradeClassAccess(supa, srv, user.id, profile.institution_id, evalRow.class_id, evalRow.subject_id, { evaluationOwner: evalRow.teacher_id })) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
     }
 
     const roles = await getUserRoles(srv, profile.id, profile.institution_id);
@@ -1280,9 +1304,9 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    const { profile, srv } = await getContext();
+    const { supa, user, profile, srv } = await getContext();
 
-    if (!profile || !srv) {
+    if (!user || !profile || !srv) {
       return NextResponse.json(
         { ok: false, error: "unauthorized" },
         { status: 401 }
@@ -1296,6 +1320,7 @@ export async function DELETE(req: NextRequest) {
           "id",
           "class_id",
           "subject_id",
+          "teacher_id",
           "title",
           "is_published",
           "publication_status",
@@ -1357,6 +1382,10 @@ export async function DELETE(req: NextRequest) {
         { ok: false, error: "forbidden" },
         { status: 403 }
       );
+    }
+
+    if (!await gradeClassAccess(supa, srv, user.id, profile.institution_id, (evalRow as any).class_id, (evalRow as any).subject_id, { evaluationOwner: (evalRow as any).teacher_id })) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
     }
 
     const roles = await getUserRoles(srv, profile.id, profile.institution_id);

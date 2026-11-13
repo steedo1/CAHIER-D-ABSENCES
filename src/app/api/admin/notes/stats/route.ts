@@ -1,3 +1,4 @@
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 // src/app/api/admin/notes/stats/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -311,7 +312,7 @@ export async function GET(req: NextRequest) {
     const markRows: MarkRow[] = [];
 
     for (const part of chunks(evalIds, 500)) {
-      const { data: marksData, error: marksErr } = await supabase
+      const { data: marksData, error: marksErr } = await getSupabaseServiceClient()
         .from("grade_flat_marks")
         .select("evaluation_id, raw_score, mark_20")
         .in("evaluation_id", part);

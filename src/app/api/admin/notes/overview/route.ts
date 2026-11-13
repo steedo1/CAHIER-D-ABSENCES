@@ -1,3 +1,4 @@
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 // src/app/api/admin/notes/overview/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -302,7 +303,7 @@ export async function GET(req: NextRequest) {
   /* ───────── 2) Notes via grade_flat_marks.mark_20 ───────── */
   let flatMarks: FlatMarkRow[] = [];
   if (evalIds.length) {
-    const { data: marksData, error: marksErr } = await supabase
+    const { data: marksData, error: marksErr } = await getSupabaseServiceClient()
       .from("grade_flat_marks")
       .select("evaluation_id, class_id, class_label, class_level, mark_20")
       .in("evaluation_id", evalIds);

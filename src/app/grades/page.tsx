@@ -109,6 +109,7 @@ function escapeHtml(str: string) {
    Types
 ========================= */
 type TeachClass = {
+  academic_year: string;
   class_id: string;
   class_label: string;
   level: string;
@@ -499,6 +500,7 @@ export default function TeacherNotesPage() {
 
   /* -------- Sélection classe/discipline -------- */
   const [teachClasses, setTeachClasses] = useState<TeachClass[]>([]);
+  const [teacherProfileId, setTeacherProfileId] = useState<string | null>(null);
   const classOptions = useMemo(
     () =>
       teachClasses.map((tc) => ({
@@ -623,8 +625,8 @@ export default function TeacherNotesPage() {
 
     if (selectedPeriod?.academic_year) {
       params.set("academic_year", selectedPeriod.academic_year);
-    } else if (academicYearLabel) {
-      params.set("academic_year", academicYearLabel);
+    } else if (selected?.academic_year) {
+      params.set("academic_year", selected.academic_year);
     }
 
     appendSelectedPeriod(params);
@@ -695,34 +697,53 @@ export default function TeacherNotesPage() {
   /* ==========================================
      Chargements
   ========================================== */
-  // Liste des classes/discipline du prof
+  // Revalider au retour sur la page ou à la reconnexion, sans polling.
   useEffect(() => {
-    (async () => {
-      try {
-        const j: any = await gradesGetJson(
-          "/api/grades/classes",
-          gradesClassesKey("teacher")
-        );
-        if (j?.mode !== "teacher") throw new Error("Session professeur absente ou expirée.");
-        const arr = deduplicateTeacherClassOptions(
-          (Array.isArray(j.items) ? j.items : []) as TeachClass[]
-        );
-        setTeachClasses(arr);
-        setSelKey((previous) => {
-          const available = arr.some((tc) =>
-            `${tc.class_id}|${tc.subject_id ?? ""}|${tc.teaching_track ?? ""}` === previous
+    let request: AbortController | undefined;
+    let active = true;
+    function refreshAssignments() {
+      if (!active || request) return;
+      const pending = new AbortController();
+      request = pending;
+      void (async () => {
+        try {
+          const result = await gradesGetJson<{ mode: string; profile_id?: string; items: TeachClass[] }>(
+            "/api/grades/classes", gradesClassesKey("teacher"), pending.signal,
           );
-          if (available) return previous;
-          const first = arr[0];
-          return first ? `${first.class_id}|${first.subject_id ?? ""}|${first.teaching_track ?? ""}` : "";
-        });
-      } catch (error) {
-        setTeachClasses([]);
-        setSelKey("");
-        setMsg(error instanceof Error ? error.message : "Impossible de charger les affectations du professeur.");
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+          if (pending.signal.aborted) return;
+          if (result.mode !== "teacher") throw new Error("Session professeur absente ou expirée.");
+          const items = deduplicateTeacherClassOptions(result.items || []);
+          setTeacherProfileId(result.profile_id ?? null);
+          setTeachClasses(items);
+          setSelKey(previous => {
+            const keys = items.map(item => `${item.class_id}|${item.subject_id ?? ""}|${item.teaching_track ?? ""}`);
+            return keys.includes(previous) ? previous : (keys[0] ?? "");
+          });
+        } catch (error) {
+          if (pending.signal.aborted) return;
+          setTeacherProfileId(null);
+          setTeachClasses([]);
+          setSelKey("");
+          setMsg(error instanceof Error ? error.message : "Impossible de charger les affectations du professeur.");
+        } finally {
+          if (request === pending) request = undefined;
+        }
+      })();
+    }
+
+    const onVisible = () => { if (document.visibilityState === "visible") refreshAssignments(); };
+    const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) refreshAssignments(); };
+    refreshAssignments();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onPageShow);
+    window.addEventListener("online", refreshAssignments);
+    return () => {
+      active = false;
+      request?.abort();
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onPageShow);
+      window.removeEventListener("online", refreshAssignments);
+    };
   }, []);
 
   // Périodes de notes configurées pour la classe sélectionnée.
@@ -742,9 +763,7 @@ export default function TeacherNotesPage() {
       try {
         setLoadingPeriods(true);
         const params = new URLSearchParams();
-        if (academicYearLabel) {
-          params.set("academic_year", academicYearLabel);
-        }
+        if (selected.academic_year) params.set("academic_year", selected.academic_year);
         params.set("class_id", selected.class_id);
         const url = `/api/admin/institution/grading-periods?${params.toString()}`;
         const j: any = await gradesGetJson(
@@ -771,7 +790,7 @@ export default function TeacherNotesPage() {
     return () => {
       cancelled = true;
     };
-  }, [academicYearLabel, selected?.class_id]);
+  }, [selected?.academic_year, selected?.class_id]);
 
   // Rubriques / sous-matières pour les niveaux 6e-3e
   useEffect(() => {
@@ -913,7 +932,7 @@ export default function TeacherNotesPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [selected?.class_id, selected?.subject_id, selected?.teaching_track, selectedPeriodId, primaryCatalogEnabled]);
+  }, [selected?.class_id, selected?.subject_id, selected?.teaching_track, selectedPeriodId, primaryCatalogEnabled, teacherProfileId]);
 
   /* ==========================================
      Verrouillage (lecture statut)
@@ -1796,6 +1815,7 @@ export default function TeacherNotesPage() {
         body: JSON.stringify({
           class_id: selected.class_id,
           subject_id: selected.subject_id,
+          academic_year: selected.academic_year,
           grading_period_id: selectedPeriodId || null,
           items,
         }),
@@ -2355,8 +2375,8 @@ export default function TeacherNotesPage() {
           <div className="space-y-1">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-200/80">
               {institutionName || "Nom de l’établissement"}
-              {academicYearLabel
-                ? ` • Année scolaire ${academicYearLabel}`
+              {(selected?.academic_year || academicYearLabel)
+                ? ` • Année scolaire ${selected?.academic_year || academicYearLabel}`
                 : ""}
             </p>
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">

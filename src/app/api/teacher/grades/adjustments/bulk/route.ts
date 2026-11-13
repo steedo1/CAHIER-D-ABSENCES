@@ -1,3 +1,4 @@
+import { teacherHasGradeAssignment } from "@/lib/server/teacher-grade-assignments";
 import { DIRECT_AVERAGES_PREFIX } from "@/lib/grades/direct-subject-averages";
 // src/app/api/teacher/grades/adjustments/bulk/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -114,18 +115,7 @@ async function getAccessModeForClass(
     return "admin";
   }
 
-  if (roleSet.has("teacher")) {
-    const { data: ct } = await svc
-      .from("class_teachers")
-      .select("id")
-      .eq("class_id", classId)
-      .eq("teacher_id", profile.id)
-      .eq("institution_id", profile.institution_id)
-      .is("end_date", null)
-      .maybeSingle();
-
-    if (ct) return "teacher";
-  }
+  if (roleSet.has("teacher")) return "teacher";
 
   if (roleSet.has("class_device")) {
     if (await classDeviceMayAccessClass({
@@ -332,6 +322,15 @@ export async function POST(req: NextRequest) {
     // ✅ Seul vrai verrou métier ici :
     // les enseignants / comptes-classe ne peuvent plus modifier les bonus
     // si la période configurée est déjà close.
+    if (mode === "teacher") {
+      const { data: classroom, error } = await svc.from("classes").select("academic_year")
+        .eq("id", class_id).eq("institution_id", institutionId).maybeSingle();
+      if (error || classroom?.academic_year !== academic_year ||
+          !await teacherHasGradeAssignment(svc, institutionId, auth.user.id, class_id, subject_id)) {
+        return bad("FORBIDDEN", 403);
+      }
+    }
+
     if (
       (mode === "teacher" || mode === "class_device") &&
       period &&

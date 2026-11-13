@@ -1,3 +1,4 @@
+import { setup, req, cls, math, evaluationPath } from "./helpers/primary-event-fixture.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server.js";
@@ -130,16 +131,13 @@ test("security patch Next.js 15.5.28 is pinned for npm ci and Render", () => {
   assert.equal(lock.packages[""].dependencies.next, "15.5.28");
 });
 
-test("Franco-Arabic evaluation creation requires exact subject assignment, not just class access", () => {
-  const route = readFileSync("src/app/api/teacher/grades/evaluations/route.ts", "utf8");
-  const helper = route.slice(route.indexOf("async function teacherHasAccessToClass("),
-    route.indexOf("async function getGradePeriodById("));
-  const creation = route.slice(route.indexOf("export async function POST("),
-    route.indexOf("export async function PATCH("));
-  assert.match(helper, /requireExactSubjectAssignment = false/);
-  assert.match(helper, /if \(requireExactSubjectAssignment\) return false;/);
-  assert.match(creation, /!isPrivileged\(roles\) && await requiresDirectGradePublication\(srv, institutionId\)/);
-  assert.match(creation, /subjectCandidates,\s*requireExactSubjectAssignment/);
-  assert.match(helper, /\.eq\("class_id", classId\)/);
-  assert.match(helper, /\.in\("subject_id", subjectCandidates\)/);
+test("Franco-Arabic evaluation creation requires the assigned subject in the class", async () => {
+  const db = setup();
+  const body = { class_id: cls, subject_id: math, eval_kind: "composition", scale: 10,
+    coeff: 1, primary_event_code: "DEC", teaching_track: "french" };
+  const api = db.teacher(evaluationPath);
+  assert.equal((await api.POST(req("/api/teacher/grades/evaluations", body))).status, 200);
+  const unrelated = db.tables.institution_subjects.find(row => row.subject_id !== math);
+  db.tables.class_teachers[0].subject_id = unrelated.id;
+  assert.equal((await api.POST(req("/api/teacher/grades/evaluations", body))).status, 403);
 });

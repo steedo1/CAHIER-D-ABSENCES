@@ -47,7 +47,7 @@ function setup(level) {
   db.tables.institution_subjects.unshift({ id: "foreign", subject_id: subjectId(7), institution_id: "foreign-school", is_active: true, custom_name: "Matière étrangère" });
   db.tables.class_teachers = db.tables.classes.flatMap(cls => settings.school_class_subjects_v1.years["2026-2027"].classes[cls.id]
     .map(id => ({ class_id: cls.id, subject_id: db.tables.institution_subjects.find(s => s.institution_id === db.legacyId && s.subject_id === id).id,
-      teacher_id: cls.head_teacher_id, institution_id: db.legacyId, end_date: null, classes: cls })));
+      teacher_id: cls.head_teacher_id, institution_id: db.legacyId, start_date: "2026-08-01", end_date: null, classes: cls })));
   for (const id of [teacherFr, teacherAr]) {
     db.users.set(id, { user: db.user(id, `${id}@example.invalid`) });
     db.tables.profiles.push({ id, institution_id: db.legacyId, display_name: id === teacherFr ? "Instituteur français" : "Maître arabe" });
@@ -72,7 +72,7 @@ for (const level of ["CP1", "CP2", "CE1", "CE2", "CM1", "CM2"]) test(`${level}: 
   const options = await (await loader("src/app/api/grades/classes/route.ts").GET(req("/api/grades/classes"))).json();
   assert.equal(options.items.length, 11);
   for (const [i, row] of CI_PRIMARY_FRENCH_REFERENCE.entries()) {
-    const option = options.items.find(item => item.subject_id === institutionSubjectId(i + 1));
+    const option = options.items.find(item => item.subject_id === subjectId(i + 1));
     const denominator = ciPrimaryFrenchDenominator(level, row.code);
     assert.equal(option?.subject_name, row.label);
     assert.equal(option?.teaching_track, "french");

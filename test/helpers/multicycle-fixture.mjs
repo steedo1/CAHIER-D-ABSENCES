@@ -13,12 +13,12 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 class Query {
   constructor(db, table) { this.db = db; this.table = table; this.filters = []; this.sort = []; this.op = "read"; }
-  select(_columns, options = {}) { this.head = options.head; return this; }
+  select(columns, options = {}) { this.columns = columns; this.head = options.head; return this; }
   eq(key, value) {
     this.filters.push(row => {
       const actual = key.includes("->")
         ? key.split(/->>?/).reduce((part, segment) => part?.[segment], row)
-        : row[key];
+        : key.split(".").reduce((part, segment) => part?.[segment], row);
       if (key.startsWith("settings_json") && typeof value === "string" &&
           (value.startsWith("{") || value.startsWith("["))) {
         try { return same(actual, JSON.parse(value)); }
@@ -30,6 +30,7 @@ class Query {
   }
   like(key, pattern) { const prefix = pattern.replace(/%$/, ""); this.filters.push(row => String(row[key] || "").startsWith(prefix)); return this; }
   neq(key, value) { this.filters.push(row => row[key] !== value); return this; }
+  gt(key, value) { this.filters.push(row => row[key] > value); return this; }
   gte(key, value) { this.filters.push(row => row[key] >= value); return this; }
   lte(key, value) { this.filters.push(row => row[key] <= value); return this; }
   is(key, value) { this.filters.push(row => value === null ? row[key] == null : row[key] === value); return this; }
@@ -47,6 +48,7 @@ class Query {
       ? String(row[key] || "").toLocaleLowerCase("fr").includes(value.join(".").replaceAll("%", "").toLocaleLowerCase("fr"))
       : op === "is" ? value.join(".") === "null" && row[key] == null
       : op === "eq" ? String(row[key]) === value.join(".")
+      : op === "gt" ? row[key] > value.join(".")
       : op === "gte" ? row[key] >= value.join(".")
       : op === "lte" && row[key] <= value.join(".")));
     return this;
@@ -54,7 +56,17 @@ class Query {
   async execute() {
     const table = this.db.tables[this.table] ||= [];
     this.db.calls.push({ table: this.table, op: this.op });
-    let rows = table.filter(row => this.filters.every(check => check(row)));
+    let rows = table;
+    if (this.table === "class_teachers" && this.columns?.includes("institution_subjects!inner")) {
+      rows = rows.map(row => {
+        const classes = this.db.tables.classes.find(item => item.id === row.class_id);
+        const subject = this.db.tables.institution_subjects.find(item => item.id === row.subject_id);
+        const canonical = this.db.tables.subjects.find(item => item.id === subject?.subject_id);
+        return classes && subject && canonical
+          ? { ...row, classes, institution_subjects: { ...subject, subjects: canonical } } : null;
+      }).filter(Boolean);
+    }
+    rows = rows.filter(row => this.filters.every(check => check(row)));
     if (this.table === "grade_evaluations" && this.op === "insert" &&
       (Array.isArray(this.value) ? this.value : [this.value]).some(row => ![5,10,20,40,60].includes(row.scale)))
       return { data: null, error: { code: "23514", message: "grade_evaluations_scale_check" } };
@@ -196,13 +208,14 @@ export async function startFixtureSupabase(fixture, port = 0) {
       if (url.pathname.startsWith("/rest/v1/rpc/")) return json({ code: "PGRST202", message: "RPC absent from isolated fixture" }, 404);
       if (!url.pathname.startsWith("/rest/v1/")) return json({ error: "fixture_route_not_found" }, 404);
       const table = url.pathname.slice("/rest/v1/".length);
-      let query = fixture.service.from(table);
+      let query = fixture.service.from(table).select(url.searchParams.get("select"));
       for (const [key, expression] of url.searchParams) {
         if (["select", "order", "offset", "limit", "on_conflict"].includes(key)) continue;
         if (key === "or") { query.or(expression.replace(/^\(|\)$/g, "")); continue; }
         const dot = expression.indexOf("."); const op = expression.slice(0, dot), value = expression.slice(dot + 1);
         if (op === "eq") query.eq(key, value === "true" ? true : value === "false" ? false : value);
         else if (op === "is") query.is(key, value === "null" ? null : value);
+        else if (op === "lte") query.lte(key, value);
         else if (op === "in") query.in(key, value.slice(1, -1).split(",").map(item => item.replace(/^"|"$/g, "")));
         else throw new Error(`Unsupported fixture filter ${op}`);
       }

@@ -441,7 +441,6 @@ test("EPC class-device deletion maps institution_subjects ids to canonical subje
   assert.equal(db.tables.grade_evaluations.length, 0);
 
   // Another discipline's assignment must never authorize deletion.
-  db.tables.class_teachers[0].subject_id = math;
   const foreignSubject = db.tables.subjects.find(row => row.id !== math);
   assert.ok(foreignSubject);
   const wrong = await create(db, "NIV2", "french");

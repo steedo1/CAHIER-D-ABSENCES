@@ -145,6 +145,7 @@ test("teacher class selector resolves all six primary levels and their separatel
   schoolSettings.franco_arabic_reports_v1.scales = [];
   db.tables.classes = [];
   db.tables.class_teachers = [];
+  db.tables.academic_years = [{ institution_id: db.legacyId, code: "2026-2027", is_current: true }];
   for (const [index, level] of PRIMARY_LEVELS.entries()) {
     const classUuid = `${String(index + 1).padStart(8, "0")}-1111-4111-8111-111111111111`;
     db.tables.classes.push({ id: classUuid, label: `${level} unique`, level, academic_year: "2026-2027",
@@ -154,7 +155,8 @@ test("teacher class selector resolves all six primary levels and their separatel
     };
     for (const [subjectId, track, maxScore] of [[french, "french", 10], [arabic, "arabic", 20]]) {
       db.tables.class_teachers.push({ institution_id: db.legacyId, class_id: classUuid,
-        subject_id: subjectId, teacher_id: teacherId, end_date: null,
+        subject_id: db.tables.institution_subjects.find(row => row.subject_id === subjectId).id,
+        teacher_id: teacherId, start_date: "2026-08-01", end_date: null,
         classes: db.tables.classes.at(-1) });
       schoolSettings.franco_arabic_reports_v1.scales.push({ cycle: "primary", level, track, maxScore });
     }

@@ -1,3 +1,4 @@
+import { gradeClassAccess } from "@/lib/server/teacher-grade-assignments";
 // src/app/api/grades/locks/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
@@ -72,19 +73,20 @@ export async function GET(req: NextRequest) {
   const evaluation_id = String(url.searchParams.get("evaluation_id") || "").trim();
   if (!evaluation_id) return NextResponse.json({ ok: true, locked: false });
 
-  const { user, profile, srv } = await getContext();
+  const { supa, user, profile, srv } = await getContext();
   if (!user || !profile || !srv) return NextResponse.json({ ok: true, locked: false }, { status: 401 });
 
   // Vérifier accès à la classe via l'évaluation
   const { data: ev, error: evErr } = await srv
     .from("grade_evaluations")
-    .select("id,class_id")
+    .select("id,class_id,subject_id,teacher_id")
     .eq("id", evaluation_id)
     .maybeSingle();
 
   if (evErr || !ev) return NextResponse.json({ ok: true, locked: false }, { status: 200 });
 
-  const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id);
+  const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id) &&
+    await gradeClassAccess(supa, srv, user.id, profile.institution_id, ev.class_id, ev.subject_id, { evaluationOwner: ev.teacher_id });
   if (!allowed) return NextResponse.json({ ok: true, locked: false }, { status: 200 });
 
   const { data: lockRow, error: lockErr } = await srv
@@ -111,7 +113,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const { user, profile, srv } = await getContext();
+  const { supa, user, profile, srv } = await getContext();
   if (!user || !profile || !srv) return bad("UNAUTHENTICATED", 401);
 
   const body = await req.json().catch(() => ({}));
@@ -132,7 +134,8 @@ export async function POST(req: NextRequest) {
 
   if (evErr || !ev) return bad("EVALUATION_NOT_FOUND", 404);
 
-  const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id);
+  const allowed = await ensureClassAccess(srv, ev.class_id, profile.institution_id) &&
+    await gradeClassAccess(supa, srv, user.id, profile.institution_id, ev.class_id, ev.subject_id, { evaluationOwner: ev.teacher_id });
   if (!allowed) return bad("FORBIDDEN", 403);
 
   // Table absente ? → réponse claire
