@@ -17,6 +17,9 @@ type Pending = { payload: Blob; ticket: string; ids: string[] };
 type ProductionAssets = { school: CardSchool; signatures: Partial<Record<CardSlot, string>>; stamps: Partial<Record<CardSlot, string>> };
 type GenerationResponse = { archive: ProductionArchive } | (Partial<ProductionAssets> & { items: PreparedCard[]; ticket: string; visualRevision: number });
 
+const filterLabel = "grid min-w-0 max-w-full gap-1 text-sm";
+const filterField = `${field} min-w-0 max-w-full`;
+
 const tabs: Record<View, string> = { cards: "Cartes", orders: "Commandes", archives: "Archives" };
 
 export default function ProductionWorkspace() {
@@ -29,7 +32,7 @@ export default function ProductionWorkspace() {
   const [orders, setOrders] = useState<ProductionOrder[]>([]), [archives, setArchives] = useState<ProductionArchive[]>([]);
   const [order, setOrder] = useState<ProductionOrder | null>(null);
   const [nextPage, setNextPage] = useState<number | null>(null);
-  const [query, setQuery] = useState(""), [classId, setClassId] = useState(""), [preparation, setPreparation] = useState("ready");
+  const [query, setQuery] = useState(""), [classId, setClassId] = useState(""), [preparation, setPreparation] = useState("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [layout, setLayout] = useState<Layout>({ format: "pvc", flip: "long" });
   const [allowMissing, setAllowMissing] = useState(false);
@@ -103,7 +106,12 @@ export default function ProductionWorkspace() {
       (preparation === "all" || (preparation === "ready" ? prepared.has(card.studentId) : !prepared.has(card.studentId))) &&
       [card.name, card.matricule, ...classes.map(classe => classe.label)].join(" ").toLocaleLowerCase("fr").includes(query.trim().toLocaleLowerCase("fr"));
   }), [cards, classId, orderStudents, preparation, prepared, query]);
-  const isSelectable = (card: SchoolCard) => prepared.has(card.studentId) && !card.revoked;
+  const isSelectable = (card: SchoolCard) => cards?.canGenerate && !card.revoked &&
+    (!order || (ORDER_TRANSITIONS[order.status].length > 0 && prepared.has(card.studentId)));
+  const selectionNeedsPreparation = !order && [...selected].some(id => !prepared.has(id));
+  const selectableRows = rows.filter(isSelectable);
+  const preparedCards = (cards?.items ?? []).filter(row => isSelectable(row) && prepared.has(row.studentId) &&
+    (!orderStudents || orderStudents.has(row.studentId)));
   const batchLocked = busy || canRetry;
 
   function resetScope() {
@@ -178,7 +186,7 @@ export default function ProductionWorkspace() {
       const data: GenerationResponse = await productionRequest(api, {
         action: "generation", school, year, ...options, previousId: old?.id ?? null,
         orderId: old ? old.order_id : order?.id ?? null, allowMissing, visualRevision: assets?.revision, visualSlots,
-        studentIds: batchIds,
+        studentIds: batchIds, prepareSelection: !old && !order && batchIds.some(id => !prepared.has(id)),
       });
       if ("archive" in data) {
         reused += 1;
@@ -189,6 +197,9 @@ export default function ProductionWorkspace() {
         });
         continue;
       }
+      if (!old && !order) setCards(current => current && {
+        ...current, preparedIds: [...new Set([...current.preparedIds, ...batchIds])],
+      });
       if (data.school) {
         assets = { school: data.school, signatures: {}, stamps: {}, revision: data.visualRevision };
         visualSlots = [];
@@ -222,15 +233,15 @@ export default function ProductionWorkspace() {
     window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
 
-  return <div className="mx-auto grid max-w-7xl gap-4 p-4 sm:p-5">
+  return <div className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)] gap-4 p-4 sm:p-5">
     <section className={surface}>
       <div className="flex flex-wrap gap-3">
-        <label className="grid gap-1 text-sm">Établissement<select className={field} value={school} disabled={batchLocked} onChange={e => {
+        <label className={filterLabel}>Établissement<select className={filterField} value={school} disabled={batchLocked} onChange={e => {
           resetScope(); setYears([]); setYear(""); setSchool(e.target.value);
         }}><option value="">Choisir un établissement</option>
           {schools.map(item => <option key={item.id} value={item.id}>{item.name}{item.code ? ` · ${item.code}` : ""}</option>)}
         </select></label>
-        <label className="grid gap-1 text-sm">Année scolaire<select className={field} value={year} disabled={batchLocked || !years.length} onChange={e => {
+        <label className={filterLabel}>Année scolaire<select className={filterField} value={year} disabled={batchLocked || !years.length} onChange={e => {
           resetScope(); setYear(e.target.value);
         }}><option value="">Choisir une année</option>{years.map(item => <option key={item.code}>{item.code}</option>)}</select></label>
       </div>
@@ -255,28 +266,29 @@ export default function ProductionWorkspace() {
         {order && <button className={field} disabled={batchLocked} onClick={() => changeView("orders")}>Retour aux commandes</button>}
       </div>
       <div className="flex flex-wrap gap-3">
-        <label className="grid gap-1 text-sm">Recherche<input className={field} placeholder="Nom, matricule ou classe" value={query} onChange={e => setQuery(e.target.value)} /></label>
-        <label className="grid gap-1 text-sm">Classe<select className={field} value={classId} onChange={e => setClassId(e.target.value)}>
+        <label className={filterLabel}>Recherche<input className={filterField} placeholder="Nom, matricule ou classe" value={query} onChange={e => setQuery(e.target.value)} /></label>
+        <label className={filterLabel}>Classe<select className={filterField} value={classId} onChange={e => setClassId(e.target.value)}>
           <option value="">Toutes</option>{cards.classes.map(classe => <option key={classe.id} value={classe.id}>{classe.label}</option>)}
         </select></label>
-        <label className="grid gap-1 text-sm">Préparation<select className={field} value={preparation} onChange={e => setPreparation(e.target.value)}>
+        <label className={filterLabel}>Préparation<select className={filterField} value={preparation} onChange={e => setPreparation(e.target.value)}>
           <option value="ready">Préparées</option><option value="missing">À préparer</option><option value="all">Toutes</option>
         </select></label>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <button className={field} disabled={batchLocked || loading} onClick={() => setSelected(new Set(rows.filter(isSelectable).map(row => row.studentId)))}>Sélectionner les résultats</button>
-        <button className={field} disabled={batchLocked || loading} onClick={() => setSelected(new Set(cards.items
-          .filter(row => isSelectable(row) && (!orderStudents || orderStudents.has(row.studentId))).map(row => row.studentId)))}>Toutes les cartes préparées</button>
+        <button className={field} disabled={batchLocked || loading || !selectableRows.length}
+          onClick={() => setSelected(new Set(selectableRows.map(row => row.studentId)))}>Sélectionner les résultats</button>
+        <button className={field} disabled={batchLocked || loading || !preparedCards.length}
+          onClick={() => setSelected(new Set(preparedCards.map(row => row.studentId)))}>Toutes les cartes préparées</button>
         <button className={field} disabled={batchLocked || !selected.size} onClick={() => setSelected(new Set())}>Effacer</button>
         <span className="text-sm">{selected.size} sélectionnée(s)</span>
       </div>
       <div className="max-h-[28rem] overflow-auto"><table className="w-full text-left text-sm">
         <thead className="sticky top-0 bg-slate-100"><tr><th className="p-2">Choix</th><th>Élève</th><th>Matricule</th><th>Classes</th><th>Statut</th><th>Aperçu</th></tr></thead>
         <tbody>{rows.map(row => <tr className="border-b" key={row.studentId}>
-          <td className="p-2"><input type="checkbox" aria-label={`Sélectionner ${row.name}`} disabled={batchLocked || !isSelectable(row)}
+          <td><label className="flex min-h-11 min-w-11 items-center justify-center"><input type="checkbox" className="size-4" aria-label={`Sélectionner ${row.name}`} disabled={batchLocked || !isSelectable(row)}
             checked={selected.has(row.studentId)} onChange={e => { const checked = e.target.checked; setSelected(previous => {
               const next = new Set(previous); if (checked) next.add(row.studentId); else next.delete(row.studentId); return next;
-            }); }} /></td>
+            }); }} /></label></td>
           <td className="py-2 font-medium"><bdi>{row.name}</bdi></td><td>{row.matricule}</td>
           <td>{schoolCardClasses(row).map(classe => <div key={classe.id}><bdi>{classe.label}</bdi></div>)}</td>
           <td>{row.revoked ? "Invalidée" : prepared.has(row.studentId) ? "Préparée" : "À préparer"}{row.warnings.length > 0 && <div className="text-xs text-amber-800">{row.warnings.join(" · ")}</div>}</td>
@@ -286,17 +298,17 @@ export default function ProductionWorkspace() {
       {rows.length === 0 && !loading && <p>Aucune carte ne correspond aux filtres.</p>}
       {preview && <CardPreview {...preview} />}
       {cards.canGenerate && <div className="flex flex-wrap items-end gap-3 border-t pt-4">
-        <label className="grid gap-1 text-sm">Format PDF<select className={field} disabled={batchLocked} value={layout.format}
+        <label className={filterLabel}>Format PDF<select className={filterField} disabled={batchLocked} value={layout.format}
           onChange={e => setLayout(previous => ({ ...previous, format: e.target.value as Layout["format"] }))}>
           <option value="pvc">PVC, un recto et un verso par élève</option><option value="a4">Planche A4 recto verso</option>
         </select></label>
-        {layout.format === "a4" && <label className="grid gap-1 text-sm">Retournement<select className={field} disabled={batchLocked}
+        {layout.format === "a4" && <label className={filterLabel}>Retournement<select className={filterField} disabled={batchLocked}
           value={layout.flip} onChange={e => setLayout(previous => ({ ...previous, flip: e.target.value as Layout["flip"] }))}>
           <option value="long">Bord long</option><option value="short">Bord court</option>
         </select></label>}
         <label className="flex items-center gap-2 py-2 text-sm"><input type="checkbox" disabled={batchLocked} checked={allowMissing} onChange={e => setAllowMissing(e.target.checked)} /> Autoriser les informations manquantes</label>
         <button className={primary} disabled={batchLocked || loading || !selected.size || Boolean(order && !ORDER_TRANSITIONS[order.status].length)}
-          onClick={() => run(() => generate())}>Générer et archiver les PDF</button>
+          onClick={() => run(() => generate())}>{selectionNeedsPreparation ? "Préparer, générer et archiver les PDF" : "Générer et archiver les PDF"}</button>
       </div>}
     </section>}
     {year && view === "orders" && <section className={surface}>

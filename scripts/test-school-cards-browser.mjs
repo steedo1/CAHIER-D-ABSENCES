@@ -28,10 +28,9 @@ try {
   assert.equal(await page.getByRole("button", { name: /Générer.*PDF|Imprimer/ }).count(), 0);
   await page.screenshot({ path: "tmp/school-cards/workspace-desktop.png", fullPage: true });
 
-  await page.getByRole("button", { name: "Tout l’établissement (12)", exact: true }).click();
   page.once("dialog", dialog => dialog.accept());
   await page.getByRole("button", { name: "Commander les cartes" }).click();
-  await page.getByText("Commande transmise · 12 carte(s).").waitFor();
+  await page.getByText("Commande transmise · 1 carte(s).").waitFor();
   await page.getByText("En attente", { exact: true }).waitFor();
   const rejected = await page.request.post(`${origin}/api/admin/school-cards`, { data: { year: "2026-2027", enrollmentIds: [] } });
   assert.equal(rejected.status(), 403);
@@ -65,6 +64,20 @@ try {
   await page.getByRole("button", { name: "Historique", exact: true }).click();
   await page.getByText(/Téléchargement du PDF ·/).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Cartes", exact: true }).click();
+  await page.getByPlaceholder("Nom, matricule ou classe").fill("EPC260002");
+  const unprepared = page.getByRole("row").filter({ hasText: "EPC260002" });
+  await unprepared.getByRole("cell", { name: /^À préparer/ }).waitFor();
+  const checkbox = unprepared.getByRole("checkbox");
+  assert.equal(await checkbox.isEnabled(), true);
+  await checkbox.check();
+  await page.getByText("1 sélectionnée(s)", { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.getByRole("button", { name: "Préparer, générer et archiver les PDF" }).click();
+  await page.getByText("1 carte(s) dans 1 fichier(s) PDF.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Cartes", exact: true }).click();
+  await page.getByPlaceholder("Nom, matricule ou classe").fill("EPC260002");
+  await unprepared.getByRole("cell", { name: /^Préparée/ }).waitFor();
   await page.screenshot({ path: "tmp/school-cards/workspace-mobile.png", fullPage: true });
   assert.equal(fontRequests, 1);
   assert.ok(productionBytes > 0);
