@@ -124,6 +124,34 @@ test("Supervision creates and disables an independent account with explicit scho
   assert.equal((await load(route(api)).GET(request(api))).status, 403);
   assert.equal((await change("active")).status, 409);
 });
+test("Production can prepare a selected roster batch during generation without creating an order", async () => {
+  const db = fixture();
+  const actor = await create(db);
+  const production = db.load(actor)(route(api));
+  const student = db.tables.students[0];
+  const payload = {
+    action: "generation", school: db.legacyId, year, studentIds: [student.id],
+    format: "pvc", flip: "long", allowMissing: true,
+  };
+  const generate = (overrides = {}) => production.POST(request(api, { ...payload, ...overrides }));
+
+  assert.equal((await generate()).status, 409);
+  assert.equal((await generate({ prepareSelection: true, allowMissing: false })).status, 409);
+  assert.equal((await generate({ prepareSelection: true, studentIds: [randomUUID()] })).status, 403);
+  assert.equal((await generate({ prepareSelection: true, orderId: randomUUID() })).status, 409);
+  assert.equal((await db.admin(route(api)).POST(request(api, { ...payload, prepareSelection: true }))).status, 403);
+  assert.equal(db.tables.nexa_card_preparations.length, 0);
+
+  const response = await generate({ prepareSelection: true });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.ok(data.ticket);
+  assert.deepEqual(data.items.map(item => item.studentId), [student.id]);
+  assert.deepEqual(db.tables.nexa_card_preparations.map(item => item.student_id), [student.id]);
+  assert.equal(db.tables.nexa_card_orders.length, 0);
+  assert.equal((await generate()).status, 200);
+});
+
 test("School prepares and orders; scoped Production selects EPC cards, archives, reuses, versions and downloads", async () => {
   const db = fixture();
   const actor = await create(db);

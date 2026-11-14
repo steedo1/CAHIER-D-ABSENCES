@@ -128,7 +128,9 @@ export async function POST(req: NextRequest) {
     if (body.orderId && (!orderData || (!previous?.data && !activeOrder(orderData.status)) ||
       !ids.every(id => orderData.student_ids.includes(id)))) throw new ProductionError("selection_hors_commande_ou_commande_close", 409);
     if (!isCardYearValid(years.find(row => row.code === body.year))) throw new ProductionError("annee_non_active_ou_expiree", 409);
-    if (preparation.data.length !== ids.length) throw new ProductionError("certaines_cartes_ne_sont_pas_preparees", 409);
+    const needsPreparation = preparation.data.length !== ids.length;
+    const prepareSelection = needsPreparation && body.prepareSelection === true && !body.orderId && !body.previousId;
+    if (needsPreparation && !prepareSelection) throw new ProductionError("certaines_cartes_ne_sont_pas_preparees", 409);
     const batchKey = productionBatchKey(ctx.instId, body.year, orderData?.id ?? null, body.format, flip, ids);
     const lastArchive = await ctx.service.from("nexa_card_archives").select(ARCHIVE_FIELDS)
       .eq("batch_key", batchKey).order("version", { ascending: false }).limit(1).maybeSingle();
@@ -147,6 +149,13 @@ export async function POST(req: NextRequest) {
     const knownSlots = reuseVisuals && Array.isArray(body.visualSlots) ? body.visualSlots : [];
     const neededSlots = new Set([...slots].filter(slot => !knownSlots.includes(slot)));
     const [signatures, stamps] = await Promise.all([cardSignatureImages(ctx, neededSlots), cardStampImages(ctx, neededSlots)]);
+    if (prepareSelection) {
+      // selectedCards has already checked the active enrollments and revocations.
+      const result = await ctx.service.rpc("nexa_prepare_cards", {
+        p_school: ctx.instId, p_year: body.year, p_actor: access.userId, p_students: ids, p_order: false,
+      });
+      if (result.error) throw Error("preparation_cartes_indisponible");
+    }
     const students = items.map(item => ({ id: item.studentId, name: item.name, matricule: item.matricule }));
     const ticket = issueGenerationTicket({
       actorId: access.userId, institutionId: ctx.instId, year: body.year, orderId: order?.data?.id ?? null,
