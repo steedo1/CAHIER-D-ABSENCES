@@ -1,7 +1,7 @@
 import type PDFKit from "pdfkit";
 import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
 import { documentNationalEmblem } from "./document-national-emblem";
-import { CARD_WIDTH_MM, CARD_HEIGHT_MM, cardSheetPosition, schoolCardMinistry, schoolCardClasses, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
+import { CARD_WIDTH_MM, CARD_HEIGHT_MM, SCHOOL_CARD_FOOTER, cardSheetPosition, schoolCardMinistry, schoolCardClasses, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
 
 export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>>; stamps?: Partial<Record<CardSlot, string>> };
 const mm = (value: number) => value * 72 / 25.4;
@@ -131,7 +131,7 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
   }
   rect(4, 50, 77.6, 0.35, "#DAA754");
   doc.fillColor(side === "front" ? darkGreen : muted);
-  text(doc, side === "front" ? school.name : "Mon Cahier · www.mon-cahier.com", 4, 50.9, 77.6, 2.9, 5.5);
+  text(doc, side === "front" ? school.name : SCHOOL_CARD_FOOTER, 4, 50.9, 77.6, 2.9, 5.5);
 }
 
 /** Shared by the browser exporter and the Node layout/performance tests.
@@ -212,7 +212,7 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
 
     doc.rect(mm(3.5), mm(50.3), mm(78.6), mm(0.5)).fill(orange);
     doc.fillColor("#536157");
-    text(doc, "Mon Cahier — www.mon-cahier.com", 4, 51.3, 77.6, 2.0, 4.7, "center");
+    text(doc, SCHOOL_CARD_FOOTER, 4, 51.3, 77.6, 2.0, 4.7, "center");
   }
   doc.restore().restore();
 }

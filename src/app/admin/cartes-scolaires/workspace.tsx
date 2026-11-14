@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { documentNationalEmblem } from "@/lib/document-national-emblem";
-import { CARD_PDF_BATCH, CARD_SLOTS, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, schoolCardClasses, type SchoolCard, type CardRoster, type CardSchool, type CardSlot, type PreparedCard } from "@/lib/school-cards";
+import { CARD_PDF_BATCH, CARD_SLOTS, SCHOOL_CARD_FOOTER, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, schoolCardClasses, type SchoolCard, type CardRoster, type CardSchool, type CardSlot, type PreparedCard } from "@/lib/school-cards";
 
 const button = "rounded-xl bg-emerald-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40";
 const input = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900";
@@ -82,7 +82,7 @@ function EpcCardPreview({ card, school, signature, stamp }: {
           <p className="text-[2.65cqw] font-semibold">{card.signatoryName}</p>
         </div>}
       </div>
-      <p className="absolute inset-x-[4.7%] top-[92.6%] border-t border-[#DAA754] pt-[0.5%] text-[2.3cqw] text-[#485D53]">Mon Cahier · www.mon-cahier.com</p>
+      <p className="absolute inset-x-[4.7%] top-[92.6%] border-t border-[#DAA754] pt-[0.5%] text-[2.3cqw] text-[#485D53]">{SCHOOL_CARD_FOOTER}</p>
     </div>
   </>;
 }
@@ -219,7 +219,7 @@ export default function SchoolCardsWorkspace() {
         </div>}
         {preview && !usesEpcSchoolCardLayout(roster.school) && <div className="grid gap-4 xl:grid-cols-2">
           <div aria-label="Aperçu recto" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md"><div className="grid grid-cols-[12%_1fr_12%] items-start gap-2"><div>{roster.school.logo_url && <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="aspect-square w-full object-contain" />}</div><div className="text-center text-[10px] text-emerald-900">{roster.school.country_name || "République de Côte d’Ivoire"}<br />{roster.school.country_motto || "Union - Discipline - Travail"}<br />{schoolCardMinistry(roster.school, preview.year)}</div><div>{documentNationalEmblem(roster.school.country_name) && <img src={documentNationalEmblem(roster.school.country_name)} alt="Armoiries de la République de Côte d’Ivoire" className="aspect-square w-full object-contain" />}</div></div><h3 className="mx-auto mt-1 w-fit rounded bg-emerald-800 px-6 font-bold text-white">CARTE SCOLAIRE</h3><p className="text-center text-[10px]">ANNÉE SCOLAIRE {preview.year}</p><div className="mt-3 flex gap-4">{preview.photoUrl ? <img alt="Photo de l’élève" className="aspect-[20/26] w-1/4 object-contain" src={preview.photoUrl} /> : <div className="grid w-1/4 place-items-center text-xs">Photo absente</div>}<div className="space-y-1 text-xs"><p>Matricule : <strong>{preview.matricule || "—"}</strong></p><p className="text-sm font-semibold">{preview.name}</p><p>Né(e) le : {preview.birthdate} · Sexe : {preview.gender}</p><p>Lieu : {preview.birthPlace}</p><div>{schoolCardClasses(preview).map(classe => <p key={classe.id}><bdi>{classe.label}</bdi></p>)}</div></div></div><p className="absolute inset-x-4 bottom-3 border-t-2 border-orange-400 pt-1 text-center text-[11px] font-semibold">{roster.school.name}</p></div>
-          <div aria-label="Aperçu verso" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md">
+          <div aria-label="Aperçu verso" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md [container-type:inline-size]">
             {roster.school.logo_url ? <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="mx-auto h-[34%] max-w-[40%] object-contain" /> : <div className="mx-auto grid h-[34%] w-[40%] place-items-center text-xs text-slate-500">Logo de l’établissement</div>}
             {preview.signatureSlot && (stampImages.current[preview.signatureSlot] || signatureImages.current[preview.signatureSlot]) &&
               <div className="absolute right-[4%] top-[4%] flex h-[36%] w-[28%] flex-col items-center text-center text-[9px] leading-tight">
@@ -233,7 +233,7 @@ export default function SchoolCardsWorkspace() {
               <p>Toute reproduction, altération ou utilisation frauduleuse est formellement interdite.</p>
               <p>En cas de perte, prière de contacter l’établissement au : <strong>{roster.school.phone || "coordonnées à renseigner"}</strong></p>
             </div>
-            <p className="absolute inset-x-3 bottom-3 border-t border-orange-400 pt-2 text-center text-[10px] text-emerald-900">Mon Cahier — www.mon-cahier.com</p>
+            <p className="absolute inset-x-3 bottom-3 border-t border-orange-400 pt-2 text-center text-[min(10px,2.4cqw)] text-emerald-900">{SCHOOL_CARD_FOOTER}</p>
           </div>
         </div>}
         {files.length > 0 && <ul className="space-y-2">{files.map(file => <li key={file.url} className="flex flex-wrap gap-4 rounded-lg bg-emerald-50 p-3 text-sm"><a className="font-semibold underline" href={file.url} download={file.name}>{file.name} · {file.count} cartes</a><a href={file.url} target="_blank" rel="noreferrer" className="underline">Ouvrir pour imprimer</a></li>)}</ul>}

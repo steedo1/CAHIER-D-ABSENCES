@@ -4,6 +4,7 @@ export const CARD_WIDTH_MM = 85.6;
 export const CARD_HEIGHT_MM = 54;
 export const CARDS_PER_SHEET = 10;
 export const CARD_PDF_BATCH = 100;
+export const SCHOOL_CARD_FOOTER = "Mon Cahier par Nexa Digital SARL · www.mon-cahier.com";
 export const CARD_READ_ROLES = ["admin", "super_admin", "file_correspondent", "educator"] as const;
 export const CARD_WRITE_ROLES = ["admin", "super_admin"] as const;
 export const CARD_SLOTS = ["general", "french", "arabic"] as const;
