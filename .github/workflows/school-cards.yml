@@ -101,9 +101,14 @@ jobs:
         run: |
           PORT=4398 node --max-old-space-size=288 node_modules/next/dist/bin/next start --hostname 0.0.0.0 > /tmp/card-native-next.log 2>&1 &
           NATIVE_PID=$!
+          mkdir -p tmp/school-cards-native
           trap 'kill "$NATIVE_PID"' EXIT
           for attempt in $(seq 1 30); do curl -fs http://localhost:4398/verifier-carte > /dev/null && break || sleep 1; done
-          CARD_NATIVE_PID="$NATIVE_PID" node --import tsx scripts/verify-school-cards-native.mjs
+          if ! CARD_NATIVE_PID="$NATIVE_PID" node --import tsx scripts/verify-school-cards-native.mjs; then
+            cp /tmp/card-native-next.log tmp/school-cards-native/next-runtime.log
+            tail -100 /tmp/card-native-next.log
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
