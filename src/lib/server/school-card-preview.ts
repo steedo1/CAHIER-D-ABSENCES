@@ -77,11 +77,10 @@ async function renderPreview(ctx: CardScope, item: SchoolCard) {
   for (const side of ["front", "back"] as const) {
     doc.addPage({ size: [width, height], margin: 0 });
     drawSchoolCard(doc, card, ctx.school, { font, logo, photos, signatures, stamps }, side);
-    doc.save().font("card").fontSize(16).fillColor("#842029").fillOpacity(0.42);
+    const watermark = "APERÇU";
+    doc.save().font("card").fontSize(24).fillColor("#274D42").fillOpacity(0.30);
     doc.rotate(-21, { origin: [width / 2, height / 2] });
-    for (const y of [height * .24, height * .47, height * .70]) {
-      doc.text("APERÇU · NON VALABLE", 0, y, { width, align: "center", lineBreak: false });
-    }
+    doc.text(watermark, (width - doc.widthOfString(watermark)) / 2, (height - doc.currentLineHeight()) / 2, { lineBreak: false });
     doc.restore();
   }
   doc.end();
