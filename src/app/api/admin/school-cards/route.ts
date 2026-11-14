@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { schoolCardSelectionKey, type CardSlot, type SchoolCard } from "@/lib/school-cards";
+import { schoolCardClasses, type CardSlot, type SchoolCard } from "@/lib/school-cards";
 import { CARD_UUID } from "@/lib/school-card-token";
 import { cardJson, cardScope, requireCardOrigin, loadCardEnrollments, readCardYears, publicCardConfig, cardSignatureImages, cardStampImages, prepareSchoolCards, isCardYearValid } from "@/lib/server/school-cards";
 export const runtime = "nodejs";
@@ -63,17 +63,18 @@ export async function POST(req: NextRequest) {
     const years = await readCardYears(ctx.service, ctx.instId);
     if (!isCardYearValid(years.find(y => y.code === body.year))) return cardJson({ error: "annee_non_active_ou_expiree" }, 409);
     const { items } = await loadCardEnrollments(ctx, body.year, { enrollmentIds: ids });
-    const requestedCards = cardRefs ? new Set(cardRefs.map(schoolCardSelectionKey)) : null;
-    const selected = requestedCards
-      ? items.filter(item => requestedCards.has(schoolCardSelectionKey(item)))
-      : items.filter(item => !item.administrativeClassId);
-    if (selected.length !== (requestedCards?.size ?? ids.length) || selected.some(row => row.revoked)) {
+    const byEnrollment = new Map(items.map(item => [item.enrollmentId, item]));
+    const unavailableClass = cardRefs?.some(ref => {
+      const card = byEnrollment.get(ref.enrollmentId);
+      return !card || !schoolCardClasses(card).some(classe => classe.id === ref.classId);
+    });
+    if (items.length !== ids.length || unavailableClass || items.some(row => row.revoked)) {
       return cardJson({ error: "selection_interdite_ou_invalidee" }, 403);
     }
     // URL comes from server deployment config, never a client-provided domain.
     const origin = process.env.SCHOOL_CARD_PUBLIC_ORIGIN || "https://www.mon-cahier.com";
     if (!/^https:\/\/[^/]+$/.test(origin) && !(process.env.NODE_ENV !== "production" && /^http:\/\/localhost:\d+$/.test(origin))) return cardJson({ error: "domaine_verification_invalide" }, 503);
-    const prepared = prepareSchoolCards(ctx, selected, origin);
+    const prepared = prepareSchoolCards(ctx, items, origin);
     const slots = new Set<CardSlot>();
     for (const card of prepared) if (card.signatureSlot) slots.add(card.signatureSlot);
     const [signatureImages, stampImages] = await Promise.all([cardSignatureImages(ctx, slots), cardStampImages(ctx, slots)]);
