@@ -1,7 +1,7 @@
 import type PDFKit from "pdfkit";
 import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
 import { documentNationalEmblem } from "./document-national-emblem";
-import { CARD_WIDTH_MM, CARD_HEIGHT_MM, cardSheetPosition, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
+import { CARD_WIDTH_MM, CARD_HEIGHT_MM, cardSheetPosition, schoolCardMinistry, schoolCardClasses, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
 
 export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>>; stamps?: Partial<Record<CardSlot, string>> };
 const mm = (value: number) => value * 72 / 25.4;
@@ -71,9 +71,8 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
     text(doc, "CARTE SCOLAIRE", 7.1, 14.6, 49, 5, 10);
     text(doc, card.year, 59, 15.3, 19.2, 4, 7.6, "right");
 
-    rect(4, 23, 20, 24, paper, 1.4);
     const photo = assets.photos.get(card.studentId);
-    imageFit(doc, photo, 4.6, 23.6, 18.8, 22.8);
+    imageFit(doc, photo, 4, 23, 20, 24);
     if (!photo) {
       doc.fillColor(muted);
       text(doc, "Photo absente", 4.5, 33.1, 19, 5, 5.7, "center");
@@ -85,10 +84,12 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
     text(doc, card.name, 28, 25.5, 53.6, 6.3, 10.5);
     doc.fillColor(muted);
     text(doc, "MATRICULE", 28, 32.0, 25, 2.6, 5.7);
-    text(doc, "CLASSE", 55, 32.0, 26.6, 2.6, 5.7);
+    const teachingClasses = schoolCardClasses(card);
+    text(doc, teachingClasses.length > 1 ? "CLASSES" : "CLASSE", 51, 32, 30.6, 2.6, 5.7);
     doc.fillColor(ink);
     text(doc, card.matricule, 28, 34.9, 25, 4, 8.1);
-    text(doc, card.classLabel, 55, 34.9, 26.6, 4, 8.1);
+    teachingClasses.forEach((classe, index) =>
+      text(doc, classe.label, 51, 34.5 + index * 2.9, 30.6, 3.4, teachingClasses.length > 1 ? 6.7 : 8.1));
     doc.fillColor(muted);
     text(doc, "NÉ(E) LE", 28, 40.0, 23, 2.6, 5.7);
     text(doc, "À", 51, 40.0, 23.5, 2.6, 5.7);
@@ -161,9 +162,7 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     doc.fillColor("#343E37");
     text(doc, `ANNÉE SCOLAIRE : ${card.year}`, 24.5, 17.4, 41, 2.7, 5.2, "center");
 
-    doc.roundedRect(mm(4.5), mm(21.2), mm(21.7), mm(24.5), mm(0.6))
-      .fillAndStroke("#F4F7F5", "#CBD8D0");
-    imageFit(doc, assets.photos.get(card.studentId), 4.8, 21.5, 21.1, 23.9);
+    imageFit(doc, assets.photos.get(card.studentId), 4.5, 21.2, 21.7, 24.5);
     if (!assets.photos.has(card.studentId)) {
       doc.fillColor("#7C8B81");
       text(doc, "Photo absente", 6.2, 30, 18.1, 6, 5.4, "center");
@@ -183,15 +182,10 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     text(doc, card.gender || "—", 77.5, 34.2, 5, 3.5, 6.0);
     text(doc, "Lieu de naissance :", 28, 38.6, 21, 3.1, 5.3);
     text(doc, card.birthPlace || "Non renseigné", 49, 38.4, 33, 3.8, 5.9);
-    text(doc, "Classe :", 28, 42.7, 11.5, 3.2, 6.0);
-    const signature = card.signatureSlot ? assets.signatures[card.signatureSlot] : undefined;
-    text(doc, card.classLabel, 39.5, 42.5, signature ? 20 : 42.5, 4, 6.5);
-
-    if (signature) {
-      imageFit(doc, signature, 61, 41.3, 21, 5.7);
-      doc.fillColor("#526058");
-      text(doc, card.signatoryName, 58.5, 46.4, 24, 1.9, 3.7, "center");
-    }
+    const teachingClasses = schoolCardClasses(card);
+    text(doc, teachingClasses.length > 1 ? "Classes" : "Classe", 28, 42.7, 11.5, 3.2, 6);
+    teachingClasses.forEach((classe, index) =>
+      text(doc, classe.label, 39.5, 42.5 + index * 2.65, 42.5, 3.25, 6.5));
     doc.rect(mm(3.5), mm(48.5), mm(78.6), mm(0.7)).fill(orange);
     doc.fillColor("#181F1A");
     text(doc, school.name, 4.0, 49.8, 77.6, 3.1, 7.1, "center");
@@ -200,15 +194,17 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     // No scanning, QR drawing, or per-card PDF work on the server.
     imageFit(doc, assets.logo, 29, 3.1, 27.6, 17.5);
     const stamp = card.signatureSlot ? assets.stamps?.[card.signatureSlot] : undefined;
-    // Each card reuses the once-loaded school seal, never another HTTP request.
-    // The seal stays on the reverse, without obscuring student details.
-    imageFit(doc, stamp, 59.3, 2.0, 22.5, 22.5);
+    const signature = card.signatureSlot ? assets.signatures[card.signatureSlot] : undefined;
+    const hasDirector = stamp || signature;
+    imageFit(doc, stamp, 59.3, 2, 22.5, 15.7);
+    imageFit(doc, signature, 59.3, stamp ? 18 : 10, 22.5, 5.5);
     doc.fillColor("#17211B");
-    text(doc, school.name, 4.5, stamp ? 25.0 : 22, 76.6, stamp ? 3.7 : 4.6, stamp ? 6.5 : 7.1, "center");
+    if (hasDirector) text(doc, card.signatoryName, 57.6, 24, 25.5, 3, 5.1, "center");
+    text(doc, school.name, 4.5, hasDirector ? 25.0 : 22, hasDirector ? 51 : 76.6, 4.6, 7.1, hasDirector ? "left" : "center");
 
     doc.fillColor("#27342B");
     text(doc, "Cette carte est strictement personnelle et obligatoire pour toutes les démarches scolaires et administratives.",
-      8, stamp ? 30.0 : 29, 69.6, stamp ? 6.0 : 6.5, 5.8, "center");
+      8, hasDirector ? 30.0 : 29, 69.6, hasDirector ? 6.0 : 6.5, 5.8, "center");
     text(doc, "Toute reproduction, altération ou utilisation frauduleuse est formellement interdite.",
       8, 36.5, 69.6, 5.6, 5.7, "center");
     text(doc, `En cas de perte, prière de contacter l’établissement au : ${school.phone || "coordonnées à renseigner"}`,

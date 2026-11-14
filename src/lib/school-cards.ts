@@ -38,16 +38,19 @@ export const EPC_CARD_DIRECTOR = {
 } as const;
 
 export type CardYear = { code: string; start_date: string; end_date: string; is_current: boolean };
-export type CardClass = { id: string; label: string; level: string | null; academic_year: string; tracks?: string[] };
+export type CardClass = { id: string; label: string; level: string | null; academic_year: string };
 export type SchoolCard = {
-  enrollmentId: string; administrativeClassId?: string; studentId: string; classId: string; year: string;
+  enrollmentId: string; studentId: string; classId: string; year: string;
   name: string; matricule: string; birthdate: string; birthPlace: string; gender: string;
-  classLabel: string; level: string; tracks: string[]; cardTrack?: CardSlot | null; photoUrl: string | null;
+  classLabel: string; level: string; classes?: CardTeachingClass[]; tracks: string[]; cardTrack?: CardSlot | null; photoUrl: string | null;
   revoked: boolean; warnings: string[];
 };
-export function schoolCardSelectionKey(card: Pick<SchoolCard, "enrollmentId" | "classId">) {
-  return `${card.enrollmentId}:${card.classId}`;
+export type CardTeachingClass = { id: string; label: string; level: string; track: CardSlot | null };
+
+export function schoolCardClasses(card: Pick<SchoolCard, "classId" | "classLabel" | "level" | "cardTrack" | "classes">) {
+  return card.classes ?? [{ id: card.classId, label: card.classLabel, level: card.level, track: card.cardTrack ?? null }];
 }
+
 export type PreparedCard = SchoolCard & {
   token: string; verificationUrl: string; fingerprint: string;
   signatureSlot: CardSlot | null; signatoryName: string;

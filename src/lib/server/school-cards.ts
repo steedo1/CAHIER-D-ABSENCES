@@ -53,7 +53,9 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
   const allClasses = await loadCardClasses(ctx, year);
   const classes = allClasses.filter(row => !ctx.educatorAssignments || educatorAssignmentCoversClass(row, ctx.educatorAssignments));
   if (!classes.length) return { items: [] as SchoolCard[], classes, nextOffset: null };
-  const includeLinks = usesEpcSchoolCardLayout(ctx.school);
+  const cycles = parseSchoolCyclesSettings(ctx.school.settings_json);
+  const policy = readStudentProgramSettings(ctx.school.settings_json).years[year];
+  const includeLinks = Object.values(policy?.classes || {}).some(classe => classe.linkedStudentIds?.length);
   const enrollmentClasses = includeLinks ? allClasses : classes;
   let query = ctx.service.from("class_enrollments").select("id,student_id,class_id,start_date,end_date,students:student_id!inner(id,institution_id,full_name,full_name_ar,first_name,last_name,matricule,birthdate,birth_place,gender,photo_path,lifecycle_status)")
     .eq("institution_id", ctx.instId).is("end_date", null).in("class_id", enrollmentClasses.map(row => row.id))
@@ -68,25 +70,21 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
   const rows = ((data || []) as unknown as CardEnrollment[]).filter(row =>
     (!row.students.lifecycle_status || row.students.lifecycle_status === "active") &&
     row.start_date && Date.parse(row.start_date + "T00:00:00Z") <= Date.now());
-  const cycles = parseSchoolCyclesSettings(ctx.school.settings_json);
-  const policy = readStudentProgramSettings(ctx.school.settings_json).years[year];
   const byClass = new Map(enrollmentClasses.map(row => [row.id, {
     ...row, cycle: resolveSchoolCycleForClass(row, cycles),
   }]));
   const permittedClasses = new Set(classes.map(row => row.id));
-  const memberships = rows.map(row => ({ row, classId: row.class_id }));
+  const classIdsByStudent = new Map<string, string[]>();
   if (includeLinks) {
-    const homes = new Map(rows.map(row => [row.student_id, row]));
-    const administrativePairs = new Set(rows.map(row => `${row.student_id}:${row.class_id}`));
-    for (const link of expandPedagogicalEnrollments(cycles, policy, [...byClass.values()], rows)) {
-      const home = homes.get(link.student_id);
-      if (home && !administrativePairs.has(`${link.student_id}:${link.class_id}`)) {
-        memberships.push({ row: home, classId: link.class_id });
-      }
+    for (const membership of expandPedagogicalEnrollments(cycles, policy, [...byClass.values()], rows)) {
+      const classIds = classIdsByStudent.get(membership.student_id) ?? [];
+      classIds.push(membership.class_id);
+      classIdsByStudent.set(membership.student_id, classIds);
     }
   }
-  const visibleMemberships = memberships.filter(({ classId }) => permittedClasses.has(classId));
-  const visibleRows = [...new Set(visibleMemberships.map(({ row }) => row))];
+  // A pupil is in scope when any of their verified classes is assigned to the educator.
+  const visibleRows = rows.filter(row => permittedClasses.has(row.class_id) ||
+    classIdsByStudent.get(row.student_id)?.some(id => permittedClasses.has(id)));
   const revocations = new Set<string>();
   for (let start = 0; start < visibleRows.length; start += 100) {
     const revoked = await ctx.service.from("school_card_revocations").select("enrollment_id,revoked")
@@ -104,27 +102,34 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
     if (signed.error) throw Error("photos_unavailable");
     (signed.data || []).forEach(row => { if (row.path && row.signedUrl) photos.set(row.path, row.signedUrl); });
   }
-  const items: SchoolCard[] = [];
-  for (const { row, classId } of visibleMemberships) {
-    const linked = row.class_id !== classId;
-    const student = row.students, classe = byClass.get(classId)!;
-    const classPolicy = policy?.classes[classe.id];
-    const tracks = linked ? classPolicy?.tracks || [] :
-      programsForStudent(classPolicy, row.student_id, cycles.teachingTracksByCycle[classe.cycle] || []);
-    const cardTrack = cardTeachingTrackForClass(tracks, classPolicy?.tracks || []);
-    const name = (includeLinks && cardTrack === "arabic" ? student.full_name_ar?.trim() : "") ||
+  const items: SchoolCard[] = visibleRows.map(row => {
+    const student = row.students;
+    const home = byClass.get(row.class_id)!;
+    const homePolicy = policy?.classes[home.id];
+    const tracks = programsForStudent(homePolicy, row.student_id, cycles.teachingTracksByCycle[home.cycle] || []);
+    const cardTrack = cardTeachingTrackForClass(tracks, homePolicy?.tracks || []);
+    const classIds = classIdsByStudent.get(row.student_id) ?? [home.id];
+    const teachingClasses = classIds.map(id => {
+      const classe = byClass.get(id)!;
+      const classTracks = policy?.classes[id]?.tracks ?? [];
+      return { id, label: classe.label, level: classe.level || "",
+        track: id === home.id ? cardTrack : cardTeachingTrackForClass(classTracks, classTracks) };
+    });
+    const orderedClasses = [
+      ...teachingClasses.filter(classe => classe.track === "french"),
+      ...teachingClasses.filter(classe => classe.track !== "french"),
+    ];
+    const arabicOnly = cardTrack === "arabic" && !orderedClasses.some(classe => classe.track === "french");
+    const name = (arabicOnly ? student.full_name_ar?.trim() : "") ||
       student.full_name || [student.last_name, student.first_name].filter(Boolean).join(" ");
-    const item: SchoolCard = { enrollmentId: row.id, studentId: row.student_id, classId: classe.id, year,
-      ...(linked ? { administrativeClassId: row.class_id } : {}),
+    const item: SchoolCard = { enrollmentId: row.id, studentId: row.student_id, classId: home.id, year,
       name, matricule: student.matricule || "", birthdate: student.birthdate || "", birthPlace: student.birth_place || "",
-      gender: student.gender || "", classLabel: classe.label, level: classe.level || "", photoUrl: photos.get(student.photo_path) || null,
-      tracks, cardTrack, revoked: revocations.has(row.id), warnings: [] };
+      gender: student.gender || "", classLabel: home.label, level: home.level || "", classes: orderedClasses,
+      photoUrl: photos.get(student.photo_path) || null, tracks, cardTrack, revoked: revocations.has(row.id), warnings: [] };
     item.warnings = cardWarnings(item);
-    items.push(item);
-  }
-  return { items, classes: classes.map(classe => ({
-    ...classe, tracks: policy?.classes[classe.id]?.tracks || [],
-  })), nextOffset: !options.enrollmentIds && data?.length === 500 ? (options.offset || 0) + 500 : null };
+    return item;
+  });
+  return { items, classes, nextOffset: !options.enrollmentIds && data?.length === 500 ? (options.offset || 0) + 500 : null };
 }
 async function cardAssetImages(ctx: CardScope, kind: "signatures" | "stamps", slots: ReadonlySet<CardSlot>) {
   const images: Partial<Record<CardSlot, string>> = {};
@@ -149,14 +154,15 @@ export function safeCardAsset(instId: string, asset: CardAsset) {
 export function prepareSchoolCards(ctx: CardScope, items: SchoolCard[], origin: string) {
   const cycles = parseSchoolCyclesSettings(ctx.school.settings_json), bilingual = isBilingualSchool(cycles);
   const signatories = readSchoolTeachingSignatories(ctx.school.settings_json);
+  const epc = usesEpcSchoolCardLayout(ctx.school);
+  const schoolSignatory = ctx.school.head_name && (ctx.configuration.signatures?.general || ctx.configuration.stamps?.general);
   return items.map(item => {
     const selectedTracks = item.cardTrack === undefined ? item.tracks : item.cardTrack ? [item.cardTrack] : [];
-    const slot = signatureSlotForTracks(selectedTracks, bilingual);
+    const slot = epc ? "arabic" : schoolSignatory ? "general" : signatureSlotForTracks(selectedTracks, bilingual);
     const signatoryName = slot === "general" ? ctx.school.head_name || "" : slot ? signatories[slot]?.name || "" : "";
-    // Bilingual images require a configured teaching director; no general fallback.
     const signatureSlot = ctx.configuration.automaticSignature && slot && signatoryName &&
       (ctx.configuration.signatures?.[slot] || ctx.configuration.stamps?.[slot]) ? slot : null;
-    const token = issueCardToken({ institutionId: ctx.instId, studentId: item.studentId, enrollmentId: item.enrollmentId, classId: item.administrativeClassId ?? item.classId, year: item.year });
+    const token = issueCardToken({ institutionId: ctx.instId, studentId: item.studentId, enrollmentId: item.enrollmentId, classId: item.classId, year: item.year });
     return { ...item, token, verificationUrl: `${origin}/verifier-carte#${token}`, fingerprint: cardFingerprint(token), signatureSlot, signatoryName,
       warnings: ctx.configuration.automaticSignature && !signatureSlot ? [...item.warnings, "Signature non appliquée : responsable ou section à configurer"] : item.warnings };
   });

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { documentNationalEmblem } from "@/lib/document-national-emblem";
-import { CARD_PDF_BATCH, CARD_SLOTS, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, schoolCardSelectionKey, type SchoolCard, type CardRoster, type CardSchool, type CardSlot, type PreparedCard } from "@/lib/school-cards";
+import { CARD_PDF_BATCH, CARD_SLOTS, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, schoolCardClasses, type SchoolCard, type CardRoster, type CardSchool, type CardSlot, type PreparedCard } from "@/lib/school-cards";
 
 const button = "rounded-xl bg-emerald-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40";
 const input = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900";
@@ -23,6 +23,7 @@ function EpcCardPreview({ card, school, signature, stamp }: {
   const emblem = documentNationalEmblem(school.country_name);
   const slot = card.signatureSlot;
   const director = (slot === "french" || slot === "arabic") && (signature || stamp) ? EPC_CARD_DIRECTOR[slot] : null;
+  const teachingClasses = schoolCardClasses(card);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(card.birthdate) ? card.birthdate.split("-").reverse().join("/") : "—";
   const frame = "relative aspect-[85.6/54] w-full max-w-lg overflow-hidden rounded-xl border border-[#CBDAD1] bg-white text-[#192923] shadow-md [container-type:inline-size]";
   const label = "block text-[2.25cqw] font-semibold uppercase leading-tight text-[#485D53]";
@@ -41,7 +42,7 @@ function EpcCardPreview({ card, school, signature, stamp }: {
         <h3 className="text-[4.1cqw]">CARTE SCOLAIRE</h3><p className="text-[3.15cqw]">{card.year}</p>
       </div>
       <div className="absolute inset-x-[4.7%] top-[42.6%] grid h-[45%] grid-cols-[26%_1fr] gap-[5%] leading-tight">
-        <div className="grid min-h-0 place-items-center overflow-hidden rounded-md bg-[#F3F7F4] text-[2.3cqw] text-[#485D53]">
+        <div className="grid min-h-0 place-items-center overflow-hidden text-[2.3cqw] text-[#485D53]">
           {card.photoUrl ? <img alt="Photo de l’élève" src={card.photoUrl} className="h-full min-h-0 w-full object-contain" /> : "Photo absente"}
         </div>
         <div className="min-w-0 text-[3cqw]">
@@ -49,7 +50,10 @@ function EpcCardPreview({ card, school, signature, stamp }: {
           <p dir="auto" className="line-clamp-2 font-bold leading-none text-[4.2cqw] text-[#134A35]">{card.name}</p>
           <div className="mt-[2%] grid grid-cols-2 gap-x-[4%]">
             <p className="min-w-0"><span className={label}>Matricule</span>{card.matricule || "—"}</p>
-            <p className="min-w-0"><span className={label}>Classe</span><bdi>{card.classLabel}</bdi></p>
+            <div className="min-w-0">
+              <span className={label}>{teachingClasses.length > 1 ? "Classes" : "Classe"}</span>
+              {teachingClasses.map(classe => <p key={classe.id}><bdi>{classe.label}</bdi></p>)}
+            </div>
           </div>
           <div className="mt-[2%] grid grid-cols-[40%_44%_16%]">
             <p><span className={label}>Né(e) le</span>{date}</p>
@@ -85,7 +89,7 @@ function EpcCardPreview({ card, school, signature, stamp }: {
 
 export default function SchoolCardsWorkspace() {
   const [roster, setRoster] = useState<CardRoster | null>(null), [year, setYear] = useState("");
-  const [query, setQuery] = useState(""), [level, setLevel] = useState(""), [track, setTrack] = useState("");
+  const [query, setQuery] = useState(""), [level, setLevel] = useState("");
   const [classes, setClasses] = useState<string[]>([]), [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [status, setStatus] = useState(""), [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0), [preview, setPreview] = useState<PreparedCard | null>(null);
@@ -120,47 +124,29 @@ export default function SchoolCardsWorkspace() {
   }, [upload]);
   useEffect(() => { setProcessedPreview(""); setAuthorized(false); }, [upload, removeBackground, tolerance, crop, slot, kind]);
   useEffect(() => () => { urls.current.forEach(url => URL.revokeObjectURL(url)); }, []);
-  const epc = roster ? usesEpcSchoolCardLayout(roster.school) : false;
-  const sectionItems = useMemo(() => (roster?.items || []).filter(row =>
-    !track || (epc ? row.cardTrack === track : row.tracks.includes(track))), [roster, epc, track]);
-  const sectionClasses = useMemo(() => (roster?.classes || []).filter(row =>
-    !epc || !track || row.tracks?.includes(track)), [roster, epc, track]);
-  const visible = useMemo(() => sectionItems.filter(row =>
-    (!classes.length || classes.includes(row.classId)) && (!level || row.level === level) &&
-    `${row.name} ${row.matricule}`.toLocaleLowerCase("fr").includes(query.toLocaleLowerCase("fr"))), [sectionItems, classes, level, query]);
-  const chosen = useMemo(() => sectionItems.filter(row => selected.has(schoolCardSelectionKey(row))), [sectionItems, selected]);
+  const visible = useMemo(() => (roster?.items || []).filter(row =>
+    schoolCardClasses(row).some(classe => (!classes.length || classes.includes(classe.id)) && (!level || classe.level === level)) &&
+    `${row.name} ${row.matricule}`.toLocaleLowerCase("fr").includes(query.toLocaleLowerCase("fr"))), [roster, classes, level, query]);
+  const chosen = useMemo(() => (roster?.items || []).filter(row => selected.has(row.enrollmentId)), [roster, selected]);
   const warnings = chosen.filter(row => row.warnings.length);
   async function run(action: () => Promise<void>) {
     setBusy(true); setError(""); setStatus("");
     try { await action(); } catch (e) { setError(e instanceof Error ? e.message : "Opération impossible"); } finally { setBusy(false); }
   }
-  function selectSection(value: string) {
-    setTrack(value);
-    setClasses([]);
-    setLevel("");
-    setSelected(new Set());
-    setPreview(null);
-    setStatus("");
-    setError("");
-    setAllowMissing(false);
-    urls.current.forEach(url => URL.revokeObjectURL(url));
-    urls.current = [];
-    setFiles([]);
-  }
   async function prepare(cards: SchoolCard[]) {
     if (!roster) return [];
-    const missing = cards.filter(card => !prepared.current.has(schoolCardSelectionKey(card)));
+    const missing = cards.filter(card => !prepared.current.has(card.enrollmentId));
     for (let i = 0; i < missing.length; i += CARD_PDF_BATCH) {
-      const refs = missing.slice(i, i + CARD_PDF_BATCH).map(({ enrollmentId, classId }) => ({ enrollmentId, classId }));
+      const enrollmentIds = missing.slice(i, i + CARD_PDF_BATCH).map(card => card.enrollmentId);
       const response = await jsonRequest("/api/admin/school-cards", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ year: roster.year, cards: refs }),
+        body: JSON.stringify({ year: roster.year, enrollmentIds }),
       });
-      response.items.forEach((row: PreparedCard) => prepared.current.set(schoolCardSelectionKey(row), row));
+      response.items.forEach((row: PreparedCard) => prepared.current.set(row.enrollmentId, row));
       signatureImages.current = { ...signatureImages.current, ...response.signatureImages };
       stampImages.current = { ...stampImages.current, ...response.stampImages };
     }
-    return cards.map(card => prepared.current.get(schoolCardSelectionKey(card))!);
+    return cards.map(card => prepared.current.get(card.enrollmentId)!);
   }
   async function exportPdfs(individual = false) {
     if (!roster) return;
@@ -172,8 +158,7 @@ export default function SchoolCardsWorkspace() {
       const subset = cards.slice(start, start + CARD_PDF_BATCH);
       const { blob, missing } = await exportSchoolCardPdf(subset, roster.school, signatureImages.current, { individual, flip, stamps: stampImages.current });
       const url = URL.createObjectURL(blob); urls.current.push(url);
-      const section = track === "french" ? "-francais" : track === "arabic" ? "-arabe" : "";
-      const name = `Cartes${section}-${roster.year}-${start + 1}-${start + subset.length}.pdf`;
+      const name = `Cartes-${roster.year}-${start + 1}-${start + subset.length}.pdf`;
       setFiles(previous => [...previous, { url, name, count: subset.length }]);
       if (missing.length) setError(`Images non chargées : ${missing.join(", ")}. Rechargez les élèves avant de relancer l’export.`);
       await new Promise(resolve => setTimeout(resolve, 0));
@@ -215,13 +200,12 @@ export default function SchoolCardsWorkspace() {
         <div className="flex flex-wrap gap-3">
           <label className="grid gap-1 text-sm">Année scolaire<select aria-label="Année scolaire" className={input} value={roster.year} disabled={busy || loading} onChange={e => setYear(e.target.value)}>{roster.years.map(y => <option key={y.code}>{y.code}</option>)}</select></label>
           <label className="grid gap-1 text-sm">Recherche<input className={input} value={query} onChange={e => setQuery(e.target.value)} placeholder="Nom ou matricule" /></label>
-          <label className="grid gap-1 text-sm">Niveau<select className={input} value={level} onChange={e => setLevel(e.target.value)}><option value="">Tous</option>{[...new Set(sectionItems.map(row => row.level))].filter(Boolean).sort().map(value => <option key={value}>{value}</option>)}</select></label>
-          <label className="grid gap-1 text-sm">Section<select className={input} value={track} disabled={busy || loading} onChange={e => selectSection(e.target.value)}><option value="">Toutes</option><option value="french">Français</option><option value="arabic">Arabe</option></select></label>
-          <label className="grid gap-1 text-sm">Classes (sélection multiple)<select className={input} multiple size={3} value={classes} onChange={e => setClasses(Array.from(e.target.selectedOptions).map(option => option.value))}>{sectionClasses.map(row => <option value={row.id} key={row.id}>{row.label}</option>)}</select></label>
+          <label className="grid gap-1 text-sm">Niveau<select className={input} value={level} onChange={e => setLevel(e.target.value)}><option value="">Tous</option>{[...new Set(roster.classes.map(classe => classe.level))].filter(Boolean).sort().map(value => <option key={value}>{value}</option>)}</select></label>
+          <label className="grid gap-1 text-sm">Classes (sélection multiple)<select className={input} multiple size={3} value={classes} onChange={e => setClasses(Array.from(e.target.selectedOptions).map(option => option.value))}>{roster.classes.map(row => <option value={row.id} key={row.id}>{row.label}</option>)}</select></label>
         </div>
-        <div className="flex flex-wrap items-center gap-3"><button className={button} disabled={busy} onClick={() => setSelected(new Set(visible.map(schoolCardSelectionKey)))}>Sélectionner les résultats ({visible.length})</button><button className={input} disabled={busy} onClick={() => setSelected(new Set(sectionItems.map(schoolCardSelectionKey)))}>{track ? "Toute la section" : "Tout l’établissement"} ({sectionItems.length})</button><button className={input} onClick={() => setSelected(new Set())}>Effacer la sélection</button><strong>{chosen.length} sélectionnée(s)</strong></div>
+        <div className="flex flex-wrap items-center gap-3"><button className={button} disabled={busy} onClick={() => setSelected(new Set(visible.map(row => row.enrollmentId)))}>Sélectionner les résultats ({visible.length})</button><button className={input} disabled={busy} onClick={() => setSelected(new Set(roster.items.map(row => row.enrollmentId)))}>Tout l’établissement ({roster.items.length})</button><button className={input} onClick={() => setSelected(new Set())}>Effacer la sélection</button><strong>{chosen.length} sélectionnée(s)</strong></div>
         {!loading && visible.length === 0 && <p className="text-sm text-slate-600">Aucun élève ne correspond aux filtres.</p>}
-        <div className="max-h-96 overflow-auto"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-slate-100"><tr><th className="p-2">Choix</th><th>Élève</th><th>Matricule</th><th>Classe</th><th>Contrôle</th></tr></thead><tbody>{visible.map(row => <tr key={schoolCardSelectionKey(row)} className="border-b"><td className="p-2"><input type="checkbox" aria-label={`Sélectionner ${row.name} ${row.classLabel}`} checked={selected.has(schoolCardSelectionKey(row))} onChange={e => setSelected(previous => { const next = new Set(previous); e.target.checked ? next.add(schoolCardSelectionKey(row)) : next.delete(schoolCardSelectionKey(row)); return next; })} /></td><td className="py-3 font-medium">{row.name}</td><td>{row.matricule || "—"}</td><td>{row.classLabel}</td><td className={row.revoked ? "text-red-700" : "text-amber-800"}>{row.revoked ? "Carte invalidée" : row.warnings.join(" · ") || "Informations complètes"}</td></tr>)}</tbody></table></div>
+        <div className="max-h-96 overflow-auto"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-slate-100"><tr><th className="p-2">Choix</th><th>Élève</th><th>Matricule</th><th>Classes</th><th>Contrôle</th></tr></thead><tbody>{visible.map(row => <tr key={row.enrollmentId} className="border-b"><td className="p-2"><input type="checkbox" aria-label={`Sélectionner ${row.name} ${row.classLabel}`} checked={selected.has(row.enrollmentId)} onChange={e => setSelected(previous => { const next = new Set(previous); e.target.checked ? next.add(row.enrollmentId) : next.delete(row.enrollmentId); return next; })} /></td><td className="py-3 font-medium">{row.name}</td><td>{row.matricule || "—"}</td><td>{schoolCardClasses(row).map(classe => <div key={classe.id}><bdi>{classe.label}</bdi></div>)}</td><td className={row.revoked ? "text-red-700" : "text-amber-800"}>{row.revoked ? "Carte invalidée" : row.warnings.join(" · ") || "Informations complètes"}</td></tr>)}</tbody></table></div>
       </section>
       <section className="space-y-4 rounded-2xl border bg-white p-5"><h2 className="text-lg font-semibold">Prévisualiser et imprimer</h2>
         <p className="text-sm">A4 : 2 colonnes × 5 cartes. Imprimez à <strong>100 % / taille réelle</strong>, sans ajustement. Faites d’abord un essai recto verso d’une feuille et mesurez une carte avant de lancer le lot.</p>
@@ -234,10 +218,15 @@ export default function SchoolCardsWorkspace() {
             stamp={preview.signatureSlot ? stampImages.current[preview.signatureSlot] : undefined} />
         </div>}
         {preview && !usesEpcSchoolCardLayout(roster.school) && <div className="grid gap-4 xl:grid-cols-2">
-          <div aria-label="Aperçu recto" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md"><div className="grid grid-cols-[12%_1fr_12%] items-start gap-2"><div>{roster.school.logo_url && <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="aspect-square w-full object-contain" />}</div><div className="text-center text-[10px] text-emerald-900">{roster.school.country_name || "République de Côte d’Ivoire"}<br />{roster.school.country_motto || "Union - Discipline - Travail"}<br />{schoolCardMinistry(roster.school, preview.year)}</div><div>{documentNationalEmblem(roster.school.country_name) && <img src={documentNationalEmblem(roster.school.country_name)} alt="Armoiries de la République de Côte d’Ivoire" className="aspect-square w-full object-contain" />}</div></div><h3 className="mx-auto mt-1 w-fit rounded bg-emerald-800 px-6 font-bold text-white">CARTE SCOLAIRE</h3><p className="text-center text-[10px]">ANNÉE SCOLAIRE {preview.year}</p><div className="mt-3 flex gap-4">{preview.photoUrl ? <img alt="Photo de l’élève" className="aspect-[20/26] w-1/4 object-contain" src={preview.photoUrl} /> : <div className="grid w-1/4 place-items-center bg-slate-100 text-xs">Photo absente</div>}<div className="space-y-1 text-xs"><p>Matricule : <strong>{preview.matricule || "—"}</strong></p><p className="text-sm font-semibold">{preview.name}</p><p>Né(e) le : {preview.birthdate} · Sexe : {preview.gender}</p><p>Lieu : {preview.birthPlace}</p><p>Classe : {preview.classLabel}</p>{preview.signatureSlot && signatureImages.current[preview.signatureSlot] && <img alt={`Signature de ${preview.signatoryName}`} src={signatureImages.current[preview.signatureSlot]} className="ml-auto h-9 max-w-28 object-contain" />}</div></div><p className="absolute inset-x-4 bottom-3 border-t-2 border-orange-400 pt-1 text-center text-[11px] font-semibold">{roster.school.name}</p></div>
+          <div aria-label="Aperçu recto" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md"><div className="grid grid-cols-[12%_1fr_12%] items-start gap-2"><div>{roster.school.logo_url && <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="aspect-square w-full object-contain" />}</div><div className="text-center text-[10px] text-emerald-900">{roster.school.country_name || "République de Côte d’Ivoire"}<br />{roster.school.country_motto || "Union - Discipline - Travail"}<br />{schoolCardMinistry(roster.school, preview.year)}</div><div>{documentNationalEmblem(roster.school.country_name) && <img src={documentNationalEmblem(roster.school.country_name)} alt="Armoiries de la République de Côte d’Ivoire" className="aspect-square w-full object-contain" />}</div></div><h3 className="mx-auto mt-1 w-fit rounded bg-emerald-800 px-6 font-bold text-white">CARTE SCOLAIRE</h3><p className="text-center text-[10px]">ANNÉE SCOLAIRE {preview.year}</p><div className="mt-3 flex gap-4">{preview.photoUrl ? <img alt="Photo de l’élève" className="aspect-[20/26] w-1/4 object-contain" src={preview.photoUrl} /> : <div className="grid w-1/4 place-items-center text-xs">Photo absente</div>}<div className="space-y-1 text-xs"><p>Matricule : <strong>{preview.matricule || "—"}</strong></p><p className="text-sm font-semibold">{preview.name}</p><p>Né(e) le : {preview.birthdate} · Sexe : {preview.gender}</p><p>Lieu : {preview.birthPlace}</p><div>{schoolCardClasses(preview).map(classe => <p key={classe.id}><bdi>{classe.label}</bdi></p>)}</div></div></div><p className="absolute inset-x-4 bottom-3 border-t-2 border-orange-400 pt-1 text-center text-[11px] font-semibold">{roster.school.name}</p></div>
           <div aria-label="Aperçu verso" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md">
             {roster.school.logo_url ? <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="mx-auto h-[34%] max-w-[40%] object-contain" /> : <div className="mx-auto grid h-[34%] w-[40%] place-items-center text-xs text-slate-500">Logo de l’établissement</div>}
-            {preview.signatureSlot && stampImages.current[preview.signatureSlot] && <img alt={`Cachet de ${preview.signatoryName}`} src={stampImages.current[preview.signatureSlot]} className="absolute right-[4%] top-[4%] h-[41%] w-[27%] object-contain" />}
+            {preview.signatureSlot && (stampImages.current[preview.signatureSlot] || signatureImages.current[preview.signatureSlot]) &&
+              <div className="absolute right-[4%] top-[4%] flex h-[36%] w-[28%] flex-col items-center text-center text-[9px] leading-tight">
+                {stampImages.current[preview.signatureSlot] && <img alt={`Cachet de ${preview.signatoryName}`} src={stampImages.current[preview.signatureSlot]} className="h-[62%] w-full object-contain" />}
+                {signatureImages.current[preview.signatureSlot] && <img alt={`Signature de ${preview.signatoryName}`} src={signatureImages.current[preview.signatureSlot]} className="h-[25%] w-full object-contain" />}
+                <p>{preview.signatoryName}</p>
+              </div>}
             <h3 className="mt-1 text-center text-xs font-bold text-emerald-900">{roster.school.name}</h3>
             <div className="mx-auto mt-3 max-w-[90%] space-y-2 text-center text-[11px] leading-snug">
               <p>Cette carte est strictement personnelle et obligatoire pour toutes les démarches scolaires et administratives.</p>
