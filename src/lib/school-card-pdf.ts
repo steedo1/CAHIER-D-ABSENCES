@@ -141,8 +141,7 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
   text(doc, side === "front" ? school.name : SCHOOL_CARD_FOOTER, 4, 50.9, 77.6, 2.9, 5.5);
 }
 
-/** Shared by the browser exporter and the Node layout/performance tests.
- * Vector text and physical units: no screenshot scaling or server PDF work. */
+/** Shared vector layout for browser production and server raster previews. */
 export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: CardSchool, assets: CardPrintAssets, side: "front" | "back", x = 0, y = 0) {
   doc.save().translate(mm(x), mm(y));
   doc.roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).fillAndStroke("#FFFFFF", "#D7E1DB");
@@ -198,7 +197,7 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     text(doc, school.name, 4.0, 49.8, 77.6, 3.1, 7.1, "center");
   } else {
     // QR-free reverse: institutional identity and legal notices from the visual reference.
-    // No scanning, QR drawing, or per-card PDF work on the server.
+    // No QR drawing.
     imageFit(doc, assets.logo, 29, 3.1, 27.6, 17.5);
     const stamp = card.signatureSlot ? assets.stamps?.[card.signatureSlot] : undefined;
     const signature = card.signatureSlot ? assets.signatures[card.signatureSlot] : undefined;

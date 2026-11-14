@@ -1,4 +1,5 @@
 // src/app/redirect/route.ts
+import { PRODUCTION_ROLE } from "@/lib/production-nexa";
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { createClient } from "@supabase/supabase-js";
@@ -83,6 +84,7 @@ export async function GET(req: Request) {
   } = await supabase.auth.getUser();
 
   if (!user) return loginRedirect(url, book);
+  if (user.role === PRODUCTION_ROLE) return attachLastDest(NextResponse.redirect(new URL("/production-nexa", url)), "/production-nexa");
 
   // 1) Cas spécial : compte-classe.
   if (SERVICE_KEY) {

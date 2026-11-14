@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { documentNationalEmblem } from "@/lib/document-national-emblem";
-import { CARD_PDF_BATCH, CARD_SLOTS, SCHOOL_CARD_FOOTER, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_WATERMARK_OPACITY, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, schoolCardClasses, type SchoolCard, type CardRoster, type CardSchool, type CardSlot, type PreparedCard } from "@/lib/school-cards";
+import { CARD_PDF_BATCH, CARD_SLOTS, schoolCardClasses, type CardRoster, type CardSlot } from "@/lib/school-cards";
+import { ORDER_LABELS, type ProductionOrder } from "@/lib/production-nexa";
+import { CardPreview, productionDate, productionRequest } from "@/components/production-nexa/shared";
 
 const button = "rounded-xl bg-emerald-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40";
 const input = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900";
@@ -12,121 +13,34 @@ async function jsonRequest(url: string, init?: RequestInit) {
   if (!response.ok) throw Error(String(body.error || "Opération impossible").replaceAll("_", " "));
   return body;
 }
-type PdfFile = { url: string; name: string; count: number };
-function EpcCardPreview({ card, school, signature, stamp }: {
-  card: PreparedCard;
-  school: CardSchool;
-  signature?: string;
-  stamp?: string;
-}) {
-  const [loadedLogo, setLoadedLogo] = useState<{ source: string | null; image?: string }>();
-  useEffect(() => {
-    let current = true;
-    import("@/lib/school-card-export")
-      .then(({ loadSchoolCardLogo }) => loadSchoolCardLogo(school))
-      .then(logo => { if (current) setLoadedLogo({ source: school.logo_url, image: logo }); })
-      .catch(() => { if (current) setLoadedLogo({ source: school.logo_url }); });
-    return () => { current = false; };
-  }, [school]);
-  const decodedLogo = loadedLogo?.source === school.logo_url ? loadedLogo?.image : undefined;
-  const logo = decodedLogo ?? school.logo_url;
-  const ministry = schoolCardMinistry(school, card.year);
-  const emblem = documentNationalEmblem(school.country_name);
-  const slot = card.signatureSlot;
-  const director = (slot === "french" || slot === "arabic") && (signature || stamp) ? EPC_CARD_DIRECTOR[slot] : null;
-  const teachingClasses = schoolCardClasses(card);
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(card.birthdate) ? card.birthdate.split("-").reverse().join("/") : "—";
-  const frame = "relative aspect-[85.6/54] w-full max-w-lg overflow-hidden rounded-xl border border-[#CBDAD1] bg-white text-[#192923] shadow-md [container-type:inline-size]";
-  const label = "block text-[2.25cqw] font-semibold uppercase leading-tight text-[#485D53]";
-  return <>
-    <div aria-label="Aperçu recto" className={frame}>
-      <header className="absolute inset-x-[5%] top-[4%] grid grid-cols-[11%_1fr_11%] items-start gap-[4%] text-center leading-tight">
-        <div>{logo && <img src={logo} alt="Logo de l’établissement" className="aspect-square w-full object-contain" />}</div>
-        <div>
-          <p className="text-[2.8cqw] font-bold uppercase text-[#134A35]">{school.country_name || "République de Côte d’Ivoire"}</p>
-          <p className="text-[2.2cqw]">{school.country_motto || "Union - Discipline - Travail"}</p>
-          {ministry && <p className="text-[2.1cqw]">{ministry}</p>}
-        </div>
-        <div>{emblem && <img src={emblem} alt="Armoiries de la République de Côte d’Ivoire" className="aspect-square w-full object-contain" />}</div>
-      </header>
-      <div className="absolute inset-x-[4.7%] top-[25%] flex h-[13%] items-center justify-between rounded-md bg-[#134A35] px-[4%] font-bold text-white">
-        <h3 className="text-[4.1cqw]">CARTE SCOLAIRE</h3><p className="text-[3.15cqw]">{card.year}</p>
-      </div>
-      {logo && <img src={logo} alt="" aria-hidden="true" style={{ opacity: EPC_CARD_WATERMARK_OPACITY }}
-        className="pointer-events-none absolute left-[66%] top-[39.3%] h-[51.9%] w-[29.2%] object-contain" />}
-      <div className="absolute inset-x-[4.7%] top-[42.6%] grid h-[45%] grid-cols-[26%_1fr] gap-[5%] leading-tight">
-        <div className="grid min-h-0 place-items-center overflow-hidden text-[2.3cqw] text-[#485D53]">
-          {card.photoUrl ? <img alt="Photo de l’élève" src={card.photoUrl} className="h-full min-h-0 w-full object-contain" /> : "Photo absente"}
-        </div>
-        <div className="min-w-0 text-[3cqw]">
-          <p className={label}>Nom et prénoms</p>
-          <p dir="auto" className="line-clamp-2 font-bold leading-none text-[4.2cqw] text-[#134A35]">{card.name}</p>
-          <div className="mt-[2%] grid grid-cols-2 gap-x-[4%]">
-            <p className="min-w-0"><span className={label}>Matricule</span>{card.matricule || "—"}</p>
-            <div className="min-w-0">
-              <span className={label}>{teachingClasses.length > 1 ? "Classes" : "Classe"}</span>
-              {teachingClasses.map(classe => <p key={classe.id}><bdi>{classe.label}</bdi></p>)}
-            </div>
-          </div>
-          <div className="mt-[3%] grid grid-cols-[40%_44%_16%]">
-            <p><span className={label}>Né(e) le</span>{date}</p>
-            <p className="min-w-0"><span className={label}>À</span><bdi>{card.birthPlace || "—"}</bdi></p>
-            <p><span className={label}>Sexe</span>{card.gender || "—"}</p>
-          </div>
-        </div>
-      </div>
-      <p className="absolute inset-x-[4.7%] top-[92.6%] truncate border-t border-[#DAA754] pt-[0.5%] text-[2.3cqw] font-semibold text-[#134A35]">{school.name}</p>
-    </div>
-    <div aria-label="Aperçu verso" className={frame}>
-      <header className="absolute inset-x-[4.7%] top-[7.2%] flex h-[14%] items-center gap-[3%] rounded-md bg-[#F3F7F4] px-[2%] text-[3.2cqw] font-bold leading-tight text-[#134A35]">
-        {logo && <img src={logo} alt="Logo de l’établissement" className="h-[76%] w-[8%] object-contain" />}
-        <h3>{school.name}</h3>
-      </header>
-      <div className={`absolute inset-x-[5.8%] top-[26.5%] grid h-[64%] gap-[3%] ${director ? "grid-cols-[43%_1fr]" : "text-center"}`}>
-        <div className="space-y-[8%] text-[2.55cqw] leading-tight">
-          <div><h4 className="mb-[5%] font-bold text-[#134A35]">UTILISATION DE LA CARTE</h4><p>{EPC_CARD_USAGE}</p></div>
-          <p className="font-semibold text-[#134A35]">{school.phone ? <>En cas de perte, appeler le<br />{school.phone}</> : "En cas de perte, contacter l’établissement."}</p>
-          <p className="text-[#485D53]">{EPC_CARD_REPRODUCTION}</p>
-        </div>
-        {director && <div className="grid min-h-0 grid-rows-[11%_58%_18%_13%] place-items-center border-l border-[#CBDAD1] pl-[3%] text-center leading-tight">
-          <h4 className="text-[2.15cqw] font-bold uppercase text-[#134A35]">{director}</h4>
-          <div className="h-full min-h-0 w-full">{stamp && <img src={stamp} alt={`Cachet de ${card.signatoryName}`} className="mx-auto h-full w-[60%] object-contain" />}</div>
-          <div className="h-full min-h-0 w-full">{signature && <img src={signature} alt={`Signature de ${card.signatoryName}`} className="mx-auto h-full w-[65%] object-contain" />}</div>
-          <p className="text-[2.65cqw] font-semibold">{card.signatoryName}</p>
-        </div>}
-      </div>
-      <p className="absolute inset-x-[4.7%] top-[92.6%] border-t border-[#DAA754] pt-[0.5%] text-[2.3cqw] text-[#485D53]">{SCHOOL_CARD_FOOTER}</p>
-    </div>
-  </>;
-}
-
 export default function SchoolCardsWorkspace() {
   const [roster, setRoster] = useState<CardRoster | null>(null), [year, setYear] = useState("");
   const [query, setQuery] = useState(""), [level, setLevel] = useState("");
   const [classes, setClasses] = useState<string[]>([]), [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [status, setStatus] = useState(""), [error, setError] = useState("");
-  const [refresh, setRefresh] = useState(0), [preview, setPreview] = useState<PreparedCard | null>(null);
-  const [files, setFiles] = useState<PdfFile[]>([]), [flip, setFlip] = useState<"long" | "short">("long"), [allowMissing, setAllowMissing] = useState(false);
-  const prepared = useRef(new Map<string, PreparedCard>()), urls = useRef<string[]>([]);
-  const signatureImages = useRef<CardRoster["signatureImages"]>({});
-  const stampImages = useRef<NonNullable<CardRoster["stampImages"]>>({});
+  const [refresh, setRefresh] = useState(0), [preview, setPreview] = useState<{ front: string; back: string } | null>(null);
+  const previewCache = useRef(new Map<string, { front: string; back: string }>());
+  const [preparedIds, setPreparedIds] = useState<Set<string>>(new Set());
+  const [orders, setOrders] = useState<ProductionOrder[]>([]);
+  const [nextOrderPage, setNextOrderPage] = useState<number | null>(null);
   const [upload, setUpload] = useState<File | null>(null), [originalPreview, setOriginalPreview] = useState("");
   const [slot, setSlot] = useState<CardSlot>("general"), [kind, setKind] = useState<"signature" | "stamp">("signature"), [removeBackground, setRemoveBackground] = useState(false), [tolerance, setTolerance] = useState(24), [crop, setCrop] = useState(true);
   const [processedPreview, setProcessedPreview] = useState(""), [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController(); let current = true;
-    setLoading(true); setError(""); setSelected(new Set()); setPreview(null); prepared.current.clear();
+    setLoading(true); setError(""); setSelected(new Set()); setPreview(null); previewCache.current.clear(); setOrders([]); setNextOrderPage(null); setPreparedIds(new Set());
     setClasses([]); setLevel("");
     (async () => {
       let offset: number | null = 0, combined: CardRoster | null = null;
       do {
         const data: CardRoster = await jsonRequest(`/api/admin/school-cards?year=${encodeURIComponent(year)}&offset=${offset}`, { signal: controller.signal });
         const previous = combined as CardRoster | null;
-        combined = previous ? { ...previous, items: [...previous.items, ...data.items], nextOffset: data.nextOffset } : data;
+        combined = previous ? { ...previous, items: [...previous.items, ...data.items], nextOffset: data.nextOffset,
+          preparedIds: [...(previous.preparedIds ?? []), ...(data.preparedIds ?? [])] } : data;
         offset = data.nextOffset;
       } while (offset !== null);
-      if (current && combined) { setRoster(combined); signatureImages.current = combined.signatureImages; stampImages.current = combined.stampImages || {}; }
+      if (current && combined) { setRoster(combined); setPreparedIds(new Set(combined.preparedIds)); }
     })().catch(e => { if (current && e.name !== "AbortError") { setError(e.message); setRoster(null); } }).finally(() => { if (current) setLoading(false); });
     return () => { current = false; controller.abort(); };
   }, [year, refresh]);
@@ -136,47 +50,42 @@ export default function SchoolCardsWorkspace() {
     return () => URL.revokeObjectURL(url);
   }, [upload]);
   useEffect(() => { setProcessedPreview(""); setAuthorized(false); }, [upload, removeBackground, tolerance, crop, slot, kind]);
-  useEffect(() => () => { urls.current.forEach(url => URL.revokeObjectURL(url)); }, []);
+
   const visible = useMemo(() => (roster?.items || []).filter(row =>
     schoolCardClasses(row).some(classe => (!classes.length || classes.includes(classe.id)) && (!level || classe.level === level)) &&
     `${row.name} ${row.matricule}`.toLocaleLowerCase("fr").includes(query.toLocaleLowerCase("fr"))), [roster, classes, level, query]);
   const chosen = useMemo(() => (roster?.items || []).filter(row => selected.has(row.enrollmentId)), [roster, selected]);
-  const warnings = chosen.filter(row => row.warnings.length);
+  const selectedCard = chosen.find(row => !row.revoked);
+  const validSelection = chosen.length > 0 && chosen.every(row => !row.revoked);
+  async function loadOrders(orderYear: string, offset = 0) {
+    const payload = await productionRequest<{ orders: ProductionOrder[]; nextOffset: number | null }>(
+      `/api/admin/school-cards/orders?year=${encodeURIComponent(orderYear)}&offset=${offset}`,
+    );
+    setOrders(previous => offset ? [...previous, ...payload.orders] : payload.orders);
+    setNextOrderPage(payload.nextOffset);
+  }
+  async function showPreview() {
+    if (!selectedCard || !roster) return;
+    const key = selectedCard.studentId;
+    const cached = previewCache.current.get(key);
+    if (cached) { setPreview(cached); return; }
+    const image = await productionRequest<{ front: string; back: string }>("/api/admin/school-cards",
+      { action: "preview", year: roster.year, studentId: key });
+    if (previewCache.current.size >= 12) previewCache.current.clear();
+    previewCache.current.set(key, image);
+    setPreview(image);
+  }
+  async function submit(action: "prepare" | "order") {
+    if (!roster || !validSelection) return;
+    const { count } = await productionRequest<{ count: number }>("/api/admin/school-cards/orders",
+      { action, year: roster.year, studentIds: chosen.map(card => card.studentId) });
+    setPreparedIds(previous => new Set([...previous, ...chosen.map(card => card.studentId)]));
+    if (action === "order") await loadOrders(roster.year);
+    setStatus(action === "order" ? `Commande transmise · ${count} carte(s).` : `${count} carte(s) préparée(s) pour Production Nexa.`);
+  }
   async function run(action: () => Promise<void>) {
     setBusy(true); setError(""); setStatus("");
     try { await action(); } catch (e) { setError(e instanceof Error ? e.message : "Opération impossible"); } finally { setBusy(false); }
-  }
-  async function prepare(cards: SchoolCard[]) {
-    if (!roster) return [];
-    const missing = cards.filter(card => !prepared.current.has(card.enrollmentId));
-    for (let i = 0; i < missing.length; i += CARD_PDF_BATCH) {
-      const enrollmentIds = missing.slice(i, i + CARD_PDF_BATCH).map(card => card.enrollmentId);
-      const response = await jsonRequest("/api/admin/school-cards", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ year: roster.year, enrollmentIds }),
-      });
-      response.items.forEach((row: PreparedCard) => prepared.current.set(row.enrollmentId, row));
-      signatureImages.current = { ...signatureImages.current, ...response.signatureImages };
-      stampImages.current = { ...stampImages.current, ...response.stampImages };
-    }
-    return cards.map(card => prepared.current.get(card.enrollmentId)!);
-  }
-  async function exportPdfs(individual = false) {
-    if (!roster) return;
-    const cards = await prepare(chosen);
-    const { exportSchoolCardPdf } = await import("@/lib/school-card-export");
-    urls.current.forEach(url => URL.revokeObjectURL(url)); urls.current = []; setFiles([]);
-    for (let start = 0; start < cards.length; start += CARD_PDF_BATCH) {
-      setStatus(`Préparation du PDF : ${start + 1} à ${Math.min(start + CARD_PDF_BATCH, cards.length)} sur ${cards.length}…`);
-      const subset = cards.slice(start, start + CARD_PDF_BATCH);
-      const { blob, missing } = await exportSchoolCardPdf(subset, roster.school, signatureImages.current, { individual, flip, stamps: stampImages.current });
-      const url = URL.createObjectURL(blob); urls.current.push(url);
-      const name = `Cartes-${roster.year}-${start + 1}-${start + subset.length}.pdf`;
-      setFiles(previous => [...previous, { url, name, count: subset.length }]);
-      if (missing.length) setError(`Images non chargées : ${missing.join(", ")}. Rechargez les élèves avant de relancer l’export.`);
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
-    setStatus(`${cards.length} carte(s) préparée(s). Téléchargez ou ouvrez les PDF ci-dessous pour imprimer.`);
   }
   async function changeRevocation(revoked: boolean) {
     if (!roster) return;
@@ -218,46 +127,33 @@ export default function SchoolCardsWorkspace() {
         </div>
         <div className="flex flex-wrap items-center gap-3"><button className={button} disabled={busy} onClick={() => setSelected(new Set(visible.map(row => row.enrollmentId)))}>Sélectionner les résultats ({visible.length})</button><button className={input} disabled={busy} onClick={() => setSelected(new Set(roster.items.map(row => row.enrollmentId)))}>Tout l’établissement ({roster.items.length})</button><button className={input} onClick={() => setSelected(new Set())}>Effacer la sélection</button><strong>{chosen.length} sélectionnée(s)</strong></div>
         {!loading && visible.length === 0 && <p className="text-sm text-slate-600">Aucun élève ne correspond aux filtres.</p>}
-        <div className="max-h-96 overflow-auto"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-slate-100"><tr><th className="p-2">Choix</th><th>Élève</th><th>Matricule</th><th>Classes</th><th>Contrôle</th></tr></thead><tbody>{visible.map(row => <tr key={row.enrollmentId} className="border-b"><td className="p-2"><input type="checkbox" aria-label={`Sélectionner ${row.name} ${row.classLabel}`} checked={selected.has(row.enrollmentId)} onChange={e => setSelected(previous => { const next = new Set(previous); e.target.checked ? next.add(row.enrollmentId) : next.delete(row.enrollmentId); return next; })} /></td><td className="py-3 font-medium">{row.name}</td><td>{row.matricule || "—"}</td><td>{schoolCardClasses(row).map(classe => <div key={classe.id}><bdi>{classe.label}</bdi></div>)}</td><td className={row.revoked ? "text-red-700" : "text-amber-800"}>{row.revoked ? "Carte invalidée" : row.warnings.join(" · ") || "Informations complètes"}</td></tr>)}</tbody></table></div>
+        <div className="max-h-96 overflow-auto"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-slate-100"><tr><th className="p-2">Choix</th><th>Élève</th><th>Matricule</th><th>Classes</th><th>Contrôle</th></tr></thead><tbody>{visible.map(row => <tr key={row.enrollmentId} className="border-b"><td className="p-2"><input type="checkbox" aria-label={`Sélectionner ${row.name} ${row.classLabel}`} checked={selected.has(row.enrollmentId)} onChange={e => setSelected(previous => { const next = new Set(previous); e.target.checked ? next.add(row.enrollmentId) : next.delete(row.enrollmentId); return next; })} /></td><td className="py-3 font-medium">{row.name}</td><td>{row.matricule || "—"}</td><td>{schoolCardClasses(row).map(classe => <div key={classe.id}><bdi>{classe.label}</bdi></div>)}</td><td className={row.revoked ? "text-red-700" : "text-amber-800"}>{row.revoked ? "Carte invalidée" : row.warnings.join(" · ") || "Informations complètes"}{preparedIds.has(row.studentId) && !row.revoked && <div className="text-emerald-800">Préparée</div>}</td></tr>)}</tbody></table></div>
       </section>
-      <section className="space-y-4 rounded-2xl border bg-white p-5"><h2 className="text-lg font-semibold">Prévisualiser et imprimer</h2>
-        <p className="text-sm">A4 : 2 colonnes × 5 cartes. Imprimez à <strong>100 % / taille réelle</strong>, sans ajustement. Faites d’abord un essai recto verso d’une feuille et mesurez une carte avant de lancer le lot.</p>
-        <label className="flex items-center gap-2 text-sm">Retournement duplex<select className={input} value={flip} onChange={e => setFlip(e.target.value as "long" | "short")}><option value="long">Bord long (habituel)</option><option value="short">Bord court</option></select></label>
-        {!!warnings.length && <label className="flex items-center gap-2 rounded-lg bg-amber-50 p-3 text-sm"><input type="checkbox" checked={allowMissing} onChange={e => setAllowMissing(e.target.checked)} />J’accepte d’imprimer les {warnings.length} carte(s) dont des informations ou photos manquent.</label>}
-        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy || !chosen.length || chosen.some(row => row.revoked)} onClick={() => run(async () => { const cards = await prepare(chosen.slice(0, 1)); setPreview(cards[0]); })}>Aperçu recto verso</button><button className={button} disabled={busy || !chosen.length || chosen.some(row => row.revoked) || (!!warnings.length && !allowMissing)} onClick={() => run(() => exportPdfs())}>Générer les PDF A4 / Imprimer</button><button className={input} disabled={busy || chosen.length !== 1 || chosen[0]?.revoked || (!!warnings.length && !allowMissing)} onClick={() => run(() => exportPdfs(true))}>PDF individuel 85,6 × 54 mm</button></div>
-        {preview && usesEpcSchoolCardLayout(roster.school) && <div className="grid gap-4 xl:grid-cols-2">
-          <EpcCardPreview card={preview} school={roster.school}
-            signature={preview.signatureSlot ? signatureImages.current[preview.signatureSlot] : undefined}
-            stamp={preview.signatureSlot ? stampImages.current[preview.signatureSlot] : undefined} />
-        </div>}
-        {preview && !usesEpcSchoolCardLayout(roster.school) && <div className="grid gap-4 xl:grid-cols-2">
-          <div aria-label="Aperçu recto" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md"><div className="grid grid-cols-[12%_1fr_12%] items-start gap-2"><div>{roster.school.logo_url && <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="aspect-square w-full object-contain" />}</div><div className="text-center text-[10px] text-emerald-900">{roster.school.country_name || "République de Côte d’Ivoire"}<br />{roster.school.country_motto || "Union - Discipline - Travail"}<br />{schoolCardMinistry(roster.school, preview.year)}</div><div>{documentNationalEmblem(roster.school.country_name) && <img src={documentNationalEmblem(roster.school.country_name)} alt="Armoiries de la République de Côte d’Ivoire" className="aspect-square w-full object-contain" />}</div></div><h3 className="mx-auto mt-1 w-fit rounded bg-emerald-800 px-6 font-bold text-white">CARTE SCOLAIRE</h3><p className="text-center text-[10px]">ANNÉE SCOLAIRE {preview.year}</p><div className="mt-3 flex gap-4">{preview.photoUrl ? <img alt="Photo de l’élève" className="aspect-[20/26] w-1/4 object-contain" src={preview.photoUrl} /> : <div className="grid w-1/4 place-items-center text-xs">Photo absente</div>}<div className="space-y-1 text-xs"><p>Matricule : <strong>{preview.matricule || "—"}</strong></p><p className="text-sm font-semibold">{preview.name}</p><p>Né(e) le : {preview.birthdate} · Sexe : {preview.gender}</p><p>Lieu : {preview.birthPlace}</p><div>{schoolCardClasses(preview).map(classe => <p key={classe.id}><bdi>{classe.label}</bdi></p>)}</div></div></div><p className="absolute inset-x-4 bottom-3 border-t-2 border-orange-400 pt-1 text-center text-[11px] font-semibold">{roster.school.name}</p></div>
-          <div aria-label="Aperçu verso" className="relative aspect-[85.6/54] max-w-lg overflow-hidden rounded-2xl border bg-white p-[4%] shadow-md [container-type:inline-size]">
-            {roster.school.logo_url ? <img src={roster.school.logo_url} alt="Logo de l’établissement" loading="lazy" className="mx-auto h-[34%] max-w-[40%] object-contain" /> : <div className="mx-auto grid h-[34%] w-[40%] place-items-center text-xs text-slate-500">Logo de l’établissement</div>}
-            {preview.signatureSlot && (stampImages.current[preview.signatureSlot] || signatureImages.current[preview.signatureSlot]) &&
-              <div className="absolute right-[4%] top-[4%] flex h-[36%] w-[28%] flex-col items-center text-center text-[9px] leading-tight">
-                {stampImages.current[preview.signatureSlot] && <img alt={`Cachet de ${preview.signatoryName}`} src={stampImages.current[preview.signatureSlot]} className="h-[62%] w-full object-contain" />}
-                {signatureImages.current[preview.signatureSlot] && <img alt={`Signature de ${preview.signatoryName}`} src={signatureImages.current[preview.signatureSlot]} className="h-[25%] w-full object-contain" />}
-                <p>{preview.signatoryName}</p>
-              </div>}
-            <h3 className="mt-1 text-center text-xs font-bold text-emerald-900">{roster.school.name}</h3>
-            <div className="mx-auto mt-3 max-w-[90%] space-y-2 text-center text-[11px] leading-snug">
-              <p>Cette carte est strictement personnelle et obligatoire pour toutes les démarches scolaires et administratives.</p>
-              <p>Toute reproduction, altération ou utilisation frauduleuse est formellement interdite.</p>
-              <p>En cas de perte, prière de contacter l’établissement au : <strong>{roster.school.phone || "coordonnées à renseigner"}</strong></p>
-            </div>
-            <p className="absolute inset-x-3 bottom-3 border-t border-orange-400 pt-2 text-center text-[min(10px,2.4cqw)] text-emerald-900">{SCHOOL_CARD_FOOTER}</p>
-          </div>
-        </div>}
-        {files.length > 0 && <ul className="space-y-2">{files.map(file => <li key={file.url} className="flex flex-wrap gap-4 rounded-lg bg-emerald-50 p-3 text-sm"><a className="font-semibold underline" href={file.url} download={file.name}>{file.name} · {file.count} cartes</a><a href={file.url} target="_blank" rel="noreferrer" className="underline">Ouvrir pour imprimer</a></li>)}</ul>}
+      <section className="space-y-4 rounded-2xl border bg-white p-5"><h2 className="text-lg font-semibold">Préparer et commander</h2>
+        <div className="flex flex-wrap gap-3">
+          <button className={input} disabled={busy || loading || !selectedCard || !roster.configuration.enabled} onClick={() => run(showPreview)}>Aperçu recto verso</button>
+          <button className={input} disabled={busy || loading || !validSelection || !roster.configuration.enabled} onClick={() => run(() => submit("prepare"))}>Enregistrer la préparation</button>
+          <button className={button} disabled={busy || loading || !validSelection || !roster.configuration.enabled}
+            onClick={() => { if (window.confirm(`Transmettre une commande pour ${chosen.length} carte(s) à Nexa Digital ?`)) void run(() => submit("order")); }}>Commander les cartes</button>
+        </div>
+        {preview && <CardPreview {...preview} />}
+      </section>
+      <section className="space-y-4 rounded-2xl border bg-white p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">Suivi des commandes</h2>
+          <button className={input} disabled={busy || loading} onClick={() => run(() => loadOrders(roster.year))}>Afficher les commandes</button>
+        </div>
+        {orders.map(order => <div key={order.id} className="flex flex-wrap justify-between gap-2 rounded-lg bg-slate-50 p-3 text-sm">
+          <span>{productionDate(order.created_at)} · {order.student_ids.length} carte(s) · {order.id.slice(0, 8)}</span>
+          <strong>{ORDER_LABELS[order.status]}</strong>
+        </div>)}
+        {nextOrderPage !== null && <button className={input} disabled={busy || loading} onClick={() => run(() => loadOrders(roster.year, nextOrderPage))}>Commandes suivantes</button>}
       </section>
       {roster.canConfigure && <section className="space-y-4 rounded-2xl border bg-white p-5"><h2 className="text-lg font-semibold">Paramètres réservés à la direction</h2>
         <div className="flex flex-wrap gap-4"><label><input type="checkbox" disabled={busy} checked={roster.configuration.automaticSignature} onChange={e => run(() => saveOptions(e.target.checked, roster.configuration.enabled))} /> Signature/cachet automatiques sur les cartes</label><label><input type="checkbox" disabled={busy} checked={roster.configuration.enabled} onChange={e => run(() => saveOptions(roster.configuration.automaticSignature, e.target.checked))} /> Création des cartes active</label></div>
         <p className="text-sm text-slate-600">Cette autorisation concerne les cartes scolaires. Les bulletins, attestations et autres documents conservent leur circuit actuel. L’image apposée n’est pas une signature électronique certifiée.</p>
         <fieldset disabled={busy || loading} className="space-y-4">
           <div className="flex flex-wrap gap-4"><label className="grid gap-1 text-sm">Responsable<select className={input} value={slot} onChange={e => { setSlot(e.target.value as CardSlot); setUpload(null); }}>{CARD_SLOTS.map(value => <option key={value} value={value}>{slotNames[value]}</option>)}</select></label><label className="grid gap-1 text-sm">Type de visuel<select className={input} value={kind} onChange={e => { setKind(e.target.value as "stamp" | "signature"); setUpload(null); }}><option value="stamp">Cachet</option><option value="signature">Signature</option></select></label><label className="grid gap-1 text-sm">{kind === "stamp" ? "Image du cachet" : "Image de la signature"} (JPG/PNG, 5 Mo maximum)<input key={`${slot}-${kind}-${roster.revision}`} type="file" accept="image/jpeg,image/png" onChange={e => setUpload(e.target.files?.[0] || null)} /></label></div>
-          {(kind === "stamp" ? roster.configuration.stamps?.[slot] : roster.configuration.signatures?.[slot]) &&
-            <a className="text-sm underline" href={`/api/admin/school-cards/signature?slot=${slot}&kind=${kind}`}>{kind === "stamp" ? "Télécharger le cachet original" : "Télécharger la signature originale"}</a>}
           <div className="flex flex-wrap gap-4 text-sm"><label><input type="checkbox" checked={removeBackground} onChange={e => setRemoveBackground(e.target.checked)} /> Supprimer le fond uni</label><label><input type="checkbox" checked={crop} onChange={e => setCrop(e.target.checked)} /> Recadrer les marges transparentes</label><label>Tolérance <input type="range" min="0" max="100" value={tolerance} onChange={e => setTolerance(Number(e.target.value))} /> {tolerance}</label></div>
           <button className={button} disabled={busy || !upload} onClick={() => run(() => signatureAction("preview"))}>Voir le résultat avant validation</button>
           {processedPreview && <><div className="flex flex-wrap gap-5">{originalPreview && <figure><img alt="Original à conserver" className="h-32 max-w-xs object-contain" src={originalPreview} /><figcaption className="text-xs">Original</figcaption></figure>}<figure><img alt="Résultat à valider" className="h-32 max-w-xs border bg-slate-100 object-contain" src={processedPreview} /><figcaption className="text-xs">Résultat proposé — ajustez si des détails manquent</figcaption></figure></div><label className="block text-sm"><input type="checkbox" checked={authorized} onChange={e => setAuthorized(e.target.checked)} /> Je confirme l’autorisation de l’établissement et la fidélité de cette image.</label><button className={button} disabled={busy || !authorized} onClick={() => run(() => signatureAction("save"))}>Valider et conserver l’image</button></>}

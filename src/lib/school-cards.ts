@@ -54,7 +54,7 @@ export function schoolCardClasses(card: Pick<SchoolCard, "classId" | "classLabel
 }
 
 export type PreparedCard = SchoolCard & {
-  token: string; verificationUrl: string; fingerprint: string;
+  token?: string; verificationUrl?: string; fingerprint?: string;
   signatureSlot: CardSlot | null; signatoryName: string;
 };
 // Official source checked 2026-10-25: education.gouv.ci/index.php/Flash/details/46
@@ -72,8 +72,7 @@ export type CardRoster = {
   school: CardSchool; years: CardYear[]; year: string; classes: CardClass[];
   items: SchoolCard[]; configuration: CardConfiguration; revision: number;
   canConfigure: boolean; nextOffset: number | null;
-  signatureImages: Partial<Record<CardSlot, string>>;
-  stampImages?: Partial<Record<CardSlot, string>>;
+  preparedIds?: string[];
 };
 export function cardWarnings(row: Pick<SchoolCard, "name" | "matricule" | "birthdate" | "birthPlace" | "gender" | "photoUrl">) {
   return [[row.name, "Nom absent"], [row.matricule, "Matricule absent"],

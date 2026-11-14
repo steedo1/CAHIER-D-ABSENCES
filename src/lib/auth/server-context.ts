@@ -1,3 +1,4 @@
+import { PRODUCTION_ROLE } from "../production-nexa";
 import type { SupabaseClient, PostgrestError } from "@supabase/supabase-js";
 import { getVerifiedServerUser } from "../supabase-server";
 
@@ -38,6 +39,7 @@ export async function requireInstitutionRole(
 }> {
   const { data: { user }, error } = await getVerifiedServerUser(client);
   if (error || !user) return { error: "unauthorized" };
+  if (user.role === PRODUCTION_ROLE) return { error: "forbidden" };
   const [profile, roleRows] = await Promise.all([
     getRequestProfile(client, user.id), getRequestRoles(client, reader, user.id),
   ]);

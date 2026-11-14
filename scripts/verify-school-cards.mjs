@@ -18,11 +18,11 @@ for(const count of [500,1000]) {
     const body=await response.json();rows.push(...body.items);offset=body.nextOffset;
   }while(offset!==null);
   const loadedAt=performance.now(),loadCalls=db.calls.length;
+  const server=db.admin("src/lib/server/school-cards.ts"),scope=await server.cardScope();
   const prepared=[];
   for(let i=0;i<rows.length;i+=100) {
-    const response=await api.POST(request("/api/admin/school-cards",{year,enrollmentIds:rows.slice(i,i+100).map(row=>row.enrollmentId)}));
-    if(!response.ok) throw Error(JSON.stringify(await response.json()));
-    prepared.push(...(await response.json()).items);
+    const batch=await server.loadCardEnrollments(scope,year,{enrollmentIds:rows.slice(i,i+100).map(row=>row.enrollmentId),includePhotos:false});
+    prepared.push(...server.productionCardVisuals(scope,batch.items));
   }
   const preparedAt=performance.now(),prepareCalls=db.calls.length-loadCalls;
   let bytes=0,peakRss=process.memoryUsage().rss;

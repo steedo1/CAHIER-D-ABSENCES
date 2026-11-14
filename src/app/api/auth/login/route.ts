@@ -1,4 +1,6 @@
 // src/app/api/auth/login/route.ts
+import { PRODUCTION_ROLE } from "@/lib/production-nexa";
+import { readProductionAccount } from "@/lib/server/production-nexa";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { resolvePhoneLoginCandidates } from "@/lib/phone-login";
@@ -200,6 +202,12 @@ export async function POST(req: NextRequest) {
 
     if (!session?.access_token || !session?.refresh_token || !user?.id) {
       return jsonError("SESSION_NOT_CREATED", 401);
+    }
+
+    if (user.role === PRODUCTION_ROLE) {
+      const account = await readProductionAccount(getSupabaseServiceClient(), user.id);
+      if (account.error) return jsonError("AUTORISATIONS_INDISPONIBLES", 503);
+      if (account.data?.status !== "active") return jsonError("COMPTE_PRODUCTION_DISABLED", 403);
     }
 
     const res = NextResponse.json(

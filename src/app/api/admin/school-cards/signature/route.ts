@@ -1,21 +1,33 @@
+import { requireSuperAdminAccess } from "@/lib/super-admin-access";
 import { randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
+import { isUuid } from "@/lib/server/production-nexa";
 import { CARD_SLOTS, type CardSlot } from "@/lib/school-cards";
 import { processSchoolCardSignature } from "@/lib/school-card-image";
-import { cardJson, cardScope, requireCardOrigin, safeCardAsset } from "@/lib/server/school-cards";
+import { cardJson, cardScope, requireCardOrigin, safeCardAsset, loadCardScope } from "@/lib/server/school-cards";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Original recovery is restricted to configuration administrators.
+// Recovery of a stored original requires super-administration.
 export async function GET(req: NextRequest) {
   try {
-    const ctx = await cardScope(true); if ("error" in ctx) return ctx.error;
+    const access = await requireSuperAdminAccess(); if ("error" in access) return access.error;
+    const school = req.nextUrl.searchParams.get("school");
+    if (school && !isUuid(school)) return cardJson({ error: "etablissement_invalide" }, 400);
+    const ctx = school ? await loadCardScope(access.srv, school, access.user.id) : await cardScope(true);
+    if ("error" in ctx) return ctx.error;
     const slot = req.nextUrl.searchParams.get("slot") as CardSlot;
+    if (!CARD_SLOTS.includes(slot)) return cardJson({ error: "section_invalide" }, 400);
     const kind = req.nextUrl.searchParams.get("kind") === "stamp" ? "stamps" : "signatures";
     const asset = ctx.configuration[kind]?.[slot];
     if (!asset || !safeCardAsset(ctx.instId, asset)) return cardJson({ error: "image_absente" }, 404);
     const result = await ctx.service.storage.from("signatures").download(asset.original);
     if (result.error || !result.data) return cardJson({ error: "image_indisponible" }, 503);
+    const audit = await ctx.service.from("nexa_production_audit").insert({
+      actor_id: ctx.user.id, institution_id: ctx.instId, subject_id: ctx.instId,
+      action: "asset_original_recovered", details: { slot, kind },
+    });
+    if (audit.error) return cardJson({ error: "journal_indisponible" }, 503);
     return new Response(await result.data.arrayBuffer(), { headers: { "Content-Type": result.data.type || "application/octet-stream",
       "Content-Disposition": 'attachment; filename="signature-originale"', "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
   } catch { return cardJson({ error: "image_indisponible" }, 503); }
