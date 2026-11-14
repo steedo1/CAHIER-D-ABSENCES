@@ -19,6 +19,16 @@ function EpcCardPreview({ card, school, signature, stamp }: {
   signature?: string;
   stamp?: string;
 }) {
+  const [brand, setBrand] = useState<{ logo?: string; watermark?: string }>();
+  useEffect(() => {
+    let current = true;
+    import("@/lib/school-card-export")
+      .then(({ loadSchoolCardLogo }) => loadSchoolCardLogo(school))
+      .then(logo => { if (current) setBrand(logo); })
+      .catch(() => { if (current) setBrand({}); });
+    return () => { current = false; };
+  }, [school]);
+  const logo = brand?.logo ?? (brand ? school.logo_url : null);
   const ministry = schoolCardMinistry(school, card.year);
   const emblem = documentNationalEmblem(school.country_name);
   const slot = card.signatureSlot;
@@ -30,7 +40,7 @@ function EpcCardPreview({ card, school, signature, stamp }: {
   return <>
     <div aria-label="Aperçu recto" className={frame}>
       <header className="absolute inset-x-[5%] top-[4%] grid grid-cols-[11%_1fr_11%] items-start gap-[4%] text-center leading-tight">
-        <div>{school.logo_url && <img src={school.logo_url} alt="Logo de l’établissement" className="aspect-square w-full object-contain" />}</div>
+        <div>{logo && <img src={logo} alt="Logo de l’établissement" className="aspect-square w-full object-contain" />}</div>
         <div>
           <p className="text-[2.8cqw] font-bold uppercase text-[#134A35]">{school.country_name || "République de Côte d’Ivoire"}</p>
           <p className="text-[2.2cqw]">{school.country_motto || "Union - Discipline - Travail"}</p>
@@ -41,6 +51,8 @@ function EpcCardPreview({ card, school, signature, stamp }: {
       <div className="absolute inset-x-[4.7%] top-[25%] flex h-[13%] items-center justify-between rounded-md bg-[#134A35] px-[4%] font-bold text-white">
         <h3 className="text-[4.1cqw]">CARTE SCOLAIRE</h3><p className="text-[3.15cqw]">{card.year}</p>
       </div>
+      {brand?.watermark && <img src={brand.watermark} alt="" aria-hidden="true"
+        className="pointer-events-none absolute left-[66%] top-[39.3%] h-[51.9%] w-[29.2%] object-contain" />}
       <div className="absolute inset-x-[4.7%] top-[42.6%] grid h-[45%] grid-cols-[26%_1fr] gap-[5%] leading-tight">
         <div className="grid min-h-0 place-items-center overflow-hidden text-[2.3cqw] text-[#485D53]">
           {card.photoUrl ? <img alt="Photo de l’élève" src={card.photoUrl} className="h-full min-h-0 w-full object-contain" /> : "Photo absente"}
@@ -55,7 +67,7 @@ function EpcCardPreview({ card, school, signature, stamp }: {
               {teachingClasses.map(classe => <p key={classe.id}><bdi>{classe.label}</bdi></p>)}
             </div>
           </div>
-          <div className="mt-[2%] grid grid-cols-[40%_44%_16%]">
+          <div className="mt-[3%] grid grid-cols-[40%_44%_16%]">
             <p><span className={label}>Né(e) le</span>{date}</p>
             <p className="min-w-0"><span className={label}>À</span><bdi>{card.birthPlace || "—"}</bdi></p>
             <p><span className={label}>Sexe</span>{card.gender || "—"}</p>
@@ -66,7 +78,7 @@ function EpcCardPreview({ card, school, signature, stamp }: {
     </div>
     <div aria-label="Aperçu verso" className={frame}>
       <header className="absolute inset-x-[4.7%] top-[7.2%] flex h-[14%] items-center gap-[3%] rounded-md bg-[#F3F7F4] px-[2%] text-[3.2cqw] font-bold leading-tight text-[#134A35]">
-        {school.logo_url && <img src={school.logo_url} alt="Logo de l’établissement" className="h-[76%] w-[8%] object-contain" />}
+        {logo && <img src={logo} alt="Logo de l’établissement" className="h-[76%] w-[8%] object-contain" />}
         <h3>{school.name}</h3>
       </header>
       <div className={`absolute inset-x-[5.8%] top-[26.5%] grid h-[64%] gap-[3%] ${director ? "grid-cols-[43%_1fr]" : "text-center"}`}>
