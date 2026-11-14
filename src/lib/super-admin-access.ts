@@ -1,3 +1,4 @@
+import { PRODUCTION_ROLE } from "@/lib/production-nexa";
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -9,6 +10,8 @@ export async function requireSuperAdminAccess() {
   if (error || !user) {
     return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) } as const;
   }
+
+  if (user.role === PRODUCTION_ROLE) return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) } as const;
 
   const srv = getSupabaseServiceClient();
   const roles = await srv.from("user_roles")

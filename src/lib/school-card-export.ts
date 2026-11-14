@@ -13,6 +13,7 @@ function cardFont() {
 async function browserImageCanvas(url: string, maxWidth: number, maxHeight: number) {
   const image = new Image();
   image.crossOrigin = "anonymous";
+  image.referrerPolicy = "no-referrer";
   image.src = url;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -41,7 +42,7 @@ export function loadSchoolCardLogo(school: CardSchool): Promise<string | undefin
   if (!url) return Promise.resolve(undefined);
   if (cachedLogo?.url === url) return cachedLogo.result;
 
-  const result = browserImageCanvas(url, 300, 300)
+  const result = browserImageCanvas(url, 400, 400)
     .then(canvas => canvas.toDataURL("image/jpeg", 0.93))
     .catch(error => {
       if (cachedLogo?.result === result) cachedLogo = undefined;
@@ -61,7 +62,7 @@ export async function exportSchoolCardPdf(cards: PreparedCard[], school: CardSch
   for (let i = 0; i < cards.length; i += 4) await Promise.all(cards.slice(i, i + 4).map(async card => {
     if (!card.photoUrl || photos.has(card.studentId)) return;
     try {
-      const canvas = await browserImageCanvas(card.photoUrl, 320, 420);
+      const canvas = await browserImageCanvas(card.photoUrl, 350, 445);
       photos.set(card.studentId, canvas.toDataURL("image/jpeg", 0.93));
     }
     catch { missing.push(card.name); }

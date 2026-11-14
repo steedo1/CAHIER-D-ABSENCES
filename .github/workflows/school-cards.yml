@@ -10,6 +10,10 @@ on:
       - 'src/app/verifier-carte/**'
       - 'src/app/api/admin/school-cards/**'
       - 'src/app/api/public/school-cards/**'
+      - 'src/**/production-nexa/**'
+      - 'src/lib/**/production-nexa.ts'
+      - 'supabase/migrations/*production_nexa.sql'
+      - 'test/production-nexa*'
       - 'test/school-cards*'
       - 'scripts/*school-cards*'
       - '.github/workflows/school-cards.yml'
@@ -52,7 +56,7 @@ jobs:
       - name: Certificate PDF, image reuse and no network requests
         run: ATTESTATION_PRINT_OUTPUT=tmp/school-cards node --import tsx --test test/attestation-print.test.mjs
       - run: node scripts/build-school-cards-qa.mjs
-      - name: Browser workflow and 500/1000 card benchmark
+      - name: Browser workflow for ordering and PVC production
         run: |
           env -u NEXT_PUBLIC_SUPABASE_URL -u SUPABASE_SERVICE_ROLE_KEY node scripts/school-cards-qa-server.mjs > /tmp/card-qa.log 2>&1 &
           QA_PID=$!
@@ -90,16 +94,21 @@ jobs:
           npx --yes supabase@2.122.0 --workdir /tmp/card-supabase start --exclude realtime,studio,postgres-meta,edge-runtime,logflare,vector,supavisor > /tmp/card-supabase-start.log 2>&1
           npx --yes supabase@2.122.0 --workdir /tmp/card-supabase status -o json > /tmp/card-supabase-status.json
       - name: Install test-only base schema and the exact proposed module migration
-        run: node scripts/verify-school-cards-native.mjs initialize
+        run: node --import tsx scripts/verify-school-cards-native.mjs initialize
       - name: Seed fictitious schools and real local Auth/Storage
-        run: node scripts/verify-school-cards-native.mjs prepare
-      - name: Native Next → verified Auth → PostgREST → private Storage → QR
+        run: node --import tsx scripts/verify-school-cards-native.mjs prepare
+      - name: Native Next → verified Auth → PostgREST → private Storage → archived PDF
         run: |
           PORT=4398 node --max-old-space-size=288 node_modules/next/dist/bin/next start --hostname 0.0.0.0 > /tmp/card-native-next.log 2>&1 &
           NATIVE_PID=$!
+          mkdir -p tmp/school-cards-native
           trap 'kill "$NATIVE_PID"' EXIT
           for attempt in $(seq 1 30); do curl -fs http://localhost:4398/verifier-carte > /dev/null && break || sleep 1; done
-          CARD_NATIVE_PID="$NATIVE_PID" node scripts/verify-school-cards-native.mjs
+          if ! CARD_NATIVE_PID="$NATIVE_PID" node --import tsx scripts/verify-school-cards-native.mjs; then
+            cp /tmp/card-native-next.log tmp/school-cards-native/next-runtime.log
+            tail -100 /tmp/card-native-next.log
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

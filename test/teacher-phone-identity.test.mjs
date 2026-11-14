@@ -70,6 +70,8 @@ function fixture({ duplicate = true, canonicalPassword = "correct", profileError
   } } };
   const login = load("src/app/api/auth/login/route.ts", {
     "next/server": server,
+    "@/lib/production-nexa": load("src/lib/production-nexa.ts"),
+    "@/lib/server/production-nexa": { readProductionAccount: () => assert.fail("teacher login must not read a production account") },
     "@/lib/phone-login": phones,
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => service },
     "@/lib/class-device-identity": { resolveClassDeviceLogin: async () => classIdentity

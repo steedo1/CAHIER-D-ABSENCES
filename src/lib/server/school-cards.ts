@@ -25,17 +25,25 @@ export async function cardScope(write = false) {
   if ("error" in access) return { error: cardJson({ error: access.error }, access.error === "unauthorized" ? 401 : 403) } as const;
   const roles = await getRequestRoles(client, service, access.user.id);
   const applicableRoles = (roles.data || []).filter(row => !row.institution_id || row.institution_id === access.instId || row.role === "super_admin").map(row => row.role);
+  return loadCardScope(service, access.instId, access.user.id, {
+    canConfigure: applicableRoles.some(role => (CARD_WRITE_ROLES as readonly string[]).includes(role)),
+    educatorAssignments: educatorNeedsAssignedClasses(applicableRoles) ? await loadEducatorAssignments(service, access.instId, access.user.id) : null,
+  });
+}
+
+export async function loadCardScope(service: SupabaseClient, instId: string, userId: string, options?: {
+  canConfigure: boolean; educatorAssignments: Awaited<ReturnType<typeof loadEducatorAssignments>> | null;
+}) {
   const [school, stored] = await Promise.all([
-    service.from("institutions").select("id,code,name,phone,logo_url,head_name,head_title,country_name,country_motto,ministry_name,settings_json,subscription_expires_at").eq("id", access.instId).single(),
-    service.from("school_card_settings").select("configuration,revision").eq("institution_id", access.instId).maybeSingle(),
+    service.from("institutions").select("id,code,name,phone,logo_url,head_name,head_title,country_name,country_motto,ministry_name,settings_json,subscription_expires_at").eq("id", instId).single(),
+    service.from("school_card_settings").select("configuration,revision").eq("institution_id", instId).maybeSingle(),
   ]);
   if (school.error || stored.error) return { error: cardJson({ error: "configuration_cartes_indisponible" }, 503) } as const;
   const configuration: CardConfiguration = stored.data?.configuration || defaultCardConfiguration();
-  return { ...access, service, school: school.data, configuration, revision: stored.data?.revision || 0,
-    canConfigure: applicableRoles.some(role => (CARD_WRITE_ROLES as readonly string[]).includes(role)),
-    educatorAssignments: educatorNeedsAssignedClasses(applicableRoles) ? await loadEducatorAssignments(service, access.instId, access.user.id) : null };
+  return { instId, user: { id: userId }, service, school: school.data, configuration, revision: stored.data?.revision || 0,
+    canConfigure: options?.canConfigure ?? false, educatorAssignments: options?.educatorAssignments ?? null };
 }
-export type CardScope = Exclude<Awaited<ReturnType<typeof cardScope>>, { error: unknown }>;
+export type CardScope = Exclude<Awaited<ReturnType<typeof loadCardScope>>, { error: unknown }>;
 export function publicCardConfig(configuration: CardConfiguration): CardConfiguration {
   // Never send private object locators to the browser. Asset presence only.
   const masked = (assets: CardConfiguration["signatures"]) =>
@@ -49,8 +57,8 @@ export async function loadCardClasses(ctx: CardScope, year: string) {
   if (error) throw Error("classes_unavailable");
   return data || [];
 }
-export async function loadCardEnrollments(ctx: CardScope, year: string, options: { offset?: number; enrollmentIds?: string[] } = {}) {
-  const allClasses = await loadCardClasses(ctx, year);
+export async function loadCardEnrollments(ctx: CardScope, year: string, options: { offset?: number; enrollmentIds?: string[]; studentIds?: string[]; includePhotos?: boolean; classes?: Awaited<ReturnType<typeof loadCardClasses>> } = {}) {
+  const allClasses = options.classes ?? await loadCardClasses(ctx, year);
   const classes = allClasses.filter(row => !ctx.educatorAssignments || educatorAssignmentCoversClass(row, ctx.educatorAssignments));
   if (!classes.length) return { items: [] as SchoolCard[], classes, nextOffset: null };
   const cycles = parseSchoolCyclesSettings(ctx.school.settings_json);
@@ -61,6 +69,7 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
     .eq("institution_id", ctx.instId).is("end_date", null).in("class_id", enrollmentClasses.map(row => row.id))
     .eq("students.institution_id", ctx.instId).order("id");
   if (options.enrollmentIds) query = query.in("id", options.enrollmentIds);
+  else if (options.studentIds) query = query.in("student_id", options.studentIds);
   else query = query.range(options.offset || 0, (options.offset || 0) + 499);
   const { data, error } = await query;
   if (error) throw Error("roster_unavailable");
@@ -96,9 +105,10 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
     const path = row.students.photo_path;
     return typeof path === "string" && path.startsWith(`${ctx.instId}/${row.student_id}/`) ? [path] : [];
   }))];
+  const pathsSet = new Set(paths);
   const photos = new Map<string, string>();
-  if (paths.length) {
-    const signed = await ctx.service.storage.from("student-photos").createSignedUrls(paths, 1800);
+  if (paths.length && options.includePhotos !== false) {
+    const signed = await ctx.service.storage.from("student-photos").createSignedUrls(paths, 600);
     if (signed.error) throw Error("photos_unavailable");
     (signed.data || []).forEach(row => { if (row.path && row.signedUrl) photos.set(row.path, row.signedUrl); });
   }
@@ -126,10 +136,10 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
       name, matricule: student.matricule || "", birthdate: student.birthdate || "", birthPlace: student.birth_place || "",
       gender: student.gender || "", classLabel: home.label, level: home.level || "", classes: orderedClasses,
       photoUrl: photos.get(student.photo_path) || null, tracks, cardTrack, revoked: revocations.has(row.id), warnings: [] };
-    item.warnings = cardWarnings(item);
+    item.warnings = cardWarnings({ ...item, photoUrl: item.photoUrl || (pathsSet.has(student.photo_path) ? "present" : null) });
     return item;
   });
-  return { items, classes, nextOffset: !options.enrollmentIds && data?.length === 500 ? (options.offset || 0) + 500 : null };
+  return { items, classes, nextOffset: !options.enrollmentIds && !options.studentIds && data?.length === 500 ? (options.offset || 0) + 500 : null };
 }
 async function cardAssetImages(ctx: CardScope, kind: "signatures" | "stamps", slots: ReadonlySet<CardSlot>) {
   const images: Partial<Record<CardSlot, string>> = {};
@@ -151,20 +161,30 @@ export function safeCardAsset(instId: string, asset: CardAsset) {
   const prefix = `school-cards/${instId}/`;
   return asset.original.startsWith(prefix) && asset.processed.startsWith(prefix) && ![asset.original,asset.processed].some(path => path.includes(".."));
 }
-export function prepareSchoolCards(ctx: CardScope, items: SchoolCard[], origin: string) {
+export function productionCardVisuals(ctx: CardScope, items: SchoolCard[]) {
   const cycles = parseSchoolCyclesSettings(ctx.school.settings_json), bilingual = isBilingualSchool(cycles);
   const signatories = readSchoolTeachingSignatories(ctx.school.settings_json);
   const epc = usesEpcSchoolCardLayout(ctx.school);
   const schoolSignatory = ctx.school.head_name && (ctx.configuration.signatures?.general || ctx.configuration.stamps?.general);
   return items.map(item => {
     const selectedTracks = item.cardTrack === undefined ? item.tracks : item.cardTrack ? [item.cardTrack] : [];
-    const slot = epc ? "arabic" : schoolSignatory ? "general" : signatureSlotForTracks(selectedTracks, bilingual);
+    const teachingClasses = item.classes || [];
+    const arabic = teachingClasses.some(classe => classe.track === "arabic");
+    const french = teachingClasses.some(classe => classe.track === "french");
+    const slot = epc ? (arabic ? "arabic" : french ? "french" : null) :
+      schoolSignatory ? "general" : signatureSlotForTracks(selectedTracks, bilingual);
     const signatoryName = slot === "general" ? ctx.school.head_name || "" : slot ? signatories[slot]?.name || "" : "";
     const signatureSlot = ctx.configuration.automaticSignature && slot && signatoryName &&
       (ctx.configuration.signatures?.[slot] || ctx.configuration.stamps?.[slot]) ? slot : null;
-    const token = issueCardToken({ institutionId: ctx.instId, studentId: item.studentId, enrollmentId: item.enrollmentId, classId: item.classId, year: item.year });
-    return { ...item, token, verificationUrl: `${origin}/verifier-carte#${token}`, fingerprint: cardFingerprint(token), signatureSlot, signatoryName,
+    return { ...item, signatureSlot, signatoryName,
       warnings: ctx.configuration.automaticSignature && !signatureSlot ? [...item.warnings, "Signature non appliquée : responsable ou section à configurer"] : item.warnings };
+  });
+}
+/** Legacy verifier compatibility. Production cards carry no QR or verification token. */
+export function prepareSchoolCards(ctx: CardScope, items: SchoolCard[], origin: string) {
+  return productionCardVisuals(ctx, items).map(item => {
+    const token = issueCardToken({ institutionId: ctx.instId, studentId: item.studentId, enrollmentId: item.enrollmentId, classId: item.classId, year: item.year });
+    return { ...item, token, verificationUrl: `${origin}/verifier-carte#${token}`, fingerprint: cardFingerprint(token) };
   });
 }
 export async function readCardYears(service: SupabaseClient, institutionId: string) {

@@ -8,10 +8,11 @@ import {
 } from "./src/lib/offline-auth-contract";
 
 const PUBLIC = new Set(["/login", "/recover", "/redirect"]);
-const PROTECTED_PREFIXES = ["/attendance", "/class", "/admin", "/super", "/founder", "/parent", "/profile", "/(protected)"];
+const PROTECTED_PREFIXES = ["/attendance", "/class", "/admin", "/super", "/founder", "/production-nexa", "/parent", "/profile", "/(protected)"];
 
 export async function middleware(req: NextRequest) {
   const sessionResponse = await updateServerSession(req);
+  if (sessionResponse.headers.has("location") || sessionResponse.status >= 400) return sessionResponse;
   const guarded = await guardPage(req);
   if (guarded.headers.has("location")) {
     for (const cookie of sessionResponse.cookies.getAll()) guarded.cookies.set(cookie);

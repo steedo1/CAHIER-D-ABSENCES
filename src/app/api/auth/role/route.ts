@@ -1,3 +1,5 @@
+import { PRODUCTION_ROLE } from "@/lib/production-nexa";
+import { readProductionAccount } from "@/lib/server/production-nexa";
 import { getRequestRoles } from "@/lib/auth/server-context";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -58,6 +60,13 @@ export async function GET(request: NextRequest) {
   // L'identité vient toujours de getUser(); le service ne sert qu'à lire les
   // rôles de cet utilisateur vérifié, sans dépendre des politiques RLS de session.
   const service = getSupabaseServiceClient();
+  if (user.role === PRODUCTION_ROLE) {
+    const account = await readProductionAccount(service, user.id);
+    if (account.error) return noStore({ role: null, error: "role_lookup_failed" }, 503);
+    if (account.data?.status !== "active") return noStore({ role: null, error: "compte_production_inactif" }, 403);
+    return noStore({ user_id: user.id, role: PRODUCTION_ROLE, institution_id: null, relay_enabled: false,
+      offline_access: null });
+  }
   const { data: rows, error: rolesErr } = await getRequestRoles(supabase, service, user.id);
 
   if (rolesErr) {

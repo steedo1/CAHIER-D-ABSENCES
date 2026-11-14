@@ -10,6 +10,7 @@ function load(path, mocks = {}) {
   new Function("require", "module", "exports", code)((name) => mocks[name] ?? require(name), loaded, loaded.exports);
   return loaded.exports;
 }
+const production = load("src/lib/production-nexa.ts");
 const cookieHelpers = load("src/lib/auth/session-cookies.ts");
 const { SESSION_STORAGE_KEY } = cookieHelpers;
 const user = { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", aud: "authenticated", role: "authenticated", email: "test@example.invalid" };
@@ -69,7 +70,7 @@ test("le SDK réel renouvelle une session expirée, persiste les cookies et ne r
   process.env.SUPABASE_URL="https://project.supabase.co";process.env.SUPABASE_ANON_KEY="test";
   try {
     const {NextRequest}=require('next/server');
-    const middleware=load('src/lib/auth/session-middleware.ts',{"./session-cookies":cookieHelpers});
+    const middleware=load('src/lib/auth/session-middleware.ts',{"./session-cookies":cookieHelpers,"../production-nexa":production});
     const expired=session(Math.floor(Date.now()/1000)-60);
     const first=new NextRequest('https://example.invalid/admin',{headers:{cookie:`${SESSION_STORAGE_KEY}=${encodeURIComponent(JSON.stringify(expired))}`}});
     const response=await middleware.updateServerSession(first);
@@ -95,7 +96,7 @@ test("les cookies SDK découpés ont priorité sur les anciens tokens", () => {
 });
 
 test("les profils et rôles sont dédupliqués et les établissements restent isolés", async () => {
-  const context=load('src/lib/auth/server-context.ts',{'../supabase-server':{getVerifiedServerUser:c=>c.auth.getUser()}});
+  const context=load('src/lib/auth/server-context.ts',{'../production-nexa':production,'../supabase-server':{getVerifiedServerUser:c=>c.auth.getUser()}});
   let profiles=0,roles=0;
   function clients(institution,roleInstitution) {
     const client={auth:{getUser:async()=>({data:{user},error:null})},from:()=>({select(selection){assert.equal(selection,'id,institution_id');return this},eq(){return this},async maybeSingle(){profiles++;return {data:{id:user.id,institution_id:institution},error:null}}})};
