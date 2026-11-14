@@ -204,7 +204,7 @@ export default function SchoolCardsWorkspace() {
     else { setUpload(null); setProcessedPreview(""); setRefresh(value => value + 1); setStatus(kind === "stamp" ? "Cachet enregistré." : "Signature enregistrée."); }
   }
   return <main className="mx-auto max-w-7xl space-y-6 p-4 text-slate-900 md:p-7">
-    <header className="rounded-3xl bg-emerald-950 p-6 text-white"><p className="text-xs uppercase tracking-[.2em] text-emerald-200">Administration & services</p><h1 className="mt-2 text-3xl font-semibold">Cartes scolaires</h1><p className="mt-2 text-sm text-emerald-100">Recto verso · Sans QR code · Format 85,6 × 54 mm</p></header>
+    <header className="rounded-3xl bg-emerald-950 p-6 text-white"><p className="text-xs uppercase tracking-[.2em] text-emerald-200">Administration & services</p><h1 className="mt-2 text-3xl font-semibold">Cartes scolaires</h1><p className="mt-2 text-sm text-emerald-100">Recto verso · Format 85,6 × 54 mm</p></header>
     <div role="status" aria-live="polite">{loading ? "Chargement des élèves…" : status}</div>
     {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">{error}</p>}
     {roster && <>

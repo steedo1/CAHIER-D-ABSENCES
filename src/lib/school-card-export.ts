@@ -54,7 +54,7 @@ export function loadSchoolCardLogo(school: CardSchool): Promise<CardLogo> {
       pixels.data[i] = 19;
       pixels.data[i + 1] = 74;
       pixels.data[i + 2] = 53;
-      pixels.data[i + 3] = 255 * 0.05 * Math.max(0, (242 - luminance) / 242);
+      pixels.data[i + 3] = 255 * 0.16 * Math.max(0, (242 - luminance) / 242);
     }
     context.putImageData(pixels, 0, 0);
     return { logo, watermark: canvas.toDataURL("image/png") };
