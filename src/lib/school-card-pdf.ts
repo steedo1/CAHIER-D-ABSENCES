@@ -3,7 +3,7 @@ import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
 import { documentNationalEmblem } from "./document-national-emblem";
 import { CARD_WIDTH_MM, CARD_HEIGHT_MM, SCHOOL_CARD_FOOTER, cardSheetPosition, schoolCardMinistry, schoolCardClasses, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
 
-export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>>; stamps?: Partial<Record<CardSlot, string>> };
+export type CardPrintAssets = { font: Uint8Array; logo?: string; watermark?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>>; stamps?: Partial<Record<CardSlot, string>> };
 const mm = (value: number) => value * 72 / 25.4;
 const green = "#13633E", orange = "#F08426";
 function rtlText(doc: PDFKit.PDFDocument, label: string, x: number, y: number, w: number, h: number, size: number, align: "left" | "center" | "right") {
@@ -71,6 +71,7 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
     text(doc, "CARTE SCOLAIRE", 7.1, 14.6, 49, 5, 10);
     text(doc, card.year, 59, 15.3, 19.2, 4, 7.6, "right");
 
+    imageFit(doc, assets.watermark, 56.5, 21.2, 25, 28);
     const photo = assets.photos.get(card.studentId);
     imageFit(doc, photo, 4, 23, 20, 24);
     if (!photo) {
@@ -89,16 +90,18 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
     doc.fillColor(ink);
     text(doc, card.matricule, 28, 34.9, 25, 4, 8.1);
     teachingClasses.forEach((classe, index) =>
-      text(doc, classe.label, 51, 34.5 + index * 2.9, 30.6, 3.4, teachingClasses.length > 1 ? 6.7 : 8.1));
+      text(doc, classe.label, 51, 34.15 + index * 2.8, 30.6, 3.4, teachingClasses.length > 1 ? 6.7 : 8.1));
     doc.fillColor(muted);
-    text(doc, "NÉ(E) LE", 28, 40.0, 23, 2.6, 5.7);
-    text(doc, "À", 51, 40.0, 23.5, 2.6, 5.7);
-    text(doc, "SEXE", 75, 40.0, 6.6, 2.6, 5.7);
+    text(doc, "NÉ(E) LE", 28, 41.0, 23, 2.6, 5.7);
+    text(doc, "À", 51, 41.0, 23.5, 2.6, 5.7);
+    text(doc, "SEXE", 75, 41.0, 6.6, 2.6, 5.7);
     const date = /^\d{4}-\d{2}-\d{2}$/.test(card.birthdate) ? card.birthdate.split("-").reverse().join("/") : "";
     doc.fillColor(ink);
-    text(doc, date, 28, 43.1, 22, 3.8, 7.5);
-    text(doc, card.birthPlace, 51, 43.1, 23.5, 5.8, 7.4);
-    text(doc, card.gender, 75, 43.1, 6.6, 3.8, 7.5);
+    text(doc, date, 28, 44.0, 22, 3.8, 7.5);
+    doc.fontSize(7.4);
+    const placeSize = doc.widthOfString(card.birthPlace) > mm(23.5) ? 6 : 7.4;
+    text(doc, card.birthPlace, 51, 44.0, 23.5, 5.8, placeSize);
+    text(doc, card.gender, 75, 44.0, 6.6, 3.8, 7.5);
   } else {
     rect(4, 3.9, 77.6, 7.6, paper, 1.2);
     imageFit(doc, assets.logo, 5.4, 4.8, 5.8, 5.7);
