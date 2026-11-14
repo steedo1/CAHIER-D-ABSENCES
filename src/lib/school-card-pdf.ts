@@ -1,9 +1,9 @@
 import type PDFKit from "pdfkit";
 import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
 import { documentNationalEmblem } from "./document-national-emblem";
-import { CARD_WIDTH_MM, CARD_HEIGHT_MM, SCHOOL_CARD_FOOTER, cardSheetPosition, schoolCardMinistry, schoolCardClasses, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
+import { CARD_WIDTH_MM, CARD_HEIGHT_MM, SCHOOL_CARD_FOOTER, cardSheetPosition, schoolCardMinistry, schoolCardClasses, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_WATERMARK_OPACITY, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
 
-export type CardPrintAssets = { font: Uint8Array; logo?: string; watermark?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>>; stamps?: Partial<Record<CardSlot, string>> };
+export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>>; stamps?: Partial<Record<CardSlot, string>> };
 const mm = (value: number) => value * 72 / 25.4;
 const green = "#13633E", orange = "#F08426";
 function rtlText(doc: PDFKit.PDFDocument, label: string, x: number, y: number, w: number, h: number, size: number, align: "left" | "center" | "right") {
@@ -71,7 +71,11 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
     text(doc, "CARTE SCOLAIRE", 7.1, 14.6, 49, 5, 10);
     text(doc, card.year, 59, 15.3, 19.2, 4, 7.6, "right");
 
-    imageFit(doc, assets.watermark, 56.5, 21.2, 25, 28);
+    if (assets.logo) {
+      doc.save().fillOpacity(EPC_CARD_WATERMARK_OPACITY);
+      imageFit(doc, assets.logo, 56.5, 21.2, 25, 28);
+      doc.restore();
+    }
     const photo = assets.photos.get(card.studentId);
     imageFit(doc, photo, 4, 23, 20, 24);
     if (!photo) {

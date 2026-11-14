@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { documentNationalEmblem } from "@/lib/document-national-emblem";
-import { CARD_PDF_BATCH, CARD_SLOTS, SCHOOL_CARD_FOOTER, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, schoolCardClasses, type SchoolCard, type CardRoster, type CardSchool, type CardSlot, type PreparedCard } from "@/lib/school-cards";
+import { CARD_PDF_BATCH, CARD_SLOTS, SCHOOL_CARD_FOOTER, schoolCardMinistry, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_WATERMARK_OPACITY, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, schoolCardClasses, type SchoolCard, type CardRoster, type CardSchool, type CardSlot, type PreparedCard } from "@/lib/school-cards";
 
 const button = "rounded-xl bg-emerald-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40";
 const input = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900";
@@ -19,16 +19,17 @@ function EpcCardPreview({ card, school, signature, stamp }: {
   signature?: string;
   stamp?: string;
 }) {
-  const [brand, setBrand] = useState<{ logo?: string; watermark?: string }>();
+  const [loadedLogo, setLoadedLogo] = useState<{ source: string | null; image?: string }>();
   useEffect(() => {
     let current = true;
     import("@/lib/school-card-export")
       .then(({ loadSchoolCardLogo }) => loadSchoolCardLogo(school))
-      .then(logo => { if (current) setBrand(logo); })
-      .catch(() => { if (current) setBrand({}); });
+      .then(logo => { if (current) setLoadedLogo({ source: school.logo_url, image: logo }); })
+      .catch(() => { if (current) setLoadedLogo({ source: school.logo_url }); });
     return () => { current = false; };
   }, [school]);
-  const logo = brand?.logo ?? (brand ? school.logo_url : null);
+  const decodedLogo = loadedLogo?.source === school.logo_url ? loadedLogo?.image : undefined;
+  const logo = decodedLogo ?? school.logo_url;
   const ministry = schoolCardMinistry(school, card.year);
   const emblem = documentNationalEmblem(school.country_name);
   const slot = card.signatureSlot;
@@ -51,7 +52,7 @@ function EpcCardPreview({ card, school, signature, stamp }: {
       <div className="absolute inset-x-[4.7%] top-[25%] flex h-[13%] items-center justify-between rounded-md bg-[#134A35] px-[4%] font-bold text-white">
         <h3 className="text-[4.1cqw]">CARTE SCOLAIRE</h3><p className="text-[3.15cqw]">{card.year}</p>
       </div>
-      {brand?.watermark && <img src={brand.watermark} alt="" aria-hidden="true"
+      {logo && <img src={logo} alt="" aria-hidden="true" style={{ opacity: EPC_CARD_WATERMARK_OPACITY }}
         className="pointer-events-none absolute left-[66%] top-[39.3%] h-[51.9%] w-[29.2%] object-contain" />}
       <div className="absolute inset-x-[4.7%] top-[42.6%] grid h-[45%] grid-cols-[26%_1fr] gap-[5%] leading-tight">
         <div className="grid min-h-0 place-items-center overflow-hidden text-[2.3cqw] text-[#485D53]">

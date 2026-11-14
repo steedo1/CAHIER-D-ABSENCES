@@ -31,6 +31,7 @@ export function usesEpcSchoolCardLayout(school: Pick<CardSchool, "code">) {
   return school.code === EPC_DIMBOKRO_CODE;
 }
 
+export const EPC_CARD_WATERMARK_OPACITY = 0.16;
 export const EPC_CARD_USAGE = "Carte personnelle, à présenter pour les démarches scolaires et administratives.";
 export const EPC_CARD_REPRODUCTION = "Toute reproduction ou utilisation frauduleuse est interdite.";
 export const EPC_CARD_DIRECTOR = {

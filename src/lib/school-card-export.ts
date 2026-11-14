@@ -1,5 +1,5 @@
 import { renderCardPages } from "./school-card-pdf";
-import { usesEpcSchoolCardLayout, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
+import type { CardSchool, PreparedCard, CardSlot } from "./school-cards";
 
 let fontLoad: Promise<Uint8Array> | undefined;
 function cardFont() {
@@ -31,38 +31,23 @@ async function browserImageCanvas(url: string, maxWidth: number, maxHeight: numb
   context.fillStyle = "#FFFFFF";
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return { canvas, context };
+  return canvas;
 }
 
-type CardLogo = { logo?: string; watermark?: string };
-let cachedLogo: { url: string; withWatermark: boolean; result: Promise<CardLogo> } | undefined;
+let cachedLogo: { url: string; result: Promise<string> } | undefined;
 
-export function loadSchoolCardLogo(school: CardSchool): Promise<CardLogo> {
+export function loadSchoolCardLogo(school: CardSchool): Promise<string | undefined> {
   const url = school.logo_url;
-  if (!url) return Promise.resolve({});
-  const withWatermark = usesEpcSchoolCardLayout(school);
-  if (cachedLogo?.url === url && cachedLogo.withWatermark === withWatermark) return cachedLogo.result;
+  if (!url) return Promise.resolve(undefined);
+  if (cachedLogo?.url === url) return cachedLogo.result;
 
-  const result = browserImageCanvas(url, 300, 300).then(({ canvas, context }) => {
-    const logo = canvas.toDataURL("image/jpeg", 0.93);
-    if (!withWatermark) return { logo };
-
-    // Convert the white-backed logo into pale green ink, keeping its light areas transparent.
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-    for (let i = 0; i < pixels.data.length; i += 4) {
-      const luminance = 0.2126 * pixels.data[i] + 0.7152 * pixels.data[i + 1] + 0.0722 * pixels.data[i + 2];
-      pixels.data[i] = 19;
-      pixels.data[i + 1] = 74;
-      pixels.data[i + 2] = 53;
-      pixels.data[i + 3] = 255 * 0.16 * Math.max(0, (242 - luminance) / 242);
-    }
-    context.putImageData(pixels, 0, 0);
-    return { logo, watermark: canvas.toDataURL("image/png") };
-  }).catch(error => {
-    if (cachedLogo?.result === result) cachedLogo = undefined;
-    throw error;
-  });
-  cachedLogo = { url, withWatermark, result };
+  const result = browserImageCanvas(url, 300, 300)
+    .then(canvas => canvas.toDataURL("image/jpeg", 0.93))
+    .catch(error => {
+      if (cachedLogo?.result === result) cachedLogo = undefined;
+      throw error;
+    });
+  cachedLogo = { url, result };
   return result;
 }
 
@@ -76,14 +61,14 @@ export async function exportSchoolCardPdf(cards: PreparedCard[], school: CardSch
   for (let i = 0; i < cards.length; i += 4) await Promise.all(cards.slice(i, i + 4).map(async card => {
     if (!card.photoUrl || photos.has(card.studentId)) return;
     try {
-      const { canvas } = await browserImageCanvas(card.photoUrl, 320, 420);
+      const canvas = await browserImageCanvas(card.photoUrl, 320, 420);
       photos.set(card.studentId, canvas.toDataURL("image/jpeg", 0.93));
     }
     catch { missing.push(card.name); }
   }));
-  const brand = await loadSchoolCardLogo(school).catch((): CardLogo => {
+  const logo = await loadSchoolCardLogo(school).catch(() => {
     missing.push("Logo de l’établissement");
-    return {};
+    return undefined;
   });
   const doc = new PDFDocument({ autoFirstPage: false, bufferPages: false, compress: true, info: { Title: "Cartes scolaires - Mon Cahier", Author: "Mon Cahier" } });
   const chunks: Uint8Array[] = [];
@@ -92,7 +77,7 @@ export async function exportSchoolCardPdf(cards: PreparedCard[], school: CardSch
     doc.on("error", reject);
     doc.on("end", () => resolve(new Blob(chunks as BlobPart[], { type: "application/pdf" })));
   });
-  renderCardPages(doc, cards, school, { font, ...brand, photos, signatures, stamps: options.stamps }, options);
+  renderCardPages(doc, cards, school, { font, logo, photos, signatures, stamps: options.stamps }, options);
   doc.end();
   return { blob: await result, missing };
 }
