@@ -17,7 +17,7 @@ export async function productionRequest<T>(url: string, body?: unknown, signal?:
 
 export function CardPreview({ front, back }: { front: string; back: string }) {
   return <div className="grid max-w-5xl gap-3 sm:grid-cols-2">
-    <img className="w-full max-w-[480px] rounded-lg border" src={front} alt="Aperçu recto filigrané" />
-    <img className="w-full max-w-[480px] rounded-lg border" src={back} alt="Aperçu verso filigrané" />
+    <img className="w-full max-w-[480px] rounded-lg border" src={front} alt="Aperçu recto" />
+    <img className="w-full max-w-[480px] rounded-lg border" src={back} alt="Aperçu verso" />
   </div>;
 }
