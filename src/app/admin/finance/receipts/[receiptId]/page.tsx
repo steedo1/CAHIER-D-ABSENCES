@@ -634,12 +634,14 @@ export default async function FinanceReceiptPrintPage({
   );
 
   const { data: charges, error: chErr } = chargeIds.length
-    ? await supabase
+    ? await admin
         .schema("finance")
         .from("v_charge_balances")
         .select(
           "id,school_id,student_id,class_id,fee_category_id,fee_schedule_id,label,due_date,net_amount,paid_amount,balance_due",
         )
+        .eq("school_id", institutionId)
+        .eq("student_id", typedReceipt.student_id)
         .in("id", chargeIds)
     : { data: [], error: null as null | { message?: string } };
 
@@ -736,102 +738,36 @@ export default async function FinanceReceiptPrintPage({
     const academicYear = String(typedReceipt.academic_year || "").trim();
 
     if (academicYear) {
-      // IMPORTANT :
-      // Le reçu de scolarité doit reprendre TOUTES les dettes de scolarité
-      // actives de l'élève pour la même année scolaire.
-      // On ne filtre ni par fee_category_id ni par class_id :
-      // - d'anciens imports/patchs peuvent avoir réparti les rubriques dans
-      //   plusieurs catégories ;
-      // - un changement de classe ne doit pas faire disparaître une ligne
-      //   de scolarité du reçu.
-      // On utilise le client service afin de ne pas retomber sur une lecture
-      // partielle qui produisait des totaux faux comme 116 500 F.
-      const { data: directChargesData, error: directChargesErr } = await admin
+      // Utiliser les montants nets de scolarité, remises comprises, pour
+      // toutes les lignes de cette année, y compris après un transfert.
+      const { data: yearlyCharges, error: yearlyChargesError } = await admin
         .schema("finance")
         .from("student_charges")
-        .select(
-          "id,school_id,academic_year,student_id,class_id,fee_category_id,fee_schedule_id,label,due_date,base_amount,status",
-        )
+        .select("id,label")
         .eq("school_id", institutionId)
         .eq("student_id", typedReceipt.student_id)
         .eq("academic_year", academicYear)
         .neq("status", "cancelled");
 
-      if (!directChargesErr) {
-        const directCharges = (
-          (directChargesData ?? []) as StudentChargeDirectRow[]
-        ).filter(
-          (charge) =>
-            isScolariteCharge(charge.label) && !isInternatCharge(charge.label),
-        );
-        const directChargeIds = directCharges.map((charge) => charge.id);
-        let allocationsForCharges: AllocationLiteRow[] = [];
-        let receiptStatuses: ReceiptStatusLiteRow[] = [];
+      if (yearlyChargesError) throw new Error(yearlyChargesError.message);
+      const yearlyTuitionIds = (yearlyCharges ?? [])
+        .filter((charge) => isScolariteCharge(charge.label) && !isInternatCharge(charge.label))
+        .map((charge) => charge.id);
 
-        if (directChargeIds.length > 0) {
-          const { data: allocationData, error: allocationErr } = await admin
-            .schema("finance")
-            .from("receipt_allocations")
-            .select("student_charge_id,receipt_id,amount")
-            .in("student_charge_id", directChargeIds);
+      if (yearlyTuitionIds.length > 0) {
+        const { data: balances, error: balancesError } = await admin
+          .schema("finance")
+          .from("v_charge_balances")
+          .select(
+            "id,school_id,student_id,class_id,fee_category_id,fee_schedule_id,label,due_date,net_amount,paid_amount,balance_due",
+          )
+          .eq("school_id", institutionId)
+          .eq("student_id", typedReceipt.student_id)
+          .in("id", yearlyTuitionIds)
+          .neq("computed_status", "cancelled");
 
-          if (!allocationErr) {
-            allocationsForCharges = (allocationData ??
-              []) as AllocationLiteRow[];
-            const receiptIds = Array.from(
-              new Set(allocationsForCharges.map((row) => row.receipt_id)),
-            );
-
-            if (receiptIds.length > 0) {
-              const { data: receiptStatusData, error: receiptStatusErr } =
-                await admin
-                  .schema("finance")
-                  .from("receipts")
-                  .select("id,receipt_status")
-                  .in("id", receiptIds);
-
-              if (!receiptStatusErr) {
-                receiptStatuses = (receiptStatusData ??
-                  []) as ReceiptStatusLiteRow[];
-              }
-            }
-          }
-        }
-
-        const receiptStatusMap = new Map(
-          receiptStatuses.map((row) => [row.id, row.receipt_status]),
-        );
-        const paidByCharge = new Map<string, number>();
-
-        for (const allocation of allocationsForCharges) {
-          if (receiptStatusMap.get(allocation.receipt_id) === "cancelled") {
-            continue;
-          }
-          paidByCharge.set(
-            allocation.student_charge_id,
-            (paidByCharge.get(allocation.student_charge_id) ?? 0) +
-              safeNumber(allocation.amount),
-          );
-        }
-
-        scolariteReferenceCharges = directCharges.map((charge) => {
-          const expected = safeNumber(charge.base_amount);
-          const paid = paidByCharge.get(charge.id) ?? 0;
-
-          return {
-            id: charge.id,
-            school_id: charge.school_id,
-            student_id: charge.student_id,
-            class_id: charge.class_id,
-            fee_category_id: charge.fee_category_id,
-            fee_schedule_id: charge.fee_schedule_id,
-            label: charge.label,
-            due_date: charge.due_date,
-            net_amount: expected,
-            paid_amount: paid,
-            balance_due: Math.max(expected - paid, 0),
-          } satisfies ChargeRow;
-        });
+        if (balancesError) throw new Error(balancesError.message);
+        scolariteReferenceCharges = (balances ?? []) as ChargeRow[];
       }
     }
   }
@@ -841,7 +777,7 @@ export default async function FinanceReceiptPrintPage({
       ? scolariteReferenceCharges
       : rawLines
           .map((line) => line.charge)
-          .filter((c): c is ChargeRow => Boolean(c));
+          .filter((c): c is ChargeRow => Boolean(c && isScolariteCharge(c.label) && !isInternatCharge(c.label)));
 
   const scolariteReceiptAmount = rawLines.reduce(
     (sum, line) =>
@@ -865,7 +801,7 @@ export default async function FinanceReceiptPrintPage({
           0,
         ),
         remaining: scolariteLinesForTotals.reduce(
-          (sum, charge) => sum + safeNumber(charge.balance_due),
+          (sum, charge) => sum + Math.max(0, safeNumber(charge.balance_due)),
           0,
         ),
         amount: scolariteReceiptAmount,
