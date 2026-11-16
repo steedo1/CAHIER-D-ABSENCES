@@ -77,12 +77,6 @@ async function renderPreview(ctx: CardScope, item: SchoolCard) {
   for (const side of ["front", "back"] as const) {
     doc.addPage({ size: [width, height], margin: 0 });
     drawSchoolCard(doc, card, ctx.school, { font, logo, photos, signatures, stamps }, side);
-    doc.save().font("card").fontSize(16).fillColor("#842029").fillOpacity(0.42);
-    doc.rotate(-21, { origin: [width / 2, height / 2] });
-    for (const y of [height * .24, height * .47, height * .70]) {
-      doc.text("APERÇU · NON VALABLE", 0, y, { width, align: "center", lineBreak: false });
-    }
-    doc.restore();
   }
   doc.end();
   const parser = new PDFParse({ data: new Uint8Array(await pdf), useSystemFonts: false, isEvalSupported: false });
