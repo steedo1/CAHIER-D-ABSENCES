@@ -103,7 +103,7 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
             draft: !ready }} variant={selected} printRoot={false}
             directionStampPng={ready ? pickBulletinDirectionStamp(directionStamps,
               selected === "combined" ? "general" : selected === "arabic" ? "arabic" : "french",
-              row.document.school.isFrancoArabic === true) : null} />
+              data.school?.isFrancoArabic !== false) : null} />
         </div>;
       })}
     </div>
