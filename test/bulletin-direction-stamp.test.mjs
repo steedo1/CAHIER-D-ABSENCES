@@ -100,6 +100,45 @@ test("EPC French and Arabic report cards keep independent private stamps", async
   assert.equal(pickBulletinDirectionStamp({ french: stamps.french }, "arabic", true), null);
 });
 
+test("existing direct Supabase CSCA PNG is accepted only within its own institution and shared by cards/bulletins", async () => {
+  const db = schoolCardFixture(1);
+  const settings = db.admin(schoolCardSettings);
+  const saved = await settings.PUT(request("/api/admin/school-cards/settings",
+    { revision: 0, enabled: true, automaticSignature: true }, "PUT"));
+  assert.equal(saved.status, 200);
+
+  const direct = `${db.legacyId}/cachet-signature-directeur-csca-2026-11-17.png`;
+  const foreign = `00000000-0000-4000-8000-000000000000/cachet-signature-directeur-other.png`;
+  const cardServer = db.admin("src/lib/server/school-cards.ts");
+  const asset = { original: direct, processed: direct, updatedAt: new Date().toISOString() };
+  assert.equal(cardServer.safeCardAsset(db.legacyId, asset), true);
+  assert.equal(cardServer.safeCardAsset(db.legacyId, { ...asset, processed: foreign }), false);
+  assert.equal(cardServer.safeCardAsset(db.legacyId, { ...asset, original: foreign }), false);
+  assert.equal(cardServer.safeCardAsset(db.legacyId, {
+    ...asset, processed: `${db.legacyId}/other.png`, original: `${db.legacyId}/other.png`,
+  }), false);
+  assert.equal(cardServer.safeCardAsset(db.legacyId, {
+    ...asset, processed: `${db.legacyId}/cachet-signature-directeur-../other.png`,
+    original: `${db.legacyId}/cachet-signature-directeur-../other.png`,
+  }), false);
+
+  db.files.set(direct, png);
+  db.tables.school_card_settings[0].configuration.stamps = { general: asset };
+  const ctx = await cardServer.cardScope(false);
+  const stampOnCards = await cardServer.cardStampImages(ctx, new Set(["general"]));
+  assert.equal(stampOnCards.general, `data:image/png;base64,${png.toString("base64")}`);
+
+  const api = db.admin(endpoint);
+  const initial = await (await api.GET()).json();
+  assert.equal(initial.available.general, true);
+  assert.equal(initial.enabled, false);
+  assert.equal((await api.POST(request("/api/admin/institution/bulletin-direction-stamp",
+    { enabled: true }))).status, 200);
+  const bulletin = await (await api.GET()).json();
+  assert.equal(bulletin.stamps.general, stampOnCards.general);
+  assert.equal(JSON.stringify(bulletin).includes(direct), false);
+});
+
 test("stamp selection never crosses bilingual French/Arabic teaching tracks", () => {
   const stamps = { general: "data:image/png;base64,g", french: "data:image/png;base64,f", arabic: "data:image/png;base64,a" };
   assert.equal(pickBulletinDirectionStamp(stamps, "general", true), stamps.general);
