@@ -81,7 +81,7 @@ test("48 primary students: French and EPC Arabic use two spacious A4 landscape s
           // PDF text extractors may reorder Arabic glyphs, so validate the
           // shaped text in the actual print DOM instead of extracted glyph order.
           assert.match((await page.locator(".roster-table tbody .col-name").first().innerText()).trim(),
-            /محمد تراوري/, "Arabic names remain visible in print layout");
+            /فاطمة كوني/, "Arabic names remain visible in Arabic alphabetical order in print layout");
         }
         await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
       }
