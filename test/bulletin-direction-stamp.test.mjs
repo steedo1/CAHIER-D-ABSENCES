@@ -52,6 +52,54 @@ test("direction seal requires a pre-registered private school image and explicit
   assert.deepEqual(disabled.stamps, {});
 });
 
+
+test("the exact same private image is usable on cards and on report cards", async () => {
+  const db = schoolCardFixture(1);
+  const settings = db.admin(schoolCardSettings);
+  assert.equal((await settings.PUT(request("/api/admin/school-cards/settings",
+    { revision: 0, enabled: true, automaticSignature: true }, "PUT"))).status, 200);
+  const configuration = db.tables.school_card_settings[0].configuration;
+  const file = `school-cards/${db.legacyId}/general/stamps/same-image/processed.png`;
+  configuration.stamps = { general: { original: file, processed: file, updatedAt: new Date().toISOString() } };
+  db.files.set(file, png);
+  const schoolCards = db.admin("src/lib/server/school-cards.ts");
+  const ctx = await schoolCards.cardScope(false);
+  const cardStamp = await schoolCards.cardStampImages(ctx, new Set(["general"]));
+  assert.equal(cardStamp.general, `data:image/png;base64,${png.toString("base64")}`);
+
+  const api = db.admin(endpoint);
+  assert.equal((await api.POST(request("/api/admin/institution/bulletin-direction-stamp",
+    { enabled: true }))).status, 200);
+  const bulletinStamp = await (await api.GET()).json();
+  assert.equal(bulletinStamp.stamps.general, cardStamp.general);
+  assert.equal(db.tables.school_card_settings[0].configuration.automaticSignature, true);
+});
+
+test("EPC French and Arabic report cards keep independent private stamps", async () => {
+  const db = schoolCardFixture(2, true);
+  const setup = await db.admin(schoolCardSettings).PUT(request("/api/admin/school-cards/settings",
+    { revision: 0, enabled: true, automaticSignature: true }, "PUT"));
+  assert.equal(setup.status, 200);
+  const config = db.tables.school_card_settings[0].configuration;
+  const frenchPath = `school-cards/${db.legacyId}/french/stamps/only-fr/processed.png`;
+  const arabicPath = `school-cards/${db.legacyId}/arabic/stamps/only-ar/processed.png`;
+  config.stamps = {
+    french: { original: frenchPath, processed: frenchPath, updatedAt: new Date().toISOString() },
+    arabic: { original: arabicPath, processed: arabicPath, updatedAt: new Date().toISOString() },
+  };
+  db.files.set(frenchPath, png);
+  db.files.set(arabicPath, Buffer.concat([png.subarray(0, png.length - 1), Buffer.from([1])]));
+  const api = db.admin(endpoint);
+  assert.equal((await api.POST(request("/api/admin/institution/bulletin-direction-stamp", { enabled: true }))).status, 200);
+  const { stamps } = await (await api.GET()).json();
+  assert.equal(pickBulletinDirectionStamp(stamps, "french", true), stamps.french);
+  assert.equal(pickBulletinDirectionStamp(stamps, "arabic", true), stamps.arabic);
+  assert.notEqual(stamps.french, stamps.arabic);
+  assert.equal(pickBulletinDirectionStamp(stamps, "general", true), null);
+  // Arabic never inherits a French stamp, even when the general stamp is missing.
+  assert.equal(pickBulletinDirectionStamp({ french: stamps.french }, "arabic", true), null);
+});
+
 test("stamp selection never crosses bilingual French/Arabic teaching tracks", () => {
   const stamps = { general: "data:image/png;base64,g", french: "data:image/png;base64,f", arabic: "data:image/png;base64,a" };
   assert.equal(pickBulletinDirectionStamp(stamps, "general", true), stamps.general);
