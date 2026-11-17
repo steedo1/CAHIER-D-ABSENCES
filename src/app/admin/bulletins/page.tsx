@@ -2685,7 +2685,7 @@ function StudentBulletinCard({
           <div className="bdr visa-card head-visa-card flex min-h-[128px] flex-1 flex-col justify-between p-1">
             <div className="font-semibold text-[9px]">{headVisaLabel}</div>
             <div className="flex-1 flex items-center justify-center py-1">
-              {directionStampPng && <img src={directionStampPng} alt="Cachet et signature de la direction" className="max-h-[82px] max-w-[96%] object-contain" />}
+              {directionStampPng && <img src={directionStampPng} alt="Cachet et signature de la direction" className="max-h-[100px] max-w-[96%] object-contain" />}
             </div>
             {institution?.institution_head_name && (
               <div className="pb-1 text-center text-[9px]">
