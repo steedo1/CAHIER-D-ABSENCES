@@ -16,7 +16,7 @@ export type CardConfiguration = {
   stamps?: Partial<Record<CardSlot, CardAsset>>;
   automaticSignature: boolean;
   // Separate choices; existing bulletin/attestation engines are untouched.
-  documentPolicies: { cards: boolean; bulletins: false; attestations: false; other: false };
+  documentPolicies: { cards: boolean; bulletins: boolean; attestations: false; other: false };
 };
 export function defaultCardConfiguration(): CardConfiguration {
   return { enabled: true, signatures: {}, stamps: {}, automaticSignature: false,
