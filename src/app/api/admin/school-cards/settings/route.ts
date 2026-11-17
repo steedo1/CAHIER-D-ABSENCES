@@ -11,7 +11,7 @@ export async function PUT(req: NextRequest) {
     if (body.revision !== ctx.revision) return cardJson({ error: "configuration_modifiee_recharger" }, 409);
     if (typeof body.enabled !== "boolean" || typeof body.automaticSignature !== "boolean") return cardJson({ error: "options_invalides" }, 400);
     const configuration: CardConfiguration = { ...ctx.configuration, enabled: body.enabled, automaticSignature: body.automaticSignature,
-      documentPolicies: { cards: body.automaticSignature, bulletins: false, attestations: false, other: false } };
+      documentPolicies: { cards: body.automaticSignature, bulletins: ctx.configuration.documentPolicies?.bulletins === true, attestations: false, other: false } };
     const record = { institution_id: ctx.instId, configuration, revision: ctx.revision + 1,
       updated_by: ctx.user.id, updated_at: new Date().toISOString() };
     const result = ctx.revision === 0
