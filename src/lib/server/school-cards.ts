@@ -170,7 +170,7 @@ export function safeCardAsset(instId: string, asset: CardAsset) {
   const directPrefix = `${instId}/cachet-signature-directeur-`;
   return asset.original === asset.processed &&
     asset.processed.startsWith(directPrefix) &&
-    /^[a-z0-9-]+\\.png$/.test(asset.processed.slice(directPrefix.length));
+    /^[a-z0-9-]+\.png$/.test(asset.processed.slice(directPrefix.length));
 }
 export function productionCardVisuals(ctx: CardScope, items: SchoolCard[]) {
   const cycles = parseSchoolCyclesSettings(ctx.school.settings_json), bilingual = isBilingualSchool(cycles);
