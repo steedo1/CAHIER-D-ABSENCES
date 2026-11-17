@@ -3,14 +3,15 @@
 import { useEffect, useState } from "react";
 import FrancoArabicBulletin, { type BulletinVariant } from "./FrancoArabicBulletin";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
+import { pickBulletinDirectionStamp, type DirectionStampImages } from "@/lib/bulletin-direction-stamp";
 import { isSpecializedBulletinPrintable } from "@/lib/franco-arabic-print-layout";
 import "@/app/admin/bulletins/modeles/print.css";
 
 /** View inside the existing bulletin page; data and engine choice come from its
  * authenticated API. Changing this layout never changes a calculation or scope. */
-export default function SpecializedBulletinPanel({ data, onBack, onPrint, printPreparing = false, error }: {
+export default function SpecializedBulletinPanel({ data, onBack, onPrint, printPreparing = false, error, directionStamps = {} }: {
   data: SpecializedBulletinPayload; onBack: () => void; onPrint: () => Promise<void>;
-  printPreparing?: boolean; error?: string | null;
+  printPreparing?: boolean; error?: string | null; directionStamps?: DirectionStampImages;
 }) {
   // Defense in depth for existing saved secondary choices and stale API data:
   // secondary never offers the combined model; preserve each teaching track.
@@ -99,7 +100,10 @@ export default function SpecializedBulletinPanel({ data, onBack, onPrint, printP
         const ready = readyDocuments.includes(row);
         return <div key={row.studentId} className={`specialized-document ${ready ? "" : "specialized-print-excluded"} ${ready && row.studentId === lastReadyId ? "specialized-last-printable" : ""}`}>
           <FrancoArabicBulletin model={{ ...row.document, school: { ...row.document.school, ...data.school },
-            draft: !ready }} variant={selected} printRoot={false} />
+            draft: !ready }} variant={selected} printRoot={false}
+            directionStampPng={ready ? pickBulletinDirectionStamp(directionStamps,
+              selected === "combined" ? "general" : selected === "arabic" ? "arabic" : "french",
+              row.document.school.isFrancoArabic) : null} />
         </div>;
       })}
     </div>
