@@ -119,7 +119,7 @@ test("both print workflows use the direction stamp but not the teacher-signature
   assert.match(page, /directionStamps=\{directionStamps\}/);
   assert.match(page, /Cachet de direction sur les bulletins/);
   assert.match(panel, /pickBulletinDirectionStamp/);
-  assert.match(page, /selectedSecondaryTrack, specializedBulletins\\?\\.school\\?\\.isFrancoArabic !== false/);
-  assert.match(panel, /data\\.school\\?\\.isFrancoArabic !== false/);
+  assert.ok(page.includes("selectedSecondaryTrack, specializedBulletins?.school?.isFrancoArabic !== false"));
+  assert.ok(panel.includes("data.school?.isFrancoArabic !== false"));
   assert.match(document, /!model\.sample && !model\.draft/);
 });
