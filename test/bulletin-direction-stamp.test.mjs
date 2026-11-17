@@ -157,6 +157,14 @@ test("both print workflows use the direction stamp but not the teacher-signature
   assert.match(page, /directionStampPng=\{directionStamps\.general \|\| null\}/);
   assert.match(page, /directionStamps=\{directionStamps\}/);
   assert.match(page, /Cachet de direction sur les bulletins/);
+  assert.ok(page.includes('className="max-h-[98px] max-w-[96%] object-contain"'),
+    "the existing direction stamp grows from 82px to 98px without resizing the visa container");
+  const visaStart = page.indexOf('className="bdr visa-card head-visa-card');
+  const stamp = page.indexOf('alt="Cachet et signature de la direction"', visaStart);
+  const directorName = page.indexOf('institution?.institution_head_name && (', stamp);
+  assert.ok(visaStart >= 0 && stamp > visaStart && directorName > stamp,
+    "the enlarged stamp stays inside the director visa, above the director name");
+
   assert.match(panel, /pickBulletinDirectionStamp/);
   assert.ok(page.includes("selectedSecondaryTrack, specializedBulletins?.school?.isFrancoArabic !== false"));
   assert.ok(panel.includes("data.school?.isFrancoArabic !== false"));
