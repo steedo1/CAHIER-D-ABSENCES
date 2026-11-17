@@ -159,7 +159,18 @@ export const cardSignatureImages = (ctx: CardScope, slots: ReadonlySet<CardSlot>
 export const cardStampImages = (ctx: CardScope, slots: ReadonlySet<CardSlot>) => cardAssetImages(ctx, "stamps", slots);
 export function safeCardAsset(instId: string, asset: CardAsset) {
   const prefix = `school-cards/${instId}/`;
-  return asset.original.startsWith(prefix) && asset.processed.startsWith(prefix) && ![asset.original,asset.processed].some(path => path.includes(".."));
+  if (!asset || typeof asset.original !== "string" || typeof asset.processed !== "string") return false;
+  const regular = asset.original.startsWith(prefix) && asset.processed.startsWith(prefix) &&
+    ![asset.original, asset.processed].some(path => path.includes(".."));
+  if (regular) return true;
+
+  // School directors can upload an already-cropped PNG directly to their
+  // private institution folder. Link only that explicit type of upload;
+  // never accept another school's object, a generic file or a public URL.
+  const directPrefix = `${instId}/cachet-signature-directeur-`;
+  return asset.original === asset.processed &&
+    asset.processed.startsWith(directPrefix) &&
+    /^[a-z0-9-]+\\.png$/.test(asset.processed.slice(directPrefix.length));
 }
 export function productionCardVisuals(ctx: CardScope, items: SchoolCard[]) {
   const cycles = parseSchoolCyclesSettings(ctx.school.settings_json), bilingual = isBilingualSchool(cycles);
