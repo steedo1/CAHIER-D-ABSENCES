@@ -386,8 +386,9 @@ function Panel({ program, compact, ordinary }: { program: BulletinProgram; compa
   </section>;
 }
 
-function Footer({ model, programs, ordinary }: {
+function Footer({ model, programs, ordinary, directionStampPng }: {
   model: BulletinDocument; programs: BulletinProgram[]; ordinary: boolean;
+  directionStampPng?: string | null;
 }) {
   const arabic = programs.length === 1 && programs[0].track === "arabic";
   return <footer className={styles.footer}>
@@ -405,7 +406,9 @@ function Footer({ model, programs, ordinary }: {
       />)}
       <div className={styles.stampBox}>
         <span>{arabic ? <ArabicFrench arabic="ختم المؤسسة" french="Cachet de l’établissement" />
-          : "Cachet de l’établissement"}</span><div className={styles.stampSpace}/>
+          : "Cachet de l’établissement"}</span><div className={`${styles.stampSpace} ${directionStampPng ? styles.stampSpaceWithImage : ""}`}>
+          {directionStampPng && <img src={directionStampPng} className={styles.digitalDirectionStamp} alt="Cachet et signature de la direction" />}
+        </div>
         <strong>{model.school.city || "Lieu"} · {arabic
           ? <ArabicFrench arabic="التوقيع / الختم" french="Signature / cachet" />
           : "Signature / cachet"}</strong>
@@ -424,11 +427,12 @@ function Footer({ model, programs, ordinary }: {
 
 /** Reusable presentational document: no warning banner and NO combined average. */
 export default function FrancoArabicBulletin({
-  model, variant, printRoot = false,
+  model, variant, printRoot = false, directionStampPng = null,
 }: {
   model: BulletinDocument;
   variant: BulletinVariant;
   printRoot?: boolean;
+  directionStampPng?: string | null;
 }) {
   const programs = selectPrintablePrograms(model, variant);
   // A combined A4 document is only the juxtaposition of two subject reports.
@@ -450,7 +454,7 @@ export default function FrancoArabicBulletin({
       <div className={`${styles.panels} ${compact ? styles.twoPanels : ""}`}>
         {programs.map(p=><Panel key={p.track} program={p} compact={compact} ordinary={variant === "ordinary"}/>)}
       </div>
-      <Footer model={model} programs={programs} ordinary={variant === "ordinary"}/>
+      <Footer model={model} programs={programs} ordinary={variant === "ordinary"} directionStampPng={!model.sample && !model.draft ? directionStampPng : null}/>
     </div>
   </article>;
 }
