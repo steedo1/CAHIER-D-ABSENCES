@@ -19,6 +19,7 @@ import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import SpecializedBulletinPanel from "@/components/bulletins/SpecializedBulletinPanel";
+import { pickBulletinDirectionStamp, type DirectionStampImages } from "@/lib/bulletin-direction-stamp";
 import { usePrimaryBulletinCalendar } from "@/hooks/usePrimaryBulletinCalendar";
 import type { SpecializedBulletinPayload } from "@/lib/server/specialized-bulletin";
 import { historicalSecondaryViews } from "@/lib/secondary-historical-layout";
@@ -1391,6 +1392,7 @@ type StudentBulletinCardProps = {
   conductRubricMax?: ConductRubricMax;
   conductTotalMax?: number;
   signaturesEnabled?: boolean | null;
+  directionStampPng?: string | null;
 
   // ✅ pour calculer le "fit-to-page" malgré le zoom d’aperçu
   previewZoomForMeasure: number;
@@ -1417,6 +1419,7 @@ function StudentBulletinCard({
   conductRubricMax,
   conductTotalMax,
   signaturesEnabled,
+  directionStampPng,
   previewZoomForMeasure,
   disableLocalQr = false,
 }: StudentBulletinCardProps) {
@@ -2681,7 +2684,9 @@ function StudentBulletinCard({
 
           <div className="bdr visa-card head-visa-card flex min-h-[128px] flex-1 flex-col justify-between p-1">
             <div className="font-semibold text-[9px]">{headVisaLabel}</div>
-            <div className="flex-1" />
+            <div className="flex-1 flex items-center justify-center py-1">
+              {directionStampPng && <img src={directionStampPng} alt="Cachet et signature de la direction" className="max-h-[82px] max-w-[96%] object-contain" />}
+            </div>
             {institution?.institution_head_name && (
               <div className="pb-1 text-center text-[9px]">
                 {institution.institution_head_name}
@@ -2729,6 +2734,57 @@ function BulletinsPageContent() {
 
   const [signaturesEnabled, setSignaturesEnabled] = useState<boolean | null>(null);
   const [signaturesToggling, setSignaturesToggling] = useState(false);
+  const [directionStampEnabled, setDirectionStampEnabled] = useState(false);
+  const [directionStamps, setDirectionStamps] = useState<DirectionStampImages>({});
+  const [directionStampAvailable, setDirectionStampAvailable] = useState(false);
+  const [directionStampToggling, setDirectionStampToggling] = useState(false);
+
+  async function refreshDirectionStamps(signal?: AbortSignal) {
+    const response = await fetch("/api/admin/institution/bulletin-direction-stamp", {
+      cache: "no-store", signal,
+    });
+    const data = await response.json();
+    if (!response.ok || data.ok !== true) {
+      throw Error(data.error || "Cachet de direction indisponible");
+    }
+    setDirectionStampEnabled(data.enabled === true);
+    setDirectionStampAvailable(Object.values(data.available || {}).some(Boolean));
+    setDirectionStamps(data.enabled === true ? data.stamps || {} : {});
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void refreshDirectionStamps(controller.signal).catch(() => {
+      if (!controller.signal.aborted) {
+        setDirectionStampEnabled(false);
+        setDirectionStamps({});
+        setDirectionStampAvailable(false);
+      }
+    });
+    return () => controller.abort();
+  }, []);
+
+  async function handleToggleDirectionStamp() {
+    if (!isOnline || directionStampToggling) return;
+    setDirectionStampToggling(true);
+    try {
+      const response = await fetch("/api/admin/institution/bulletin-direction-stamp", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !directionStampEnabled }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok !== true) {
+        throw Error(data.error === "enregistrer_un_cachet_avant_activation"
+          ? "Importez d’abord un cachet dans Cartes scolaires avant l’activation."
+          : data.error || "Mise à jour du cachet impossible.");
+      }
+      await refreshDirectionStamps();
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : "Mise à jour du cachet impossible.");
+    } finally {
+      setDirectionStampToggling(false);
+    }
+  }
 
   const [selectedClassId, setSelectedClassId] = useState<string>(
     liveDuplicateClassId,
@@ -4134,6 +4190,7 @@ function BulletinsPageContent() {
                     ? row.program.historicalSecondary?.conductAverage ?? null
                     : null}
                   signaturesEnabled={false}
+                  directionStampPng={pickBulletinDirectionStamp(directionStamps, selectedSecondaryTrack, true)}
                   disableLocalQr previewZoomForMeasure={previewZoom}
                 />
               ))}
@@ -4149,6 +4206,7 @@ function BulletinsPageContent() {
             <SpecializedBulletinPanel
               key={`${selectedClassId}:${selectedPeriodId}:${selectedPrimaryEventCode}:${dateFrom}:${dateTo}`}
               data={specializedBulletins}
+              directionStamps={directionStamps}
               onBack={() => setPreviewOpen(false)}
               onPrint={async () => { window.print(); }}
               error={errorMsg}
@@ -4217,6 +4275,7 @@ function BulletinsPageContent() {
                 conductRubricMax={conductRubricMax}
                 conductTotalMax={conductTotalMax}
                 signaturesEnabled={signaturesEnabled}
+                directionStampPng={directionStamps.general || null}
                 previewZoomForMeasure={previewZoom}
               />
             ))}
@@ -4252,6 +4311,18 @@ function BulletinsPageContent() {
             </div>
 
             <div className="flex flex-col items-stretch gap-2 sm:items-end">
+              {canConfigureBulletins && <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                  Cachet de direction sur les bulletins : <strong>{directionStampEnabled ? "Activé" : "Désactivé"}</strong>
+                </span>
+                <Button type="button" variant="ghost" onClick={handleToggleDirectionStamp}
+                  disabled={directionStampToggling || !isOnline || (!directionStampEnabled && !directionStampAvailable)}>
+                  {directionStampToggling ? "Mise à jour…" : directionStampEnabled ? "Désactiver le cachet" : "Activer le cachet"}
+                </Button>
+                <a href="/admin/cartes-scolaires" className="text-sky-700 underline">
+                  {directionStampAvailable ? "Gérer le cachet" : "Importer un cachet"}
+                </a>
+              </div>}
               {canConfigureBulletins && <div className="flex items-center justify-end gap-2">
                 <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">
                   <span className="font-semibold">
