@@ -157,6 +157,9 @@ test("both print workflows use the direction stamp but not the teacher-signature
   assert.match(page, /directionStampPng=\{directionStamps\.general \|\| null\}/);
   assert.match(page, /directionStamps=\{directionStamps\}/);
   assert.match(page, /Cachet de direction sur les bulletins/);
+  // A slightly larger print stamp stays inside the existing director's visa card.
+  assert.match(page, /max-h-\\[100px\\] max-w-\\[96%\\] object-contain/);
+  assert.match(page, /institution\\?\\.institution_head_name/);
   assert.match(panel, /pickBulletinDirectionStamp/);
   assert.ok(page.includes("selectedSecondaryTrack, specializedBulletins?.school?.isFrancoArabic !== false"));
   assert.ok(panel.includes("data.school?.isFrancoArabic !== false"));
