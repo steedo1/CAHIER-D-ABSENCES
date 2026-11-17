@@ -15,7 +15,8 @@ import DocumentDirectionSignatures from "@/components/DocumentDirectionSignature
 import type { TeachingDocumentSignatory } from "@/lib/franco-arabic-document-signatories";
 import { fitClassListName, estimateClassListNameWidth } from "@/lib/class-list-name";
 import {
-  arabicClassListLevel, arabicClassListSubject, isValidWrittenArabicName,
+  arabicClassListLevel, arabicClassListSubject, compareArabicClassListStudents,
+  isValidWrittenArabicName,
 } from "@/lib/class-list-arabic";
 
 type ProfileMini = {
@@ -552,17 +553,14 @@ export default function ClassListPrintPage() {
           ...student,
           ...(editable[student.id] || {}),
         }))
-        .sort((a, b) =>
-          traditionalStudentSortKey(a).localeCompare(
-            traditionalStudentSortKey(b),
-            "fr",
-            {
-              sensitivity: "base",
-              numeric: true,
-            },
-          ),
-        ),
-    [students, editable],
+        .sort((a, b) => arabicList
+          ? compareArabicClassListStudents(a, b)
+          : traditionalStudentSortKey(a).localeCompare(
+              traditionalStudentSortKey(b),
+              "fr",
+              { sensitivity: "base", numeric: true },
+            )),
+    [students, editable, arabicList],
   );
 
   const primaryList = data?.school_cycle === "primary";

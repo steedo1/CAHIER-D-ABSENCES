@@ -42,7 +42,7 @@ test("Arabic class-list screen opens corrections, saves a changed name and reloa
       [{ student_id: "s-0", full_name_ar: "محمّد تراوري" }],
     ]);
     assert.equal(window.document.querySelector('#arabic-name-corrections input').value, "محمّد تراوري");
-    assert.match(window.document.querySelector('.roster-table tbody .col-name').textContent, /محمّد تراوري/);
+    assert.match(window.document.querySelectorAll('.roster-table tbody .col-name')[1].textContent, /محمّد تراوري/);
     assert.deepEqual(errors, []);
   } finally { await window.happyDOM.close(); }
 });

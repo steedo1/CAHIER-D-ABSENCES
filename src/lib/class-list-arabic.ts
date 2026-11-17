@@ -42,3 +42,48 @@ export function isValidWrittenArabicName(value: unknown): value is string {
     !/[\u0000-\u001F\u007F]/.test(value) &&
     (!value.trim() || /[\u0621-\u064A\u0671-\u06D3]/u.test(value));
 }
+
+/** Arabic teaching class lists use the written Arabic name as their sort key.
+ * Pupils without an Arabic transcription remain visible, after the Arabic names.
+ * Sorting never changes the canonical student record or its French spelling.
+ */
+type ArabicListStudentName = {
+  id?: string | null;
+  full_name_ar?: string | null;
+  full_name?: string | null;
+  last_name?: string | null;
+  first_name?: string | null;
+};
+
+const ARABIC_STUDENT_COLLATOR = new Intl.Collator("ar", {
+  sensitivity: "base",
+  numeric: true,
+});
+const FRENCH_STUDENT_COLLATOR = new Intl.Collator("fr", {
+  sensitivity: "base",
+  numeric: true,
+});
+
+export function compareArabicClassListStudents(
+  a: ArabicListStudentName,
+  b: ArabicListStudentName,
+): number {
+  const nameA = String(a.full_name_ar || "").trim();
+  const nameB = String(b.full_name_ar || "").trim();
+
+  if (nameA && nameB) {
+    const arabicResult = ARABIC_STUDENT_COLLATOR.compare(nameA, nameB);
+    if (arabicResult !== 0) return arabicResult;
+  } else if (nameA || nameB) {
+    return nameA ? -1 : 1;
+  }
+
+  // Stable fallback for equal Arabic names and pupils without Arabic spelling.
+  const frenchKey = (student: ArabicListStudentName) =>
+    [student.last_name, student.first_name]
+      .map(value => String(value || "").trim())
+      .filter(Boolean)
+      .join(" ") || String(student.full_name || "").trim();
+  return FRENCH_STUDENT_COLLATOR.compare(frenchKey(a), frenchKey(b)) ||
+    String(a.id || "").localeCompare(String(b.id || ""));
+}

@@ -1,4 +1,5 @@
 import { loadPrimaryClassRoster } from "@/lib/server/primary-class-roster";
+import { compareArabicClassListStudents } from "@/lib/class-list-arabic";
 import { loadLinkedClassEnrollments } from "@/lib/server/school-linked-class-roster";
 import { readStudentProgramSettings } from "@/lib/school-student-programs";
 import { resolveTeachingDocumentSignatories } from "@/lib/franco-arabic-document-signatories";
@@ -639,11 +640,12 @@ export async function GET(
       };
     })
     .filter((row: any) => row.id)
-    .sort((a: any, b: any) =>
-      String(a.full_name || "").localeCompare(String(b.full_name || ""), "fr", {
-        sensitivity: "base",
-        numeric: true,
-      }),
+    .sort((a: any, b: any) => isArabicClass
+      ? compareArabicClassListStudents(a, b)
+      : String(a.full_name || "").localeCompare(String(b.full_name || ""), "fr", {
+          sensitivity: "base",
+          numeric: true,
+        }),
     );
 
   const institution = (institutionRes.data || {}) as Record<string, any>;

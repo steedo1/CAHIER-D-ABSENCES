@@ -26,7 +26,8 @@ test("Arabic CP1 and secondary class lists print bilingual labels and retain Ara
       await portalButton.waitFor();
       assert.match(await page.locator(".list-title").first().innerText(), /قائمة التلاميذ/);
       assert.match(await page.locator(".roster-table thead").first().innerText(), /الاسم واللقب/);
-      assert.match(await page.locator(".roster-table tbody .col-name").first().innerText(), /محمد تراوري/);
+      assert.match(await page.locator(".roster-table tbody .col-name").first().innerText(), /فاطمة كوني/);
+      assert.match(await page.locator(".roster-table tbody .col-name").nth(1).innerText(), /محمد تراوري/);
       assert.match(await page.locator(".roster-table tbody .col-name").nth(2).innerText(), /ÉLÈVE002/);
       assert.equal(await page.locator(".roster-table tbody .col-name").count(), isPrimary ? 8 : 6);
       if (isPrimary) assert.match(await page.locator(".roster-table thead").first().innerText(), /القراءة/);
@@ -44,7 +45,7 @@ test("Arabic CP1 and secondary class lists print bilingual labels and retain Ara
         assert.match(await page.locator(".list-title").first().innerText(), heading,
           "Arabic print title survives the enhancer");
         assert.equal((await page.locator(".roster-table tbody .col-name").first().innerText()).trim(),
-          "محمد تراوري", "print enhancer must not replace the Arabic spelling with the French name");
+          "فاطمة كوني", "print enhancer must not replace the Arabic spelling with the French name");
         assert.match(await page.locator(".roster-table tbody .col-name").nth(2).innerText(),
           /ÉLÈVE002/, "untranslated names must still show the French original");
         const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
