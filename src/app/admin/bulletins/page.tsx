@@ -4190,7 +4190,7 @@ function BulletinsPageContent() {
                     ? row.program.historicalSecondary?.conductAverage ?? null
                     : null}
                   signaturesEnabled={false}
-                  directionStampPng={pickBulletinDirectionStamp(directionStamps, selectedSecondaryTrack, true)}
+                  directionStampPng={pickBulletinDirectionStamp(directionStamps, selectedSecondaryTrack, specializedBulletins?.school?.isFrancoArabic === true)}
                   disableLocalQr previewZoomForMeasure={previewZoom}
                 />
               ))}
