@@ -14,6 +14,7 @@ import type { EducationAvailableSubject } from "@/hooks/useEducationTeachingCont
 import type { EducationType } from "@/lib/education-organization";
 import { canonicalEducatorLevel } from "@/lib/educator-level";
 import StaffManager from "@/components/admin/StaffManager";
+import PrimaryClassTeachersManager from "@/components/admin/PrimaryClassTeachersManager";
 import { permanentWeeklyQuota, type PermanentCycle } from "@/lib/finance/payroll-permanents";
 import {
   ALL_EDUCATION_TYPES,
@@ -1378,6 +1379,8 @@ export default function UsersPage() {
           </div>
         )}
       </div>
+
+      <PrimaryClassTeachersManager />
 
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
