@@ -64,6 +64,8 @@ export async function GET(req: NextRequest) {
       .eq("teacher_id", user.id)
       .eq("class_id", class_id)
       .eq("institution_id", inst)
+      .lte("start_date", new Date().toISOString().slice(0, 10))
+      .or(`end_date.is.null,end_date.gt.${new Date().toISOString().slice(0, 10)}`)
       .limit(1)
       .maybeSingle();
     allowed = !!link;
