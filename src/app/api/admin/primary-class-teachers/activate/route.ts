@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getStaffScope, getCurrentStaffAcademicYear } from "@/lib/server/staff-access";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
@@ -6,6 +5,7 @@ import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/sch
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const noStore = { "Cache-Control": "no-store" };
+const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
   let initialPassword: string | null = null;
 
   if (!uid) {
-    initialPassword = randomBytes(18).toString("base64url") + "A9!";
+    initialPassword = DEFAULT_TEMP_PASSWORD;
     const { data: created, error: authError } = await service.auth.admin.createUser({
       phone,
       password: initialPassword,
