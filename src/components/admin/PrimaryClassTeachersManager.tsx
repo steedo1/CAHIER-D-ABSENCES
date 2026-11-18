@@ -20,6 +20,7 @@ type Directory = {
   ok?: boolean;
   enabled?: boolean;
   academic_year?: string | null;
+  institution_id?: string;
   classes?: PrimaryClass[];
   items?: PrimaryTeacher[];
   error?: string;
@@ -115,7 +116,7 @@ export default function PrimaryClassTeachersManager() {
       const response = await fetch("/api/admin/primary-class-teachers/activate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ class_id: classId, phone: teacherPhone }),
+        body: JSON.stringify({ class_id: classId, phone: teacherPhone, institution_id: data?.institution_id }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "Activation impossible.");
