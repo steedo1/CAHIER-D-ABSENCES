@@ -15,6 +15,7 @@ type StudentRow = {
   id: string;
   matricule: string | null;
   full_name: string;
+  full_name_ar?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   gender: string | null;
@@ -124,6 +125,12 @@ function formatTraditionalStudentName(student: Pick<StudentRow, "full_name" | "f
   return cleanNamePart(student.full_name) || "—";
 }
 
+function classStudentDisplayName(student: StudentRow, isArabicClass: boolean) {
+  return isArabicClass
+    ? cleanNamePart(student.full_name_ar) || formatTraditionalStudentName(student)
+    : formatTraditionalStudentName(student);
+}
+
 function traditionalStudentSortKey(student: Pick<StudentRow, "full_name" | "first_name" | "last_name">) {
   const lastName = cleanNamePart(student.last_name).toUpperCase();
   const firstName = cleanNamePart(student.first_name);
@@ -230,6 +237,9 @@ export default function ClassListPrintPage() {
   const academicYearLabel = buildAcademicYearLabel(data);
   const headTeacherLabel = personLabel(data?.staff?.head_teacher);
   const students = data?.students || [];
+  const isArabicClass =
+    /-AR$/i.test(String(data?.class?.code || "")) ||
+    /arabe/i.test(String(data?.class?.label || ""));
   const canEdit = data?.can_edit !== false;
 
   const printedStudents = useMemo(
@@ -239,13 +249,19 @@ export default function ClassListPrintPage() {
           ...student,
           ...(editable[student.id] || {}),
         }))
-        .sort((a, b) =>
-          traditionalStudentSortKey(a).localeCompare(traditionalStudentSortKey(b), "fr", {
+        .sort((a, b) => {
+          const aName = isArabicClass
+            ? cleanNamePart(a.full_name_ar) || a.full_name
+            : traditionalStudentSortKey(a);
+          const bName = isArabicClass
+            ? cleanNamePart(b.full_name_ar) || b.full_name
+            : traditionalStudentSortKey(b);
+          return aName.localeCompare(bName, isArabicClass ? "ar" : "fr", {
             sensitivity: "base",
             numeric: true,
-          })
-        ),
-    [students, editable],
+          });
+        }),
+    [students, editable, isArabicClass],
   );
 
   function updateStudent(id: string, patch: Partial<EditableStudent>) {
@@ -280,7 +296,9 @@ export default function ClassListPrintPage() {
         body: JSON.stringify({ updates }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || "Impossible d’enregistrer les corrections.");
+      if (!res.ok || !json?.ok || json?.updated !== updates.length) {
+        throw new Error(json?.error || "Enregistrement incomplet : vérifiez les modifications.");
+      }
       setSaveMsg("Corrections enregistrées. La liste PDF est à jour.");
       await load();
     } catch (e: any) {
@@ -640,12 +658,12 @@ export default function ClassListPrintPage() {
                 </tr>
               </thead>
               <tbody>
-                {students.map((student) => {
+                {printedStudents.map((student) => {
                   const row = editable[student.id] || { id: student.id };
                   return (
                     <tr key={student.id} className="border-t">
                       <td className="min-w-[260px] px-3 py-2 font-medium">
-                        {formatTraditionalStudentName(student)}
+                        {classStudentDisplayName(student, isArabicClass)}
                         <div className="text-xs font-normal text-slate-500">{student.matricule || "Sans matricule"}</div>
                       </td>
                       <td className="px-3 py-2">
@@ -792,7 +810,7 @@ export default function ClassListPrintPage() {
                     <tr key={student.id}>
                       <td className="col-no">{index + 1}</td>
                       <td className="col-matricule">{student.matricule || ""}</td>
-                      <td className="col-name">{formatTraditionalStudentName(student)}</td>
+                      <td className="col-name">{classStudentDisplayName(student, isArabicClass)}</td>
                       <td className="col-date">{formatDateFR(student.birthdate)}</td>
                       <td className="col-sex">{sexShort(student.gender)}</td>
                       <td className="col-red">{student.is_repeater ? "R" : ""}</td>
