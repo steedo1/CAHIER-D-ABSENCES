@@ -330,6 +330,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
         first_name,
         last_name,
         full_name,
+        full_name_ar,
         matricule,
         gender,
         birthdate,
@@ -357,16 +358,21 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     );
   }
 
+  const isArabicClass =
+    /-AR$/i.test(String((cls as any).code || "")) ||
+    /arabe/i.test(String((cls as any).label || ""));
+
   const students = (enrollments || [])
     .map((row: any) => {
       const s = row.students || {};
       const sid = String(s.id || row.student_id || "").trim();
-      const name = fullName(s) || "—";
+      const name = (isArabicClass ? cleanText(s.full_name_ar) : "") || fullName(s) || "—";
 
       return {
         id: sid,
         matricule: s.matricule ? String(s.matricule) : null,
         full_name: name,
+        full_name_ar: s.full_name_ar ?? null,
         first_name: s.first_name ?? null,
         last_name: s.last_name ?? null,
         gender: s.gender ?? null,
@@ -383,7 +389,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     })
     .filter((row: any) => row.id)
     .sort((a: any, b: any) =>
-      String(a.full_name || "").localeCompare(String(b.full_name || ""), "fr", {
+      String(a.full_name || "").localeCompare(String(b.full_name || ""), isArabicClass ? "ar" : "fr", {
         sensitivity: "base",
         numeric: true,
       }),
@@ -513,11 +519,12 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   let updated = 0;
 
   for (const row of rows) {
-    const { error } = await srv
+    const { data: written, error } = await srv
       .from("students")
       .update(row.patch)
       .eq("id", row.student_id)
-      .eq("institution_id", institutionId);
+      .eq("institution_id", institutionId)
+      .select("id");
 
     if (error) {
       return NextResponse.json(
@@ -532,6 +539,12 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       );
     }
 
+    if (!written?.length) {
+      return NextResponse.json(
+        { error: "student_not_updated", student_id: row.student_id },
+        { status: 409 },
+      );
+    }
     updated++;
   }
 
