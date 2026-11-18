@@ -23,13 +23,49 @@ export async function PATCH(
   const inst = me?.institution_id as string | null;
   if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
 
+  // Les modifications d'identité sont réservées à la direction de l'établissement.
+  const { data: roles, error: rolesErr } = await srv
+    .from("user_roles")
+    .select("role,institution_id")
+    .eq("profile_id", user.id);
+  if (rolesErr) return NextResponse.json({ error: rolesErr.message }, { status: 400 });
+  const canEdit = (roles || []).some((r: any) =>
+    r.role === "super_admin" ||
+    (r.role === "admin" && (!r.institution_id || r.institution_id === inst)),
+  );
+  if (!canEdit) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
   const id = (await params).id;
-  const body = await req.json().catch(() => ({}));
+  const rawBody = await req.json().catch(() => ({}));
+  const body = rawBody && typeof rawBody === "object" && !Array.isArray(rawBody) ? rawBody : {};
   const patch: Record<string, any> = {};
 
   if ("first_name" in body) patch.first_name = body.first_name ?? null;
   if ("last_name" in body)  patch.last_name  = body.last_name ?? null;
   if ("matricule" in body)  patch.matricule  = (body.matricule ?? null) ? String(body.matricule).trim().toUpperCase() : null;
+  if ("full_name_ar" in body) patch.full_name_ar = String(body.full_name_ar ?? "").trim() || null;
+  if ("birth_place" in body) patch.birth_place = String(body.birth_place ?? "").trim() || null;
+  if ("nationality" in body) patch.nationality = String(body.nationality ?? "").trim() || null;
+  if ("gender" in body) {
+    const gender = String(body.gender ?? "").trim().toUpperCase();
+    if (gender && gender !== "M" && gender !== "F") {
+      return NextResponse.json({ error: "invalid_gender" }, { status: 400 });
+    }
+    patch.gender = gender || null;
+  }
+  if ("birthdate" in body) {
+    const birthdate = String(body.birthdate ?? "").trim();
+    if (birthdate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(birthdate)) {
+      return NextResponse.json({ error: "invalid_birthdate" }, { status: 400 });
+    }
+    if (birthdate && Number.isNaN(Date.parse(birthdate))) {
+      return NextResponse.json({ error: "invalid_birthdate" }, { status: 400 });
+    }
+    patch.birthdate = birthdate || null;
+  }
+  if (Object.keys(patch).length === 0) {
+    return NextResponse.json({ error: "no_changes" }, { status: 400 });
+  }
 
   // Vérifier que l’élève appartient à la même institution
   const { data: s, error: sErr } = await srv
@@ -60,9 +96,10 @@ export async function PATCH(
     .from("students")
     .update(patch)
     .eq("id", id)
-    .select("id, first_name, last_name, matricule")
+    .select("id, first_name, last_name, matricule, full_name_ar, birthdate, birth_place, nationality, gender")
     .maybeSingle();
 
   if (uErr) return NextResponse.json({ error: uErr.message }, { status: 400 });
+  if (!upd) return NextResponse.json({ error: "student_not_updated" }, { status: 409 });
   return NextResponse.json({ item: upd });
 }
