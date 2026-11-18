@@ -185,6 +185,7 @@ export async function GET(req: NextRequest) {
         first_name,
         last_name,
         full_name,
+        full_name_ar,
         matricule,
         institution_id,
         photo_path,
@@ -200,7 +201,7 @@ export async function GET(req: NextRequest) {
         is_affecte,
         is_boarder
       ),
-      classes:class_id!inner ( id, label, level, institution_id, academic_year )
+      classes:class_id!inner ( id, label, code, level, institution_id, academic_year )
     `,
     )
     .eq("institution_id", inst)
@@ -246,6 +247,8 @@ export async function GET(req: NextRequest) {
     first_name: string | null;
     last_name: string | null;
     full_name: string;
+    full_name_ar: string | null;
+    class_code: string | null;
     matricule: string | null;
     class_id: string;
     class_label: string | null;
@@ -292,6 +295,8 @@ export async function GET(req: NextRequest) {
       first_name: (s.first_name ?? null) as string | null,
       last_name: (s.last_name ?? null) as string | null,
       full_name: full,
+      full_name_ar: (s.full_name_ar ?? null) as string | null,
+      class_code: (canonicalClass?.code ?? c.code ?? null) as string | null,
       matricule: (s.matricule ?? null) as string | null,
       class_id: canonicalClassId,
       class_label: (canonicalClass?.label ?? c.label ?? null) as string | null,
