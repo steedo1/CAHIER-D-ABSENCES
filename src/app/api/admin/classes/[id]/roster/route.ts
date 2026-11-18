@@ -488,6 +488,7 @@ export async function GET(
           first_name,
           last_name,
           full_name,
+          full_name_ar,
           matricule,
           gender,
           birthdate,
@@ -586,16 +587,21 @@ export async function GET(
   const currentIds = new Set((enrollments || []).map((row: any) => row.student_id));
   const allEnrollments = [...(enrollments || []), ...(primaryRoster?.linkedEnrollments || [])
     .filter(row => !currentIds.has(row.student_id))];
+  const isArabicClass =
+    /-AR$/i.test(String((cls as any).code || "")) ||
+    /arabe/i.test(String((cls as any).label || ""));
+
   const students = allEnrollments
     .map((row: any) => {
       const s = row.students || {};
       const sid = String(s.id || row.student_id || "").trim();
-      const name = fullName(s) || "—";
+      const name = (isArabicClass ? cleanText(s.full_name_ar) : "") || fullName(s) || "—";
 
       return {
         id: sid,
         matricule: s.matricule ? String(s.matricule) : null,
         full_name: name,
+        full_name_ar: s.full_name_ar ?? null,
         first_name: s.first_name ?? null,
         last_name: s.last_name ?? null,
         gender: s.gender ?? null,
@@ -616,7 +622,7 @@ export async function GET(
     })
     .filter((row: any) => row.id)
     .sort((a: any, b: any) =>
-      String(a.full_name || "").localeCompare(String(b.full_name || ""), "fr", {
+      String(a.full_name || "").localeCompare(String(b.full_name || ""), isArabicClass ? "ar" : "fr", {
         sensitivity: "base",
         numeric: true,
       }),
