@@ -64,7 +64,7 @@ function Skeleton({ className = "" }: { className?: string }) {
 }
 
 /* ───────── Types ───────── */
-type ClassRow = { id: string; name: string; level: string; label?: string | null };
+type ClassRow = { id: string; name: string; level: string; code?: string | null; label?: string | null };
 type StudentRow = {
   id: string;
   full_name: string;
@@ -149,7 +149,7 @@ export default function AdminStudentsByClassPage() {
   );
 
   const selectedClass = classes.find((c) => c.id === classId);
-  const isArabicClass = /-AR$/i.test(String((selectedClass as any)?.code || "")) ||
+  const isArabicClass = /-AR$/i.test(String(selectedClass?.code || "")) ||
     /arabe/i.test(String(selectedClass?.label || selectedClass?.name || ""));
 
   const studentsOfClass = useMemo(() => {
@@ -160,6 +160,7 @@ export default function AdminStudentsByClassPage() {
       list = list.filter(
         (s) =>
           s.full_name.toLowerCase().includes(k) ||
+          (s.full_name_ar ?? "").toLowerCase().includes(k) ||
           (s.matricule ?? "").toLowerCase().includes(k)
       );
     }
