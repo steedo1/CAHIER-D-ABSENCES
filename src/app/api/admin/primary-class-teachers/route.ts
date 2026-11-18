@@ -161,6 +161,9 @@ export async function POST(req: NextRequest) {
   if (existing?.account_profile_id && existing.display_name.trim() !== displayName) {
     return NextResponse.json({ error: "Compte actif : transfert administratif requis pour changer de titulaire." }, { status: 409 });
   }
+  if (existing?.account_profile_id && phone && phone !== existing.phone_e164) {
+    return NextResponse.json({ error: "Compte déjà actif : modifiez le téléphone depuis la gestion des comptes." }, { status: 409 });
+  }
   if (existing) {
     // Un changement de titulaire ne doit pas conserver l'accès de l'ancien.
     const changed = String(existing.display_name).trim() !== displayName;
