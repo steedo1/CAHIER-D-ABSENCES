@@ -17,12 +17,38 @@ export async function PATCH(
   const inst = access.institutionId;
 
   const id = (await params).id;
-  const body = await req.json().catch(() => ({}));
+  const rawBody = await req.json().catch(() => ({}));
+  const body = rawBody && typeof rawBody === "object" && !Array.isArray(rawBody) ? rawBody : {};
   const patch: Record<string, any> = {};
 
   if ("first_name" in body) patch.first_name = body.first_name ? String(body.first_name).replace(/\s+/g, " ").trim() : null;
   if ("last_name" in body)  patch.last_name  = body.last_name ? String(body.last_name).replace(/\s+/g, " ").trim() : null;
   if ("matricule" in body)  patch.matricule  = (body.matricule ?? null) ? String(body.matricule).trim().toUpperCase() : null;
+
+
+  // Champs d'état civil utilisables en français comme en arabe.
+  for (const field of ["full_name_ar", "birth_place", "nationality", "parent_names", "parent_contact"] as const) {
+    if (field in body) patch[field] = String(body[field] ?? "").trim() || null;
+  }
+  if ("gender" in body) {
+    const gender = String(body.gender ?? "").trim().toUpperCase();
+    if (gender && !["M", "F"].includes(gender)) {
+      return NextResponse.json({ error: "invalid_gender" }, { status: 400 });
+    }
+    patch.gender = gender || null;
+  }
+  if ("birthdate" in body) {
+    const birthdate = String(body.birthdate ?? "").trim();
+    const date = birthdate ? new Date(birthdate) : null;
+    if (birthdate && (
+      !/^\d{4}-\d{2}-\d{2}$/.test(birthdate) ||
+      !date || Number.isNaN(date.getTime()) ||
+      date.toISOString().slice(0, 10) !== birthdate
+    )) {
+      return NextResponse.json({ error: "invalid_birthdate" }, { status: 400 });
+    }
+    patch.birthdate = birthdate || null;
+  }
 
   // Vérifier que l’élève appartient à la même institution
   const { data: s, error: sErr } = await srv
@@ -64,13 +90,17 @@ export async function PATCH(
     }
   }
 
+  if (Object.keys(patch).length === 0) return NextResponse.json({ error: "no_changes" }, { status: 400 });
+
   const { data: upd, error: uErr } = await srv
     .from("students")
     .update(patch)
     .eq("id", id)
-    .select("id, first_name, last_name, full_name, matricule")
+    .eq("institution_id", inst)
+    .select("id, first_name, last_name, full_name, full_name_ar, matricule, gender, birthdate, birth_place, nationality, parent_names, parent_contact")
     .maybeSingle();
 
   if (uErr) return NextResponse.json({ error: uErr.message }, { status: 400 });
+  if (!upd?.id) return NextResponse.json({ error: "student_update_not_applied" }, { status: 409 });
   return NextResponse.json({ item: upd });
 }
