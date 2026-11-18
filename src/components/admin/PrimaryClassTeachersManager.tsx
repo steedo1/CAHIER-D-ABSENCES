@@ -13,6 +13,7 @@ type PrimaryTeacher = {
   id: string;
   class_id: string;
   display_name: string;
+  phone_e164?: string | null;
   account_linked: boolean;
 };
 type Directory = {
@@ -28,6 +29,8 @@ export default function PrimaryClassTeachersManager() {
   const [data, setData] = useState<Directory | null>(null);
   const [classId, setClassId] = useState("");
   const [teacherName, setTeacherName] = useState("");
+  const [teacherPhone, setTeacherPhone] = useState("");
+  const [initialPassword, setInitialPassword] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -74,19 +77,57 @@ export default function PrimaryClassTeachersManager() {
     }
     setSaving(true);
     setMessage("");
+    setInitialPassword(null);
     try {
       const response = await fetch("/api/admin/primary-class-teachers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ class_id: classId, display_name: name }),
+        body: JSON.stringify({ class_id: classId, display_name: name, phone: teacherPhone }),
       });
       const result = (await response.json().catch(() => ({}))) as Directory;
       if (!response.ok) throw new Error(result.error || "Enregistrement impossible.");
       const next = await refresh();
       setTeacherName(next.items?.find((row) => row.class_id === classId)?.display_name || name);
+      setTeacherPhone(next.items?.find((row) => row.class_id === classId)?.phone_e164 || teacherPhone);
       setMessage("Maître de classe enregistré. Aucun horaire ni discipline n'a été exigé.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Échec de l'enregistrement.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function activate() {
+    if (!current || !teacherPhone.trim()) {
+      setMessage("Enregistrez le maître et son numéro avant d'activer le compte.");
+      return;
+    }
+    if (!window.confirm(
+      "Activer un compte personnel pour " + current.display_name + " et lui confier " +
+      (selectedClass?.label || selectedClass?.code || "la classe") +
+      " ? L'ancien titulaire perdra ses affectations actives de cette classe."
+    )) return;
+
+    setSaving(true);
+    setMessage("");
+    setInitialPassword(null);
+    try {
+      const response = await fetch("/api/admin/primary-class-teachers/activate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ class_id: classId, phone: teacherPhone }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Activation impossible.");
+      if (typeof result.initial_password === "string") {
+        setInitialPassword(result.initial_password);
+      }
+      await refresh();
+      setMessage(result.already_active
+        ? "Compte déjà activé. Aucun mot de passe n'a été modifié."
+        : "Compte activé et lié au maître de classe. Conservez le mot de passe provisoire, affiché une seule fois.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Échec de l'activation.");
     } finally {
       setSaving(false);
     }
@@ -110,6 +151,8 @@ export default function PrimaryClassTeachersManager() {
               const id = event.target.value;
               setClassId(id);
               setTeacherName(items.find((row) => row.class_id === id)?.display_name || "");
+              setTeacherPhone(items.find((row) => row.class_id === id)?.phone_e164 || "");
+              setInitialPassword(null);
               setMessage("");
             }}
           >
@@ -131,6 +174,17 @@ export default function PrimaryClassTeachersManager() {
             maxLength={160}
           />
         </label>
+        <label className="text-sm font-medium text-slate-700 md:col-span-2">
+          Téléphone de connexion (facultatif pour la fiche)
+          <input
+            className="mt-1 w-full rounded-lg border px-3 py-2"
+            value={teacherPhone}
+            onChange={(event) => setTeacherPhone(event.target.value)}
+            placeholder="Ex. 0565366730"
+            inputMode="tel"
+            autoComplete="tel"
+          />
+        </label>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
@@ -141,21 +195,41 @@ export default function PrimaryClassTeachersManager() {
         >
           {saving ? "Enregistrement…" : current ? "Mettre à jour le maître" : "Enregistrer le maître"}
         </button>
+        {current && !current.account_linked && (
+          <button
+            type="button"
+            onClick={() => void activate()}
+            disabled={saving || !teacherPhone.trim() || teacherName.trim() !== current.display_name}
+            className="rounded-xl border border-sky-700 bg-sky-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {saving ? "Activation…" : "Créer et activer son compte"}
+          </button>
+        )}
         <span className="text-xs text-slate-500">
           Année scolaire : {data.academic_year || selectedClass?.academic_year || "en cours"}
         </span>
       </div>
       {message && <p className="mt-3 text-sm text-slate-700" role="status">{message}</p>}
+      {initialPassword && (
+        <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="status">
+          <p className="font-semibold">Mot de passe provisoire — à transmettre confidentiellement</p>
+          <p className="mt-1 break-all font-mono">{initialPassword}</p>
+          <button type="button" onClick={() => void navigator.clipboard.writeText(initialPassword)}
+            className="mt-2 rounded-lg border border-amber-600 px-3 py-1 text-xs font-semibold">
+            Copier le mot de passe
+          </button>
+        </div>
+      )}
       <p className="mt-3 text-xs text-amber-800">
-        Cette fiche crée l'affectation administrative du maître. Elle ne génère
-        pas de compte de connexion : un identifiant personnel devra être ajouté
-        séparément pour accéder aux notes, aux appels et au cahier de texte.
+        La fiche est enregistrée sans discipline ni horaire imposé.
+        L'activation du compte est une action distincte : elle crée l'accès personnel
+        et transfère les affectations internes déjà configurées pour cette classe.
       </p>
       {items.length > 0 && (
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="border-b text-slate-600">
-              <tr><th className="px-2 py-2">Classe</th><th className="px-2 py-2">Maître</th><th className="px-2 py-2">Accès</th></tr>
+              <tr><th className="px-2 py-2">Classe</th><th className="px-2 py-2">Maître</th><th className="px-2 py-2">Téléphone</th><th className="px-2 py-2">Accès</th></tr>
             </thead>
             <tbody>
               {items
@@ -169,6 +243,7 @@ export default function PrimaryClassTeachersManager() {
                   <tr key={teacher.id} className="border-b last:border-0">
                     <td className="px-2 py-2">{classes.find((classe) => classe.id === teacher.class_id)?.label || "Classe"}</td>
                     <td className="px-2 py-2 font-medium">{teacher.display_name}</td>
+                    <td className="px-2 py-2">{teacher.phone_e164 || "À renseigner"}</td>
                     <td className="px-2 py-2">{teacher.account_linked ? "Compte lié" : "Identifiant à ajouter"}</td>
                   </tr>
                 ))}
