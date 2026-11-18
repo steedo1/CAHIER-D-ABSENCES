@@ -26,6 +26,7 @@ type StudentRow = {
   id: string;
   matricule: string | null;
   full_name: string;
+  full_name_ar?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   gender: string | null;
@@ -195,6 +196,12 @@ function formatTraditionalStudentName(
   if (firstName) return firstName;
 
   return cleanNamePart(student.full_name) || "—";
+}
+
+function classStudentDisplayName(student: StudentRow, isArabicClass: boolean) {
+  return isArabicClass
+    ? cleanNamePart(student.full_name_ar) || cleanNamePart(student.full_name) || "—"
+    : formatTraditionalStudentName(student);
 }
 
 function traditionalStudentSortKey(
@@ -496,6 +503,9 @@ export default function ClassListPrintPage() {
     "—";
   const headTeacherLabel = personLabel(data?.staff?.head_teacher);
   const students = data?.students || [];
+  const isArabicClass =
+    /-AR$/i.test(String(data?.class?.code || "")) ||
+    /arabe/i.test(String(data?.class?.label || ""));
   const canEdit = data?.can_edit !== false;
 
   const printedStudents = useMemo(
@@ -505,17 +515,19 @@ export default function ClassListPrintPage() {
           ...student,
           ...(editable[student.id] || {}),
         }))
-        .sort((a, b) =>
-          traditionalStudentSortKey(a).localeCompare(
-            traditionalStudentSortKey(b),
-            "fr",
-            {
-              sensitivity: "base",
-              numeric: true,
-            },
-          ),
-        ),
-    [students, editable],
+        .sort((a, b) => {
+          const first = isArabicClass
+            ? classStudentDisplayName(a, true)
+            : traditionalStudentSortKey(a);
+          const second = isArabicClass
+            ? classStudentDisplayName(b, true)
+            : traditionalStudentSortKey(b);
+          return first.localeCompare(second, isArabicClass ? "ar" : "fr", {
+            sensitivity: "base",
+            numeric: true,
+          });
+        }),
+    [students, editable, isArabicClass],
   );
 
   const primaryList = data?.school_cycle === "primary";
@@ -1188,7 +1200,7 @@ export default function ClassListPrintPage() {
                 </tr>
               </thead>
               <tbody>
-                {students.map((student) => {
+                {printedStudents.map((student) => {
                   const row = editable[student.id] || { id: student.id };
                   return (
                     <tr key={student.id} className="border-t">
@@ -1556,14 +1568,15 @@ export default function ClassListPrintPage() {
                         {student.matricule || ""}
                       </td>
                       <td className="col-name"
-                        title={formatTraditionalStudentName(student)}
-                        data-full-name={formatTraditionalStudentName(student)}
+                        title={classStudentDisplayName(student, isArabicClass)}
+                        data-full-name={classStudentDisplayName(student, isArabicClass)}
                         data-last-name={student.last_name || ""}
                         data-first-name={student.first_name || ""}
                       >
                         {fitClassListName({
-                          fullName: formatTraditionalStudentName(student),
-                          lastName: student.last_name, firstName: student.first_name,
+                          fullName: classStudentDisplayName(student, isArabicClass),
+                          lastName: isArabicClass ? null : student.last_name,
+                          firstName: isArabicClass ? null : student.first_name,
                         }, 285, estimateClassListNameWidth).text}
                       </td>
                       <td className="col-affect">

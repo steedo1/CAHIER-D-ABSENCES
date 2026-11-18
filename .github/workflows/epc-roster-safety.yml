@@ -1,0 +1,23 @@
+name: EPC pupil safety regression
+on:
+  push:
+    branches:
+      - fix/epc-roster-prod-20261118
+      - reprise-propre-5418ce7-20260729
+  pull_request:
+    branches:
+      - reprise-propre-5418ce7-20260729
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx tsc --noEmit
+      - run: node --test test/epc-roster-safety.test.mjs
