@@ -163,9 +163,31 @@ export async function POST(req: NextRequest) {
       : { data: [] as { subject_id: string }[], error: null };
 
   if (oldError) return NextResponse.json({ error: "Lecture des affectations impossible." }, { status: 500 });
+
+  // Un maître remplacé peut avoir été désaffecté avant l'activation du nouveau.
+  // Dans ce cas, reprendre les sous-matières archivées de la même classe,
+  // sans réactiver l'ancien enseignant ni toucher à ses évaluations.
+  let subjectSource = (oldAssignments || []) as Array<{ subject_id: string }>;
+  if (!subjectSource.length) {
+    const { data: historical, error: historicalError } = await service.from("class_teachers")
+      .select("subject_id")
+      .eq("institution_id", institutionId)
+      .eq("class_id", classId)
+      .order("start_date", { ascending: false })
+      .limit(200);
+    if (historicalError) {
+      return NextResponse.json({ error: "Historique des sous-matières indisponible." }, { status: 500 });
+    }
+    subjectSource = (historical || []) as Array<{ subject_id: string }>;
+  }
   const subjectIds = Array.from(new Set(
-    (oldAssignments || []).map((row) => String(row.subject_id || "")).filter(Boolean)
+    subjectSource.map((row) => String(row.subject_id || "")).filter(Boolean)
   ));
+  if (!subjectIds.length) {
+    return NextResponse.json({
+      error: "Aucune sous-matière interne disponible pour cette classe. Configurez le programme avant l'activation.",
+    }, { status: 409 });
+  }
   const startDate = new Date().toISOString().slice(0, 10);
   if (subjectIds.length) {
     const { error: createLinksError } = await service.from("class_teachers")
