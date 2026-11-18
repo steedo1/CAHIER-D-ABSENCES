@@ -119,6 +119,7 @@ export async function GET() {
       class_id: row.class_id,
       display_name: row.display_name,
       phone_e164: row.phone_e164,
+      account_profile_id: row.account_profile_id,
       account_linked: Boolean(row.account_profile_id),
     })),
   }, { headers: noStore });
