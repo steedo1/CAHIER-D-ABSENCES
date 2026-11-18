@@ -55,7 +55,7 @@ export async function PATCH(
   }
   if ("birthdate" in body) {
     const birthdate = String(body.birthdate ?? "").trim();
-    if (birthdate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(birthdate)) {
+    if (birthdate && !/^\d{4}-\d{2}-\d{2}$/.test(birthdate)) {
       return NextResponse.json({ error: "invalid_birthdate" }, { status: 400 });
     }
     if (birthdate && Number.isNaN(Date.parse(birthdate))) {
