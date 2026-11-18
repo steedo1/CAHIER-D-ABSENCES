@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SERVICE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY!; // �a� secret c�t� serveur
-const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "";
+const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
 
 /* ---------- helpers ---------- */
 
@@ -90,7 +90,11 @@ export async function POST(req: NextRequest) {
     const { error: updErr } = await svc.auth.admin.updateUserById(user_id, { password: new_password });
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
 
-    return NextResponse.json({ ok: true, temporary: !Boolean(body?.new_password) });
+    return NextResponse.json({
+      ok: true,
+      temporary: !Boolean(body?.new_password),
+      temporary_password: new_password,
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Erreur serveur." }, { status: 500 });
   }
