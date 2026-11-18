@@ -129,8 +129,8 @@ export async function GET(req: NextRequest) {
       `
       student_id,
       class_id,
-      students:student_id ( id, first_name, last_name, full_name, matricule, institution_id, gender, regime, is_affecte, is_boarder ),
-      classes:class_id!inner ( id, label, level, institution_id, academic_year )
+      students:student_id ( id, first_name, last_name, full_name, full_name_ar, matricule, institution_id, gender, birthdate, birth_place, nationality, regime, is_affecte, is_boarder ),
+      classes:class_id!inner ( id, label, code, level, institution_id, academic_year )
     `,
     )
     .eq("institution_id", inst)
@@ -148,9 +148,16 @@ export async function GET(req: NextRequest) {
   const items: Array<{
     id: string;
     full_name: string;
+    full_name_ar: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    birthdate: string | null;
+    birth_place: string | null;
+    nationality: string | null;
     matricule: string | null;
     class_id: string;
     class_label: string | null;
+    class_code: string | null;
     class_level: string | null;
     academic_year: string | null;
     gender: string | null;
@@ -174,9 +181,16 @@ export async function GET(req: NextRequest) {
     items.push({
       id: sid,
       full_name: full,
+      full_name_ar: (s.full_name_ar ?? null) as string | null,
+      first_name: (s.first_name ?? null) as string | null,
+      last_name: (s.last_name ?? null) as string | null,
+      birthdate: (s.birthdate ?? null) as string | null,
+      birth_place: (s.birth_place ?? null) as string | null,
+      nationality: (s.nationality ?? null) as string | null,
       matricule: (s.matricule ?? null) as string | null,
       class_id: (row as any).class_id as string,
       class_label: (c.label ?? null) as string | null,
+      class_code: (c.code ?? null) as string | null,
       class_level: (c.level ?? null) as string | null,
       academic_year: (c.academic_year ?? null) as string | null,
       gender: (s.gender ?? null) as string | null,
