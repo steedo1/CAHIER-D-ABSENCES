@@ -25,6 +25,18 @@ export async function POST(req: NextRequest) {
   const inst = (me?.institution_id ?? null) as string | null;
   if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
 
+  // Seule la direction peut retirer une inscription. L'élève n'est jamais supprimé.
+  const { data: roles, error: rolesErr } = await srv
+    .from("user_roles")
+    .select("role,institution_id")
+    .eq("profile_id", user.id);
+  if (rolesErr) return NextResponse.json({ error: rolesErr.message }, { status: 400 });
+  const canEdit = (roles || []).some((r: any) =>
+    r.role === "super_admin" ||
+    (r.role === "admin" && (!r.institution_id || r.institution_id === inst)),
+  );
+  if (!canEdit) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
   const { class_id, student_id } = await req.json().catch(() => ({}));
   if (!class_id || !student_id) {
     return NextResponse.json(
