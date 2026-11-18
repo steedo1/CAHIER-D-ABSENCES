@@ -13,6 +13,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const noStore = { "Cache-Control": "no-store" };
 type SchoolClass = { id: string; code: string; label: string | null; level: string | null; academic_year: string };
 
+function normalizePrimaryPhone(raw: string) {
+  const s = raw.trim().replace(/[^+0-9]/g, "");
+  // Numéro ivoirien à 10 chiffres : conserver impérativement son premier 0.
+  if (/^0[0-9]{9}$/.test(s)) return "+225" + s;
+  if (/^2250[0-9]{9}$/.test(s)) return "+" + s;
+  if (/^\+2250[0-9]{9}$/.test(s)) return s;
+  return /^\+[1-9][0-9]{5,14}$/.test(s) ? s : null;
+}
+
 async function authorizedSchool() {
   const userClient = await getSupabaseServerClient();
   const service = getSupabaseServiceClient();
@@ -92,7 +101,7 @@ export async function GET() {
     .filter((row) => resolveSchoolCycleForClass(row, settings) === "primary");
 
   const { data: teacherRows, error: teacherError } = await service.from("primary_class_teachers")
-    .select("id,class_id,display_name,account_profile_id")
+    .select("id,class_id,display_name,phone_e164,account_profile_id")
     .eq("institution_id", institutionId)
     .in("class_id", classes.length ? classes.map((row) => row.id) : ["00000000-0000-0000-0000-000000000000"]);
   if (teacherError) {
@@ -108,6 +117,7 @@ export async function GET() {
       id: row.id,
       class_id: row.class_id,
       display_name: row.display_name,
+      phone_e164: row.phone_e164,
       account_linked: Boolean(row.account_profile_id),
     })),
   }, { headers: noStore });
@@ -124,6 +134,9 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const classId = String(body?.class_id || "").trim();
   const displayName = String(body?.display_name || "").normalize("NFC").trim().replace(/\s+/g, " ");
+  const rawPhone = String(body?.phone || "").trim();
+  const phone = rawPhone ? normalizePrimaryPhone(rawPhone) : null;
+  if (rawPhone && !phone) return NextResponse.json({ error: "Numéro de téléphone invalide." }, { status: 400 });
   if (!UUID.test(classId) || displayName.length < 2 || displayName.length > 160) {
     return NextResponse.json({ error: "class_and_teacher_name_required" }, { status: 400 });
   }
@@ -138,12 +151,15 @@ export async function POST(req: NextRequest) {
   }
 
   const { data: existing, error: existingError } = await service.from("primary_class_teachers")
-    .select("id,display_name")
+    .select("id,display_name,phone_e164,account_profile_id")
     .eq("institution_id", institutionId)
     .eq("class_id", classId)
     .maybeSingle();
   if (existingError) {
     return NextResponse.json({ error: "primary_teacher_lookup_failed" }, { status: 500 });
+  }
+  if (existing?.account_profile_id && existing.display_name.trim() !== displayName) {
+    return NextResponse.json({ error: "Compte actif : transfert administratif requis pour changer de titulaire." }, { status: 409 });
   }
   if (existing) {
     // Un changement de titulaire ne doit pas conserver l'accès de l'ancien.
@@ -151,6 +167,7 @@ export async function POST(req: NextRequest) {
     const { error } = await service.from("primary_class_teachers")
       .update({
         display_name: displayName,
+        phone_e164: phone || existing.phone_e164,
         updated_at: new Date().toISOString(),
         ...(changed ? { account_profile_id: null } : {}),
       })
@@ -162,11 +179,12 @@ export async function POST(req: NextRequest) {
       institution_id: institutionId,
       class_id: classId,
       display_name: displayName,
+      phone_e164: phone,
     });
     if (error) return NextResponse.json({ error: "primary_teacher_insert_failed" }, { status: 500 });
   }
 
   // Pas d'écriture Auth, class_teachers, teacher_subjects ni teacher_timetables.
   // L'accès enseignant sera lié séparément avec un identifiant vérifié.
-  return NextResponse.json({ ok: true, class_id: classId, display_name: displayName, account_linked: false }, { headers: noStore });
+  return NextResponse.json({ ok: true, class_id: classId, display_name: displayName, account_linked: Boolean(existing?.account_profile_id) }, { headers: noStore });
 }
