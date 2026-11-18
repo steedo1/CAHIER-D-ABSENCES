@@ -111,6 +111,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     enabled: true,
+    institution_id: institutionId,
     academic_year: currentYear?.code || classes[0]?.academic_year || null,
     classes,
     items: (teacherRows || []).map((row) => ({
