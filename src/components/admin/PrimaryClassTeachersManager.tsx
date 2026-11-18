@@ -15,6 +15,7 @@ type PrimaryTeacher = {
   display_name: string;
   phone_e164?: string | null;
   account_linked: boolean;
+  account_profile_id?: string | null;
 };
 type Directory = {
   ok?: boolean;
@@ -134,6 +135,36 @@ export default function PrimaryClassTeachersManager() {
     }
   }
 
+  async function resetTeacherPassword() {
+    if (!current?.account_profile_id || !current.account_linked) return;
+    if (!window.confirm(
+      "Réinitialiser le mot de passe de " + current.display_name +
+      " avec le mot de passe provisoire standard de Mon Cahier ? Le mot de passe actuel cessera de fonctionner."
+    )) return;
+
+    setSaving(true);
+    setMessage("");
+    setInitialPassword(null);
+    try {
+      const response = await fetch("/api/admin/users/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: current.account_profile_id }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.ok !== true ||
+          typeof result.temporary_password !== "string") {
+        throw new Error(result.error || "La réinitialisation n'a pas été confirmée.");
+      }
+      setInitialPassword(result.temporary_password);
+      setMessage("Mot de passe réinitialisé selon la règle standard de Mon Cahier. Transmettez-le confidentiellement.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Réinitialisation impossible.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="rounded-2xl border bg-white p-5">
       <h2 className="text-base font-semibold text-slate-900">Maîtres du primaire</h2>
@@ -204,6 +235,16 @@ export default function PrimaryClassTeachersManager() {
             className="rounded-xl border border-sky-700 bg-sky-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           >
             {saving ? "Activation…" : "Créer et activer son compte"}
+          </button>
+        )}
+        {current?.account_linked && current.account_profile_id && (
+          <button
+            type="button"
+            onClick={() => void resetTeacherPassword()}
+            disabled={saving}
+            className="rounded-xl border border-amber-700 bg-white px-4 py-2 text-sm font-semibold text-amber-900 disabled:opacity-50"
+          >
+            {saving ? "Réinitialisation…" : "Rétablir le mot de passe standard"}
           </button>
         )}
         <span className="text-xs text-slate-500">
