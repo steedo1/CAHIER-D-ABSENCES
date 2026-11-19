@@ -54,6 +54,7 @@ type ClassListPayload = {
   mark_subjects?: ClassListMarkSubject[];
   can_edit?: boolean;
   can_edit_arabic_names?: boolean;
+  can_edit_direct_student_identity?: boolean;
   class: {
     id: string;
     label: string;
@@ -384,6 +385,9 @@ export default function ClassListPrintPage() {
   const arabicNamesPanel = useRef<HTMLElement | null>(null);
   const [savingArabicNames, setSavingArabicNames] = useState(false);
   const [arabicNameMessage, setArabicNameMessage] = useState<string | null>(null);
+  const [showDirectArabicIdentities, setShowDirectArabicIdentities] = useState(false);
+  const [savingDirectIdentityId, setSavingDirectIdentityId] = useState<string | null>(null);
+  const [directIdentityMessage, setDirectIdentityMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (showArabicNames) arabicNamesPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -793,6 +797,49 @@ export default function ClassListPrintPage() {
     }
   }
 
+  async function saveDirectArabicStudent(student: StudentRow) {
+    // Les élèves pédagogiquement liés au français ne doivent jamais pouvoir
+    // être modifiés depuis la liste arabe : seul le dossier directement inscrit
+    // à cette classe est éditable ici.
+    if (!arabicList || !data?.can_edit_direct_student_identity ||
+        student.pedagogical_link !== false || savingDirectIdentityId) return;
+    const row = editable[student.id];
+    if (!row) return;
+    const patch: Record<string, string | null> = {};
+    const fields = [
+      "first_name", "last_name", "matricule", "birthdate", "birth_place",
+      "nationality", "gender", "parent_names", "parent_contact",
+    ] as const;
+    for (const field of fields) {
+      const next = String(row[field] ?? "").trim();
+      const prior = String(student[field] ?? "").trim();
+      if (next !== prior) patch[field] = next || null;
+    }
+    if (!Object.keys(patch).length) {
+      setDirectIdentityMessage("Aucune modification détectée pour " + student.full_name + ".");
+      return;
+    }
+    setSavingDirectIdentityId(student.id);
+    setDirectIdentityMessage(null);
+    try {
+      const response = await fetch(`/api/admin/students/${encodeURIComponent(student.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result?.item?.id) {
+        throw new Error(result?.error || "Impossible d'enregistrer la fiche.");
+      }
+      await load();
+      setDirectIdentityMessage("Fiche de " + student.full_name + " enregistrée et vérifiée.");
+    } catch (error) {
+      setDirectIdentityMessage(error instanceof Error ? error.message : "Erreur d'enregistrement.");
+    } finally {
+      setSavingDirectIdentityId(null);
+    }
+  }
+
   async function saveArabicNames() {
     if (!data?.can_edit_arabic_names || !arabicList || savingArabicNames) return;
     const updates = data.students.flatMap((student) => {
@@ -1146,6 +1193,21 @@ export default function ClassListPrintPage() {
               className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               Corriger les champs
+            </button>
+          ) : null}
+          {arabicList && data?.can_edit_direct_student_identity &&
+            students.some((student) => student.pedagogical_link === false) ? (
+            <button
+              type="button"
+              onClick={() => {
+                setDirectIdentityMessage(null);
+                setShowDirectArabicIdentities((value) => !value);
+              }}
+              aria-expanded={showDirectArabicIdentities}
+              aria-controls="arabic-direct-student-identities"
+              className="rounded-xl border border-emerald-400 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50"
+            >
+              Renseigner les fiches des élèves uniquement arabes
             </button>
           ) : null}
           {arabicList && data?.can_edit_arabic_names ? (
@@ -1577,6 +1639,78 @@ export default function ClassListPrintPage() {
             </div>}
           </div>
         </div>
+      ) : null}
+
+      {showDirectArabicIdentities && arabicList && data?.can_edit_direct_student_identity ? (
+        <section
+          id="arabic-direct-student-identities"
+          aria-label="Renseignements personnels des élèves uniquement arabes"
+          className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm"
+        >
+          <h2 className="mb-2 font-semibold">Fiches des élèves inscrits uniquement en arabe</h2>
+          <p className="mb-3 text-sm text-slate-600">
+            Saisissez ici les informations d’état civil. Les élèves liés à une classe
+            française sont exclus de cet éditeur pour protéger leurs dossiers communs.
+          </p>
+          {students.filter((student) => student.pedagogical_link === false).map((student) => {
+            const row = editable[student.id];
+            if (!row) return null;
+            return (
+              <div key={student.id} className="mb-4 rounded-xl border p-3">
+                <div className="mb-3 text-sm font-semibold">
+                  {student.full_name_ar || student.full_name} — {student.full_name}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <label className="text-sm">Nom
+                    <input value={row.last_name || ""} onChange={(e) => updateStudent(student.id, { last_name: e.target.value || null })}
+                      className="mt-1 w-full rounded-lg border px-3 py-2" />
+                  </label>
+                  <label className="text-sm">Prénom(s)
+                    <input value={row.first_name || ""} onChange={(e) => updateStudent(student.id, { first_name: e.target.value || null })}
+                      className="mt-1 w-full rounded-lg border px-3 py-2" />
+                  </label>
+                  <label className="text-sm">Matricule
+                    <input value={row.matricule || ""} onChange={(e) => updateStudent(student.id, { matricule: e.target.value || null })}
+                      className="mt-1 w-full rounded-lg border px-3 py-2" />
+                  </label>
+                  <label className="text-sm">Date de naissance
+                    <input type="date" value={String(row.birthdate || "").slice(0, 10)}
+                      onChange={(e) => updateStudent(student.id, { birthdate: e.target.value || null })}
+                      className="mt-1 w-full rounded-lg border px-3 py-2" />
+                  </label>
+                  <label className="text-sm">Lieu de naissance
+                    <input value={row.birth_place || ""} onChange={(e) => updateStudent(student.id, { birth_place: e.target.value || null })}
+                      className="mt-1 w-full rounded-lg border px-3 py-2" />
+                  </label>
+                  <label className="text-sm">Nationalité
+                    <input value={row.nationality || ""} onChange={(e) => updateStudent(student.id, { nationality: e.target.value || null })}
+                      className="mt-1 w-full rounded-lg border px-3 py-2" />
+                  </label>
+                  <label className="text-sm">Sexe
+                    <select value={row.gender || ""} onChange={(e) => updateStudent(student.id, { gender: e.target.value || null })}
+                      className="mt-1 w-full rounded-lg border px-3 py-2">
+                      <option value="">À renseigner</option><option value="F">Féminin</option><option value="M">Masculin</option>
+                    </select>
+                  </label>
+                  <label className="text-sm">Parent ou responsable
+                    <input value={row.parent_names || ""} onChange={(e) => updateStudent(student.id, { parent_names: e.target.value || null })}
+                      className="mt-1 w-full rounded-lg border px-3 py-2" />
+                  </label>
+                  <label className="text-sm">Téléphone du responsable
+                    <input value={row.parent_contact || ""} onChange={(e) => updateStudent(student.id, { parent_contact: e.target.value || null })}
+                      className="mt-1 w-full rounded-lg border px-3 py-2" />
+                  </label>
+                </div>
+                <button type="button" onClick={() => void saveDirectArabicStudent(student)}
+                  disabled={savingDirectIdentityId !== null}
+                  className="mt-3 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                  {savingDirectIdentityId === student.id ? "Enregistrement…" : "Enregistrer cette fiche"}
+                </button>
+              </div>
+            );
+          })}
+          {directIdentityMessage ? <p role="status" className="text-sm font-medium text-slate-700">{directIdentityMessage}</p> : null}
+        </section>
       ) : null}
 
       {showArabicNames && arabicList && data?.can_edit_arabic_names ? (
