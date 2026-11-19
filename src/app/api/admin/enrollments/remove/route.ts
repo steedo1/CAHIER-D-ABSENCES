@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   }
 
   // The button belongs to a class row, so a stale class selection must not
-  // delete a student. The RPC repeats these checks under row locks.
+  // affect another student. The update below only closes this enrollment.
   const { data: activeEnrollment, error: enrollmentErr } = await srv
     .from("class_enrollments")
     .select("id")
@@ -75,29 +75,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "not_found_in_class" }, { status: 404 });
   }
 
-  // One database function performs every deletion in a single transaction.
-  // An error rolls back finance, school history, and the student together.
-  const { data: removal, error: removalErr } = await srv.rpc(
-    "delete_student_completely_v1",
-    {
-      p_institution_id: inst,
-      p_class_id: class_id,
-      p_student_id: student_id,
-    },
-  );
+  // A withdrawal from a class must NEVER delete the student dossier,
+  // grades, attendance, school history, finance receipts or guardians.
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: closed, error: removalErr } = await srv
+    .from("class_enrollments")
+    .update({ end_date: today })
+    .eq("id", activeEnrollment.id)
+    .eq("institution_id", inst)
+    .eq("class_id", class_id)
+    .eq("student_id", student_id)
+    .is("end_date", null)
+    .select("id");
 
   if (removalErr) {
     return NextResponse.json(
-      { error: removalErr.message, code: "student_delete_failed" },
+      { error: removalErr.message, code: "student_class_withdrawal_failed" },
       { status: 409 },
     );
   }
-  if (!removal?.deleted || removal.student_id !== student_id) {
+  if (closed?.length !== 1) {
     return NextResponse.json(
-      { error: "student_delete_not_applied" },
+      { error: "student_class_withdrawal_not_applied" },
       { status: 409 },
     );
   }
 
-  return NextResponse.json(removal);
+  return NextResponse.json({ ok: true, closed: 1, deleted: false, student_id });
 }
