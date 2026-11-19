@@ -404,6 +404,12 @@ async function requireAdminContext(
     const role = String(row.role || "");
     return writeRoles.has(role) && roleAppliesToInstitution(row);
   });
+  // Fiche d'identité : exclusion des profils « finance », qui ne disposent pas
+  // du droit d'écriture sur l'API /api/admin/students/[id].
+  const directIdentityRoles = new Set(["admin", "super_admin", "founder", "file_correspondent"]);
+  const canEditStudentIdentity = (roleRows || []).some((row: any) =>
+    directIdentityRoles.has(String(row.role || "")) && roleAppliesToInstitution(row),
+  );
 
   if (!hasAccess) {
     return {
@@ -429,7 +435,7 @@ async function requireAdminContext(
       error: NextResponse.json({ error: "class_not_found" }, { status: 404 }),
     };
 
-  return { supa, srv, user, me, institutionId, cls, canWrite };
+  return { supa, srv, user, me, institutionId, cls, canWrite, canEditStudentIdentity };
 }
 
 export async function GET(
@@ -457,7 +463,7 @@ export async function GET(
   accessMs = performance.now() - startedAt;
   if ("error" in ctx) return ctx.error;
 
-  const { srv, institutionId, cls, canWrite } = ctx;
+  const { srv, institutionId, cls, canWrite, canEditStudentIdentity } = ctx;
 
   const url = new URL(req.url);
   const academicYearParam = String(
@@ -666,6 +672,9 @@ export async function GET(
     ok: true,
     can_edit: canWrite && (!isArabicClass || !linkedEnrollments.length),
     can_edit_arabic_names: canWrite && isArabicClass,
+    // Autoriser la saisie individuelle sur les élèves directement inscrits
+    // en arabe, même lorsqu'il existe des élèves liés au cursus français.
+    can_edit_direct_student_identity: canEditStudentIdentity && isArabicClass,
     ...(primaryRoster ? { school_cycle: "primary", mark_subjects: primaryRoster.subjects } : {}),
     class: {
       id: String((cls as any).id),
