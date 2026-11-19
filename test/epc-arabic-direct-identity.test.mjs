@@ -23,3 +23,27 @@ test("Arabic-only civil status editor updates the tenant-scoped student endpoint
   }
   assert.match(api, /\.eq\("institution_id", inst\)/);
 });
+
+test("Corriger les champs opens the Arabic-only editor in mixed Arabic/French classes", () => {
+  assert.match(page, /const canCorrectArabicOnlyPupils = arabicList &&/);
+  assert.match(page, /data\?\.can_edit_direct_student_identity === true/);
+  assert.match(page, /students\.some\(\(student\) => student\.pedagogical_link === false\)/);
+
+  const button = page.match(/\{\(canEdit \|\| canCorrectArabicOnlyPupils\) \? \([\s\S]*?Corriger les champs[\s\S]*?<\/button>/)?.[0];
+  assert.ok(button, "expected visible Corriger les champs for a mixed Arabic roster");
+  assert.match(button, /if \(canCorrectArabicOnlyPupils\)/);
+  assert.match(button, /setShowCorrections\(false\)/);
+  assert.match(button, /setShowDirectArabicIdentities\(\(value\) => !value\)/);
+  assert.match(button, /aria-controls=\{canCorrectArabicOnlyPupils \? "arabic-direct-student-identities"/);
+  assert.match(page, /ref=\{directArabicPanel\}/);
+  assert.match(page, /directArabicPanel\.current\?\.scrollIntoView/);
+  assert.doesNotMatch(page, />\s*Renseigner les fiches des élèves uniquement arabes\s*</);
+});
+
+test("Saving Arabic-only fields stays individual and never updates linked French pupils", () => {
+  const save = page.split("async function saveDirectArabicStudent(student: StudentRow)")[1].split("async function saveArabicNames()")[0];
+  assert.match(save, /student\.pedagogical_link !== false/);
+  assert.match(save, /\/api\/admin\/students\/\$\{encodeURIComponent\(student\.id\)\}/);
+  assert.doesNotMatch(save, /force_finance_sync|class_enrollments/);
+  assert.match(page, /students\.filter\(\(student\) => student\.pedagogical_link === false\)/);
+});
