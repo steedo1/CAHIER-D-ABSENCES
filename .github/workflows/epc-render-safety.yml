@@ -17,5 +17,5 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
-      - run: node --test test/epc-render-student-safety.test.mjs
+      - run: node --test test/epc-render-student-safety.test.mjs test/epc-arabic-direct-identity.test.mjs
       - run: node --import tsx --test test/arabic-name-edit-api.test.mjs test/arabic-name-edit-ui.test.mjs test/arabic-class-list-labels.test.ts
