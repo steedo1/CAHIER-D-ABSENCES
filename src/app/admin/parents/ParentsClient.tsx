@@ -64,10 +64,20 @@ function Skeleton({ className = "" }: { className?: string }) {
 }
 
 /* ───────── Types ───────── */
-type ClassRow = { id: string; name: string; level: string; label?: string | null };
+type ClassRow = { id: string; name: string; level: string; code?: string | null; label?: string | null };
 type StudentRow = {
   id: string;
   full_name: string;
+  full_name_ar?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  birthdate?: string | null;
+  birth_place?: string | null;
+  nationality?: string | null;
+  parent_names?: string | null;
+  parent_contact?: string | null;
+  gender?: string | null;
+  class_code?: string | null;
   class_id: string | null;
   class_label: string | null;
   matricule?: string | null;
@@ -95,6 +105,13 @@ export default function AdminStudentsByClassPage() {
     first_name: string;
     last_name: string;
     matricule: string;
+    full_name_ar: string;
+    birthdate: string;
+    birth_place: string;
+    nationality: string;
+    parent_names: string;
+    parent_contact: string;
+    gender: string;
   }>(null);
   const [saving, setSaving] = useState(false);
 
@@ -135,6 +152,10 @@ export default function AdminStudentsByClassPage() {
     [classes, level]
   );
 
+  const selectedClass = classes.find((c) => c.id === classId);
+  const isArabicClass = /-AR$/i.test(String(selectedClass?.code || "")) ||
+    /arabe/i.test(String(selectedClass?.label || selectedClass?.name || ""));
+
   const studentsOfClass = useMemo(() => {
     let list = students;
     if (classId) list = list.filter((s) => s.class_id === classId);
@@ -143,22 +164,34 @@ export default function AdminStudentsByClassPage() {
       list = list.filter(
         (s) =>
           s.full_name.toLowerCase().includes(k) ||
+          (s.full_name_ar ?? "").toLowerCase().includes(k) ||
           (s.matricule ?? "").toLowerCase().includes(k)
       );
     }
-    return list.sort((a, b) => a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" }));
-  }, [students, classId, q]);
+    const collator = new Intl.Collator(isArabicClass ? "ar" : "fr", { sensitivity: "base", numeric: true });
+    return [...list].sort((a, b) => collator.compare(
+      (isArabicClass ? a.full_name_ar || a.full_name : a.full_name) || "",
+      (isArabicClass ? b.full_name_ar || b.full_name : b.full_name) || "",
+    ));
+  }, [students, classId, q, isArabicClass]);
 
   // Open modal with split names
   function openEdit(s: StudentRow) {
     const parts = (s.full_name || "").trim().split(/\s+/);
-    const first_name = parts[0] ?? "";
-    const last_name = parts.slice(1).join(" ");
+    const first_name = s.first_name ?? parts[0] ?? "";
+    const last_name = s.last_name ?? parts.slice(1).join(" ");
     setEditing({
       id: s.id,
       first_name,
       last_name,
       matricule: s.matricule || "",
+      full_name_ar: s.full_name_ar || "",
+      birthdate: s.birthdate ? String(s.birthdate).slice(0, 10) : "",
+      birth_place: s.birth_place || "",
+      nationality: s.nationality || "",
+      parent_names: s.parent_names || "",
+      parent_contact: s.parent_contact || "",
+      gender: s.gender || "",
     });
   }
 
@@ -174,6 +207,13 @@ export default function AdminStudentsByClassPage() {
           first_name: editing.first_name || null,
           last_name: editing.last_name || null,
           matricule: editing.matricule || null,
+          full_name_ar: editing.full_name_ar || null,
+          birthdate: editing.birthdate || null,
+          birth_place: editing.birth_place || null,
+          nationality: editing.nationality || null,
+          parent_names: editing.parent_names || null,
+          parent_contact: editing.parent_contact || null,
+          gender: editing.gender || null,
         }),
       });
       const j = await res.json().catch(() => ({}));
@@ -191,6 +231,15 @@ export default function AdminStudentsByClassPage() {
                 ...s,
                 full_name: [editing.last_name, editing.first_name].filter(Boolean).join(" ") || s.full_name,
                 matricule: editing.matricule || null,
+                first_name: editing.first_name || null,
+                last_name: editing.last_name || null,
+                full_name_ar: editing.full_name_ar || null,
+                birthdate: editing.birthdate || null,
+                birth_place: editing.birth_place || null,
+                nationality: editing.nationality || null,
+                parent_names: editing.parent_names || null,
+                parent_contact: editing.parent_contact || null,
+                gender: editing.gender || null,
               }
             : s
         )
@@ -199,6 +248,31 @@ export default function AdminStudentsByClassPage() {
       setMsg("Élève mis à jour ✓");
     } catch (e: any) {
       setMsg(e?.message || "Erreur de sauvegarde");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeFromClass(student: StudentRow) {
+    if (!student.class_id || !window.confirm(
+      `Retirer ${student.full_name} de ${student.class_label || "sa classe"} ? Son dossier restera enregistré et pourra être réaffecté.`
+    )) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/admin/enrollments/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ class_id: student.class_id, student_id: student.id }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.closed !== 1) {
+        throw new Error(payload?.error || "Impossible de retirer cette inscription.");
+      }
+      setStudents((prev) => prev.filter((row) => row.id !== student.id));
+      setMsg("Inscription retirée. Le dossier élève a été conservé.");
+    } catch (e: any) {
+      setMsg(e?.message || "Erreur pendant le retrait.");
     } finally {
       setSaving(false);
     }
@@ -309,11 +383,14 @@ export default function AdminStudentsByClassPage() {
               <tbody className="bg-white/60">
                 {studentsOfClass.map((s) => (
                   <tr key={s.id} className="border-t">
-                    <td className="px-3 py-2">{s.full_name || "—"}</td>
+                    <td className="px-3 py-2" dir={isArabicClass ? "rtl" : undefined}>{(isArabicClass ? s.full_name_ar || s.full_name : s.full_name) || "—"}</td>
                     <td className="px-3 py-2">{s.matricule || "—"}</td>
                     <td className="px-3 py-2">{s.class_label || "—"}</td>
                     <td className="px-3 py-2">
-                      <Button tone="white" onClick={() => openEdit(s)}>Modifier</Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button tone="white" onClick={() => openEdit(s)} disabled={saving}>Modifier</Button>
+                        <Button tone="danger" onClick={() => removeFromClass(s)} disabled={saving}>Retirer de la classe</Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -358,6 +435,40 @@ export default function AdminStudentsByClassPage() {
                   placeholder="Ex : 20166309J"
                 />
               </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-600">Date de naissance</div>
+                <Input type="date" value={editing.birthdate} onChange={(e) => setEditing({ ...editing, birthdate: e.target.value })} />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-600">Sexe</div>
+                <Select value={editing.gender} onChange={(e) => setEditing({ ...editing, gender: e.target.value })}>
+                  <option value="">Non renseigné</option>
+                  <option value="M">Masculin</option>
+                  <option value="F">Féminin</option>
+                </Select>
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-600">Lieu de naissance</div>
+                <Input value={editing.birth_place} onChange={(e) => setEditing({ ...editing, birth_place: e.target.value })} />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-600">Nationalité</div>
+                <Input value={editing.nationality} onChange={(e) => setEditing({ ...editing, nationality: e.target.value })} />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-600">Nom du parent ou responsable</div>
+                <Input value={editing.parent_names} onChange={(e) => setEditing({ ...editing, parent_names: e.target.value })} />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-slate-600">Téléphone du responsable</div>
+                <Input value={editing.parent_contact} onChange={(e) => setEditing({ ...editing, parent_contact: e.target.value })} />
+              </div>
+              {isArabicClass && (
+                <div className="md:col-span-2">
+                  <div className="mb-1 text-xs text-slate-600">Nom complet en arabe</div>
+                  <Input dir="rtl" value={editing.full_name_ar} onChange={(e) => setEditing({ ...editing, full_name_ar: e.target.value })} />
+                </div>
+              )}
             </div>
             <div className="mt-5 flex items-center gap-2">
               <Button onClick={saveEdit} disabled={saving}>
