@@ -388,6 +388,13 @@ export default function ClassListPrintPage() {
   const [showDirectArabicIdentities, setShowDirectArabicIdentities] = useState(false);
   const [savingDirectIdentityId, setSavingDirectIdentityId] = useState<string | null>(null);
   const [directIdentityMessage, setDirectIdentityMessage] = useState<string | null>(null);
+  const directArabicPanel = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (showDirectArabicIdentities) {
+      directArabicPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [showDirectArabicIdentities]);
 
   useEffect(() => {
     if (showArabicNames) arabicNamesPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -549,6 +556,12 @@ export default function ClassListPrintPage() {
     ? arabicClassListLevel(data?.class?.level, data?.class?.label || "Classe")
     : data?.class?.label || "Classe";
   const canEdit = data?.can_edit !== false;
+  // Le correcteur classique est volontairement bloqué pour une classe arabe
+  // qui contient des élèves associés au français. L'éditeur individuel reste
+  // néanmoins disponible pour les élèves directement inscrits en arabe.
+  const canCorrectArabicOnlyPupils = arabicList &&
+    data?.can_edit_direct_student_identity === true &&
+    students.some((student) => student.pedagogical_link === false);
 
   const printedStudents = useMemo(
     () =>
@@ -1185,29 +1198,27 @@ export default function ClassListPrintPage() {
               Inscrire un élève
             </button>
           ) : null}
-          {canEdit ? (
-            <button
-              type="button"
-              onClick={() => setShowCorrections((v) => !v)}
-              disabled={loading || !!error || !data}
-              className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Corriger les champs
-            </button>
-          ) : null}
-          {arabicList && data?.can_edit_direct_student_identity &&
-            students.some((student) => student.pedagogical_link === false) ? (
+          {(canEdit || canCorrectArabicOnlyPupils) ? (
             <button
               type="button"
               onClick={() => {
-                setDirectIdentityMessage(null);
-                setShowDirectArabicIdentities((value) => !value);
+                if (canCorrectArabicOnlyPupils) {
+                  // Le bouton attendu ouvre l'éditeur sécurisé des seuls
+                  // élèves inscrits directement en arabe, pas le roster mixte.
+                  setShowCorrections(false);
+                  setDirectIdentityMessage(null);
+                  setShowDirectArabicIdentities((value) => !value);
+                } else {
+                  setShowDirectArabicIdentities(false);
+                  setShowCorrections((value) => !value);
+                }
               }}
-              aria-expanded={showDirectArabicIdentities}
-              aria-controls="arabic-direct-student-identities"
-              className="rounded-xl border border-emerald-400 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50"
+              disabled={loading || !!error || !data}
+              aria-expanded={canCorrectArabicOnlyPupils ? showDirectArabicIdentities : showCorrections}
+              aria-controls={canCorrectArabicOnlyPupils ? "arabic-direct-student-identities" : undefined}
+              className="rounded-xl border border-emerald-400 px-4 py-2 text-sm font-semibold hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Renseigner les fiches des élèves uniquement arabes
+              Corriger les champs
             </button>
           ) : null}
           {arabicList && data?.can_edit_arabic_names ? (
@@ -1644,6 +1655,7 @@ export default function ClassListPrintPage() {
       {showDirectArabicIdentities && arabicList && data?.can_edit_direct_student_identity ? (
         <section
           id="arabic-direct-student-identities"
+          ref={directArabicPanel}
           aria-label="Renseignements personnels des élèves uniquement arabes"
           className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm"
         >
