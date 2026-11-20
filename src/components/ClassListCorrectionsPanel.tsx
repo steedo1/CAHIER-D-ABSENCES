@@ -136,6 +136,9 @@ export default function ClassListCorrectionsPanel() {
       const button = target?.closest("button");
       if (!button) return;
       if (clean(button.textContent) !== "Corriger les champs") return;
+      // La page possède un éditeur individuel pour les élèves uniquement arabes.
+      // Laisser son gestionnaire React ouvrir cet éditeur, même en classe mixte.
+      if (button.getAttribute("aria-controls") === "arabic-direct-student-identities") return;
 
       event.preventDefault();
       event.stopPropagation();
