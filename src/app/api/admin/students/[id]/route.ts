@@ -116,10 +116,9 @@ export async function DELETE(
   if (lookupErr) return NextResponse.json({ error: lookupErr.message }, { status: 400 });
   if (!student) return NextResponse.json({ error: "student_not_found" }, { status: 404 });
 
-  const expectedName = String(
-    student.full_name ||
-      [student.last_name, student.first_name].filter(Boolean).join(" ")
-  ).trim();
+  const expectedName =
+    String(student.full_name || "").trim() ||
+    [student.last_name, student.first_name].filter(Boolean).join(" ").trim();
   if (body.student_name.trim() !== expectedName) {
     return NextResponse.json({ error: "student_identity_changed" }, { status: 409 });
   }
@@ -141,16 +140,30 @@ export async function DELETE(
   }
   if (!deleted) return NextResponse.json({ error: "student_not_found" }, { status: 404 });
 
-  // Les photos sont dans le Storage (hors transaction SQL).
-  // Nettoyage best-effort après succès : le dossier scolaire reste supprimé.
-  let photoCleanup = "no_photo";
+  // Le stockage de photos est hors transaction SQL : nettoyage ensuite.
+  // Ne retirer que les fichiers du répertoire propre à cet élève.
+  const folder = `${inst}/${id}`;
   const photoPath = String(student.photo_path || "").trim();
-  if (photoPath && photoPath.startsWith(`${inst}/${id}/`)) {
-    const { error: photoErr } = await srv.storage
+  const { data: photoFiles, error: listErr } = await srv.storage
+    .from("student-photos")
+    .list(folder, { limit: 100 });
+
+  const paths = (photoFiles ?? [])
+    .filter((file) => Boolean(file.name) && !file.name.startsWith("."))
+    .map((file) => `${folder}/${file.name}`);
+  if (photoPath.startsWith(`${folder}/`) && !paths.includes(photoPath)) {
+    paths.push(photoPath);
+  }
+  let photoCleanup = "no_photo";
+  if (listErr) {
+    photoCleanup = "failed";
+  } else if (paths.length > 0) {
+    const { error: removeErr } = await srv.storage
       .from("student-photos")
-      .remove([photoPath]);
-    photoCleanup = photoErr ? "failed" : "deleted";
-  } else if (photoPath) {
+      .remove(paths);
+    photoCleanup = removeErr ? "failed" : "deleted";
+  }
+  if (photoPath && !photoPath.startsWith(`${folder}/`)) {
     photoCleanup = "unrecognized_path";
   }
 
