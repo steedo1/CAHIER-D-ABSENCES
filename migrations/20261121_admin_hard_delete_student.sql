@@ -102,6 +102,11 @@ BEGIN
   SET student_ids = array_remove(student_ids, p_student_id)
   WHERE institution_id = p_institution_id AND p_student_id = ANY(student_ids);
 
+  -- Déverrouillage transactionnel strictement limité à cette identité.
+  -- Le déclencheur EPC vérifie aussi current_user = service_role.
+  PERFORM set_config('app.student_hard_delete_id', p_student_id::text, true);
+  PERFORM set_config('app.student_hard_delete_institution', p_institution_id::text, true);
+
   -- La suppression de students déclenche les cascades sur notes, absences,
   -- inscriptions, bulletins, notifications, fiches parents, etc.
   DELETE FROM public.students s
@@ -127,3 +132,27 @@ $fn$;
 
 REVOKE ALL ON FUNCTION public.admin_hard_delete_student(uuid,uuid,text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_hard_delete_student(uuid,uuid,text) TO service_role;
+
+-- EPC : préserver le blocage des suppressions directes tout en autorisant
+-- uniquement l'opération serveur confirmée, ciblée et transactionnelle.
+CREATE OR REPLACE FUNCTION epc_internal.block_epc_student_hard_deletes()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $guard$
+BEGIN
+  IF OLD.institution_id = '2b897cd4-e1c3-40c3-9569-03e01e1877b4'::uuid THEN
+    IF current_user <> 'service_role'
+       OR current_setting('app.student_hard_delete_id', true)
+          IS DISTINCT FROM OLD.id::text
+       OR current_setting('app.student_hard_delete_institution', true)
+          IS DISTINCT FROM OLD.institution_id::text
+    THEN
+      RAISE EXCEPTION USING
+        ERRCODE = 'P0001',
+        MESSAGE = 'EPC : suppression definitive interdite hors confirmation administrateur.';
+    END IF;
+  END IF;
+  RETURN OLD;
+END;
+$guard$;
