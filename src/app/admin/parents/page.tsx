@@ -789,6 +789,10 @@ export default function AdminStudentsByClassPage() {
 
   const [saving, setSaving] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<StudentRow | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -816,6 +820,7 @@ export default function AdminStudentsByClassPage() {
   const searchAbort = useRef<AbortController | null>(null);
 
   const canManageStudents = role !== undefined && role !== "finance_manager";
+  const canHardDeleteStudents = role === "admin" || role === "super_admin";
 
   useEffect(() => {
     let cancelled = false;
@@ -1230,6 +1235,58 @@ export default function AdminStudentsByClassPage() {
       setMsg(e?.message || "Erreur lors du retrait");
     } finally {
       setRemovingId(null);
+    }
+  }
+
+  function openHardDelete(student: StudentRow) {
+    setDeleteTarget(student);
+    setDeleteConfirmation("");
+    setDeleteError(null);
+  }
+
+  async function permanentlyDeleteStudent() {
+    if (!deleteTarget || deleteConfirmation !== "SUPPRIMER" || deletingId) return;
+
+    const student = deleteTarget;
+    setDeletingId(student.id);
+    setDeleteError(null);
+    setMsg(null);
+
+    try {
+      const res = await fetch(`/api/admin/students/${encodeURIComponent(student.id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          confirmation: "SUPPRIMER",
+          student_name: student.full_name,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        setAuthErr(true);
+        return;
+      }
+      if (!res.ok || !json.deleted) {
+        if (json.error === "student_identity_changed") {
+          throw new Error("La fiche de cet élève a changé. Rechargez la page avant de recommencer.");
+        }
+        throw new Error(json.detail || json.error || "Impossible de supprimer cet élève.");
+      }
+
+      setStudents((prev) => prev.filter((x) => x.id !== student.id));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(student.id);
+        return next;
+      });
+      setDeleteTarget(null);
+      setDeleteConfirmation("");
+      setMsg("Élève supprimé définitivement.");
+    } catch (e: any) {
+      setDeleteError(e?.message || "Erreur de suppression");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -1719,6 +1776,17 @@ export default function AdminStudentsByClassPage() {
                               >
                                 {removingId === student.id ? "Retrait..." : "Retirer"}
                               </Button>
+
+                              {canHardDeleteStudents ? (
+                                <Button
+                                  tone="danger"
+                                  onClick={() => openHardDelete(student)}
+                                  disabled={deletingId === student.id}
+                                  title="Supprimer définitivement l'élève et ses données"
+                                >
+                                  Supprimer
+                                </Button>
+                              ) : null}
                             </>
                           ) : null}
                         </div>
@@ -1737,6 +1805,60 @@ export default function AdminStudentsByClassPage() {
           </div>
         )}
       </section>
+
+      {canHardDeleteStudents && deleteTarget && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-2xl border bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="delete-student-title">
+            <h3 id="delete-student-title" className="text-lg font-bold text-rose-700">
+              Supprimer définitivement cet élève ?
+            </h3>
+            <p className="mt-3 text-sm text-slate-800">
+              <strong>{deleteTarget.full_name}</strong>
+              {deleteTarget.class_label ? ` — ${deleteTarget.class_label}` : ""}
+            </p>
+            <p className="mt-3 text-sm text-slate-700">
+              Son dossier et toutes ses données liées (notes, absences, bulletins,
+              paiements et autres informations) seront effacés.
+              <strong className="block mt-2 text-rose-700">Cette action est irréversible.</strong>
+            </p>
+            <label htmlFor="delete-student-confirmation" className="mt-4 block text-sm font-medium text-slate-900">
+              Tapez SUPPRIMER pour confirmer
+            </label>
+            <Input
+              id="delete-student-confirmation"
+              value={deleteConfirmation}
+              onChange={(e) => setDeleteConfirmation(e.target.value)}
+              placeholder="SUPPRIMER"
+              autoComplete="off"
+              disabled={Boolean(deletingId)}
+              className="mt-2"
+            />
+            {deleteError && (
+              <p className="mt-3 text-sm text-rose-700" role="alert">{deleteError}</p>
+            )}
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Button
+                tone="danger"
+                disabled={deleteConfirmation !== "SUPPRIMER" || Boolean(deletingId)}
+                onClick={permanentlyDeleteStudent}
+              >
+                {deletingId ? "Suppression..." : "Supprimer définitivement"}
+              </Button>
+              <Button
+                tone="white"
+                disabled={Boolean(deletingId)}
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeleteConfirmation("");
+                  setDeleteError(null);
+                }}
+              >
+                Annuler
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {canManageStudents && editing && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
