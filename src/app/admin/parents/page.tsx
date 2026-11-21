@@ -897,6 +897,8 @@ export default function AdminStudentsByClassPage() {
   const [pageSize, setPageSize] = useState(25);
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const rosterRefreshInFlight = useRef(false);
   const [docsLoading, setDocsLoading] = useState(false);
   const [authErr, setAuthErr] = useState(false);
   const [role, setRole] = useState<string | null | undefined>(undefined);
@@ -1060,45 +1062,69 @@ export default function AdminStudentsByClassPage() {
     }
   }
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setMsg(null);
+  // Les listes doivent refléter la base actuelle, y compris quand la PWA
+  // reste ouverte pendant qu'un établissement corrige ses inscriptions.
+  async function refreshRoster(initial = false) {
+    if (rosterRefreshInFlight.current) return;
+    rosterRefreshInFlight.current = true;
+    if (initial) setLoading(true);
+    else setRefreshing(true);
 
-      try {
-        const [classesRes, studentsRes] = await Promise.all([
-          fetch("/api/admin/classes?limit=999", { cache: "no-store" }),
-          fetch("/api/admin/students", { cache: "no-store" }),
-        ]);
+    try {
+      const [classesRes, studentsRes] = await Promise.all([
+        fetch("/api/admin/classes?limit=999", { cache: "no-store" }),
+        fetch("/api/admin/students", { cache: "no-store" }),
+      ]);
 
-        if (classesRes.status === 401 || studentsRes.status === 401) {
-          setAuthErr(true);
-          setLoading(false);
-          return;
-        }
-
-        const [classesJson, studentsJson] = await Promise.all([
-          classesRes.json().catch(() => ({})),
-          studentsRes.json().catch(() => ({})),
-        ]);
-
-        if (!classesRes.ok || !studentsRes.ok) {
-          throw new Error(
-            classesJson?.error || studentsJson?.error || "HTTP_ERROR"
-          );
-        }
-
-        setClasses((classesJson.items || []) as ClassRow[]);
-        setStudents((studentsJson.items || []) as StudentRow[]);
-
-        await loadInstitutionAndYears();
-      } catch (e: any) {
-        setMsg(e?.message || "Erreur de chargement");
-      } finally {
-        setLoading(false);
+      if (classesRes.status === 401 || studentsRes.status === 401) {
+        setAuthErr(true);
+        return;
       }
-    })();
+
+      const [classesJson, studentsJson] = await Promise.all([
+        classesRes.json().catch(() => ({})),
+        studentsRes.json().catch(() => ({})),
+      ]);
+
+      if (!classesRes.ok || !studentsRes.ok) {
+        throw new Error(classesJson?.error || studentsJson?.error || "HTTP_ERROR");
+      }
+
+      setClasses((classesJson.items || []) as ClassRow[]);
+      setStudents((studentsJson.items || []) as StudentRow[]);
+      setMsg(null);
+    } catch (error: any) {
+      setMsg(error?.message || "Impossible d'actualiser les élèves.");
+    } finally {
+      rosterRefreshInFlight.current = false;
+      setRefreshing(false);
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshRoster(true);
+    void loadInstitutionAndYears();
+
+    // Le retour vers l'application ne doit pas afficher d'anciennes inscriptions.
+    const onFocus = () => {
+      if (document.visibilityState === "visible") void refreshRoster();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refreshRoster();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
+
+  // Toute sélection de classe relit la liste officielle côté serveur.
+  useEffect(() => {
+    if (classId) void refreshRoster();
+  }, [classId]);
 
   const classLevelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1740,6 +1766,14 @@ export default function AdminStudentsByClassPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              tone="white"
+              onClick={() => void refreshRoster()}
+              disabled={loading || refreshing}
+              title="Recharger la liste des élèves depuis le serveur"
+            >
+              {refreshing ? "Actualisation..." : "Actualiser"}
+            </Button>
             {canTransferOrRemoveStudents ? (
               <Button
                 tone="slate"
