@@ -1282,7 +1282,13 @@ export default function AdminStudentsByClassPage() {
       });
       setDeleteTarget(null);
       setDeleteConfirmation("");
-      setMsg("Élève supprimé définitivement.");
+      const photoNotDeleted =
+        json.photo_cleanup === "failed" || json.photo_cleanup === "unrecognized_path";
+      setMsg(
+        photoNotDeleted
+          ? "Élève supprimé définitivement. Attention : sa photo doit être vérifiée dans le stockage."
+          : "Élève supprimé définitivement."
+      );
     } catch (e: any) {
       setDeleteError(e?.message || "Erreur de suppression");
     } finally {
