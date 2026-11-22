@@ -144,7 +144,8 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
 /** Shared vector layout for browser production and server raster previews. */
 export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: CardSchool, assets: CardPrintAssets, side: "front" | "back", x = 0, y = 0) {
   doc.save().translate(mm(x), mm(y));
-  doc.roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).fillAndStroke(schoolCardBackground(school, side), "#D7E1DB");
+  // Print-ready card: keep the rounded background but no outer stroke (front or back).
+  doc.roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).fill(schoolCardBackground(school, side));
   doc.save().roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).clip();
   doc.font("card").fillColor(green);
   if (usesEpcSchoolCardLayout(school)) {
