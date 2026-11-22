@@ -3,7 +3,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { issueCardToken, openCardToken, createCardScanLimiter } from "../src/lib/school-card-token";
-import { cardSheetPosition, signatureSlotForTracks, cardTeachingTrackForClass, schoolCardMinistry } from "../src/lib/school-cards";
+import { cardSheetPosition, signatureSlotForTracks, cardTeachingTrackForClass, schoolCardMinistry, schoolCardBackground, EPC_CARD_FRONT_BEIGE } from "../src/lib/school-cards";
 import { processSchoolCardSignature } from "../src/lib/school-card-image";
 import { schoolCardTextRuns } from "../src/lib/school-card-bidi";
 
@@ -14,6 +14,14 @@ test("Arabic PDF keeps logical connected letters inside reordered bilingual runs
   assert.ok(mixed.some(run=>run.rtl && run.text.includes("القسم العربي")));
   assert.ok(mixed.findIndex(run=>run.text.includes("١")) < mixed.findIndex(run=>run.text.includes("القسم")));
   assert.equal(mixed.map(run=>run.text).join(""),"Classe : ١القسم العربي ");
+});
+
+test("only EPC Dimbokro fronts use beige paper; reverse and other schools stay white", () => {
+  assert.equal(EPC_CARD_FRONT_BEIGE, "#E8D4B2");
+  assert.equal(schoolCardBackground({ code: "E020684" }, "front"), EPC_CARD_FRONT_BEIGE);
+  assert.equal(schoolCardBackground({ code: "E020684" }, "back"), "#FFFFFF");
+  assert.equal(schoolCardBackground({ code: "ANOTHER" }, "front"), "#FFFFFF");
+  assert.equal(schoolCardBackground({ code: null }, "front"), "#FFFFFF");
 });
 
 const key = "isolated-test-secret-not-a-real-key-2026";
