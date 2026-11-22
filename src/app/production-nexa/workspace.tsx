@@ -102,7 +102,9 @@ export default function ProductionWorkspace() {
     return (!orderStudents || orderStudents.has(card.studentId)) && (!classId || classes.some(classe => classe.id === classId)) &&
       (preparation === "all" || (preparation === "ready" ? prepared.has(card.studentId) : !prepared.has(card.studentId))) &&
       [card.name, card.matricule, ...classes.map(classe => classe.label)].join(" ").toLocaleLowerCase("fr").includes(query.trim().toLocaleLowerCase("fr"));
-  }), [cards, classId, orderStudents, preparation, prepared, query]);
+  }).sort((a, b) => a.name.localeCompare(b.name, "fr", { sensitivity: "base", numeric: true })
+    || a.matricule.localeCompare(b.matricule, "fr", { numeric: true })
+    || a.studentId.localeCompare(b.studentId)), [cards, classId, orderStudents, preparation, prepared, query]);
   // Preparing a card is the first production step; unprepared pupils must be selectable.
   const isSelectable = (card: SchoolCard) => !card.revoked;
   const pendingPreparationIds = useMemo(() => [...selected].filter(id => !prepared.has(id)), [selected, prepared]);
