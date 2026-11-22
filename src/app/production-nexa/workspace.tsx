@@ -103,8 +103,19 @@ export default function ProductionWorkspace() {
       (preparation === "all" || (preparation === "ready" ? prepared.has(card.studentId) : !prepared.has(card.studentId))) &&
       [card.name, card.matricule, ...classes.map(classe => classe.label)].join(" ").toLocaleLowerCase("fr").includes(query.trim().toLocaleLowerCase("fr"));
   }), [cards, classId, orderStudents, preparation, prepared, query]);
-  const isSelectable = (card: SchoolCard) => prepared.has(card.studentId) && !card.revoked;
+  // Preparing a card is the first production step; unprepared pupils must be selectable.
+  const isSelectable = (card: SchoolCard) => !card.revoked;
+  const pendingPreparationIds = useMemo(() => [...selected].filter(id => !prepared.has(id)), [selected, prepared]);
+  const canGenerateSelected = selected.size > 0 && pendingPreparationIds.length === 0;
   const batchLocked = busy || canRetry;
+
+  function toggleSelection(id: string, checked: boolean) {
+    setSelected(previous => {
+      const next = new Set(previous);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  }
 
   function resetScope() {
     setCards(null); setCapabilities(null); setOrders([]); setArchives([]); setNextPage(null); setLoading(false);
@@ -137,6 +148,18 @@ export default function ProductionWorkspace() {
     const data = await productionRequest<{ order: ProductionOrder }>(api,
       { action: "orderStatus", school, year, orderId: item.id, status, revision: item.revision });
     setOrders(previous => previous.map(row => row.id === item.id ? data.order : row));
+  }
+  async function prepareSelection() {
+    if (!pendingPreparationIds.length) return;
+    const ids = [...pendingPreparationIds];
+    const result = await productionRequest<{ count: number }>(api, {
+      action: "prepare", school, year, studentIds: ids,
+    });
+    setCards(previous => previous ? {
+      ...previous, preparedIds: [...new Set([...previous.preparedIds, ...ids])],
+    } : previous);
+    setPreparation("ready");
+    setStatus(result.count + " carte(s) préparée(s). Vous pouvez maintenant générer les PDF.");
   }
   async function inspect(studentId: string) {
     setPreview(await productionRequest(`${api}/preview`, { school, year, studentId }));
@@ -254,12 +277,12 @@ export default function ProductionWorkspace() {
         <h2 className="text-lg font-semibold">{order ? `Commande ${order.id.slice(0, 8)} · ${ORDER_LABELS[order.status]}` : "Cartes de l’établissement"}</h2>
         {order && <button className={field} disabled={batchLocked} onClick={() => changeView("orders")}>Retour aux commandes</button>}
       </div>
-      <div className="flex flex-wrap gap-3">
-        <label className="grid gap-1 text-sm">Recherche<input className={field} placeholder="Nom, matricule ou classe" value={query} onChange={e => setQuery(e.target.value)} /></label>
-        <label className="grid gap-1 text-sm">Classe<select className={field} value={classId} onChange={e => setClassId(e.target.value)}>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label className="grid min-w-0 gap-1 text-sm">Recherche<input className={field + " w-full min-w-0"} placeholder="Nom, matricule ou classe" value={query} onChange={e => setQuery(e.target.value)} /></label>
+        <label className="grid min-w-0 gap-1 text-sm">Classe<select className={field + " w-full min-w-0"} value={classId} onChange={e => setClassId(e.target.value)}>
           <option value="">Toutes</option>{cards.classes.map(classe => <option key={classe.id} value={classe.id}>{classe.label}</option>)}
         </select></label>
-        <label className="grid gap-1 text-sm">Préparation<select className={field} value={preparation} onChange={e => setPreparation(e.target.value)}>
+        <label className="grid min-w-0 gap-1 text-sm">Préparation<select className={field + " w-full min-w-0"} value={preparation} onChange={e => setPreparation(e.target.value)}>
           <option value="ready">Préparées</option><option value="missing">À préparer</option><option value="all">Toutes</option>
         </select></label>
       </div>
@@ -268,24 +291,53 @@ export default function ProductionWorkspace() {
         <button className={field} disabled={batchLocked || loading} onClick={() => setSelected(new Set(cards.items
           .filter(row => isSelectable(row) && (!orderStudents || orderStudents.has(row.studentId))).map(row => row.studentId)))}>Toutes les cartes préparées</button>
         <button className={field} disabled={batchLocked || !selected.size} onClick={() => setSelected(new Set())}>Effacer</button>
-        <span className="text-sm">{selected.size} sélectionnée(s)</span>
+        <span className="text-sm" aria-live="polite">{selected.size} sélectionnée(s){pendingPreparationIds.length > 0 ? " · " + pendingPreparationIds.length + " à préparer" : ""}</span>
       </div>
-      <div className="max-h-[28rem] overflow-auto"><table className="w-full text-left text-sm">
+            <div className="grid max-h-[32rem] gap-2 overflow-y-auto md:hidden">
+        {rows.map(row => {
+          const available = !batchLocked && isSelectable(row);
+          const checked = selected.has(row.studentId);
+          return <article key={row.studentId} className={checked ? "rounded-xl border-2 border-emerald-700 bg-emerald-50 p-3" : "rounded-xl border border-slate-200 bg-white p-3"}>
+            <label className={available ? "flex min-h-14 cursor-pointer items-start gap-3" : "flex min-h-14 cursor-not-allowed items-start gap-3 opacity-60"}>
+              <input type="checkbox" className="mt-1 h-6 w-6 shrink-0 accent-emerald-700" aria-label={"Sélectionner " + row.name}
+                disabled={!available} checked={checked} onChange={e => toggleSelection(row.studentId, e.target.checked)} />
+              <span className="min-w-0 flex-1 text-sm">
+                <strong className="block break-words text-base leading-6 text-slate-900"><bdi>{row.name}</bdi></strong>
+                <span className="block text-slate-600">{row.matricule || "Sans matricule"}</span>
+                <span className="block break-words text-slate-600">{schoolCardClasses(row).map(classe => classe.label).join(" · ")}</span>
+              </span>
+            </label>
+            <div className="mt-2 flex items-start justify-between gap-3 border-t border-slate-100 pt-2 text-xs">
+              <span className="min-w-0 text-slate-700">{row.revoked ? "Invalidée" : prepared.has(row.studentId) ? "Préparée" : "À préparer"}
+                {row.warnings.length > 0 && <span className="block break-words text-amber-800">{row.warnings.join(" · ")}</span>}</span>
+              <button type="button" className="shrink-0 rounded-lg px-3 py-2 font-semibold text-emerald-800 underline"
+                disabled={batchLocked || row.revoked} onClick={() => run(() => inspect(row.studentId))}>Voir</button>
+            </div>
+          </article>;
+        })}
+      </div>
+      <div className="hidden max-h-[28rem] overflow-auto md:block"><table className="min-w-[720px] w-full text-left text-sm">
         <thead className="sticky top-0 bg-slate-100"><tr><th className="p-2">Choix</th><th>Élève</th><th>Matricule</th><th>Classes</th><th>Statut</th><th>Aperçu</th></tr></thead>
-        <tbody>{rows.map(row => <tr className="border-b" key={row.studentId}>
-          <td className="p-2"><input type="checkbox" aria-label={`Sélectionner ${row.name}`} disabled={batchLocked || !isSelectable(row)}
-            checked={selected.has(row.studentId)} onChange={e => { const checked = e.target.checked; setSelected(previous => {
-              const next = new Set(previous); if (checked) next.add(row.studentId); else next.delete(row.studentId); return next;
-            }); }} /></td>
+        <tbody>{rows.map(row => <tr className={selected.has(row.studentId) ? "cursor-pointer border-b bg-emerald-50" : "cursor-pointer border-b"} key={row.studentId}
+          onClick={event => {
+            if ((event.target as HTMLElement).closest("input,button,a,label") || batchLocked || !isSelectable(row)) return;
+            toggleSelection(row.studentId, !selected.has(row.studentId));
+          }}>
+          <td className="p-2"><label className="flex min-h-12 min-w-12 cursor-pointer items-center justify-center"><input type="checkbox"
+            className="h-6 w-6 accent-emerald-700" aria-label={"Sélectionner " + row.name}
+            disabled={batchLocked || !isSelectable(row)} checked={selected.has(row.studentId)}
+            onChange={e => toggleSelection(row.studentId, e.target.checked)} /></label></td>
           <td className="py-2 font-medium"><bdi>{row.name}</bdi></td><td>{row.matricule}</td>
           <td>{schoolCardClasses(row).map(classe => <div key={classe.id}><bdi>{classe.label}</bdi></div>)}</td>
           <td>{row.revoked ? "Invalidée" : prepared.has(row.studentId) ? "Préparée" : "À préparer"}{row.warnings.length > 0 && <div className="text-xs text-amber-800">{row.warnings.join(" · ")}</div>}</td>
-          <td><button className="p-2 text-emerald-800 underline" disabled={busy || row.revoked} onClick={() => run(() => inspect(row.studentId))}>Voir</button></td>
+          <td><button className="p-2 text-emerald-800 underline" disabled={batchLocked || row.revoked} onClick={() => run(() => inspect(row.studentId))}>Voir</button></td>
         </tr>)}</tbody>
       </table></div>
       {rows.length === 0 && !loading && <p>Aucune carte ne correspond aux filtres.</p>}
       {preview && <CardPreview {...preview} />}
       {cards.canGenerate && <div className="flex flex-wrap items-end gap-3 border-t pt-4">
+        {pendingPreparationIds.length > 0 && <button className={primary} disabled={batchLocked || loading}
+          onClick={() => run(prepareSelection)}>Préparer {pendingPreparationIds.length} carte(s) sélectionnée(s)</button>}
         <label className="grid gap-1 text-sm">Format PDF<select className={field} disabled={batchLocked} value={layout.format}
           onChange={e => setLayout(previous => ({ ...previous, format: e.target.value as Layout["format"] }))}>
           <option value="pvc">PVC, un recto et un verso par élève</option><option value="a4">Planche A4 recto verso</option>
@@ -295,7 +347,7 @@ export default function ProductionWorkspace() {
           <option value="long">Bord long</option><option value="short">Bord court</option>
         </select></label>}
         <label className="flex items-center gap-2 py-2 text-sm"><input type="checkbox" disabled={batchLocked} checked={allowMissing} onChange={e => setAllowMissing(e.target.checked)} /> Autoriser les informations manquantes</label>
-        <button className={primary} disabled={batchLocked || loading || !selected.size || Boolean(order && !ORDER_TRANSITIONS[order.status].length)}
+        <button className={primary} disabled={batchLocked || loading || !canGenerateSelected || Boolean(order && !ORDER_TRANSITIONS[order.status].length)}
           onClick={() => run(() => generate())}>Générer et archiver les PDF</button>
       </div>}
     </section>}
