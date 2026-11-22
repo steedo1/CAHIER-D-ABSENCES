@@ -1,7 +1,7 @@
 import type PDFKit from "pdfkit";
 import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
 import { documentNationalEmblem } from "./document-national-emblem";
-import { CARD_WIDTH_MM, CARD_HEIGHT_MM, SCHOOL_CARD_FOOTER, cardSheetPosition, schoolCardMinistry, schoolCardClasses, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_WATERMARK_OPACITY, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
+import { CARD_WIDTH_MM, CARD_HEIGHT_MM, SCHOOL_CARD_FOOTER, cardSheetPosition, schoolCardMinistry, schoolCardClasses, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_WATERMARK_OPACITY, schoolCardBackground, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
 
 export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>>; stamps?: Partial<Record<CardSlot, string>> };
 const mm = (value: number) => value * 72 / 25.4;
@@ -144,7 +144,7 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
 /** Shared vector layout for browser production and server raster previews. */
 export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: CardSchool, assets: CardPrintAssets, side: "front" | "back", x = 0, y = 0) {
   doc.save().translate(mm(x), mm(y));
-  doc.roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).fillAndStroke("#FFFFFF", "#D7E1DB");
+  doc.roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).fillAndStroke(schoolCardBackground(school, side), "#D7E1DB");
   doc.save().roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).clip();
   doc.font("card").fillColor(green);
   if (usesEpcSchoolCardLayout(school)) {

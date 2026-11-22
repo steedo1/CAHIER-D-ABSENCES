@@ -32,6 +32,11 @@ export function usesEpcSchoolCardLayout(school: Pick<CardSchool, "code">) {
 }
 
 export const EPC_CARD_WATERMARK_OPACITY = 0.16;
+/** Warm sand beige reserved for the front of EPC Dimbokro cards. */
+export const EPC_CARD_FRONT_BEIGE = "#E8D4B2";
+export function schoolCardBackground(school: Pick<CardSchool, "code">, side: "front" | "back") {
+  return usesEpcSchoolCardLayout(school) && side === "front" ? EPC_CARD_FRONT_BEIGE : "#FFFFFF";
+}
 export const EPC_CARD_USAGE = "Carte personnelle, à présenter pour les démarches scolaires et administratives.";
 export const EPC_CARD_REPRODUCTION = "Toute reproduction ou utilisation frauduleuse est interdite.";
 export const EPC_CARD_DIRECTOR = {
