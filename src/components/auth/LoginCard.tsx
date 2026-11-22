@@ -548,6 +548,11 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, requir
           {busy ? "Connexion en cours…" : "Connexion"}
         </button>
       </form>
+      {mode === "email" && (
+        <a href="/recover" className="mt-4 block text-center text-sm font-semibold text-emerald-700 hover:underline">
+          Mot de passe oublié ?
+        </a>
+      )}
 
     </div>
   );
