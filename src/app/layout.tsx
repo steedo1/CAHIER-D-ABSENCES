@@ -32,6 +32,10 @@ export const viewport: Viewport = {
   colorScheme: "light",
 };
 
+// Exécuté avant l'hydratation : les liens de récupération du dashboard Supabase
+// reviennent parfois sur la racine (Site URL), avec des jetons dans le fragment.
+const recoveryEntryScript = "(function () {\n  try {\n    var hash = new URLSearchParams(window.location.hash.slice(1));\n    var query = new URLSearchParams(window.location.search);\n    var recovery = (hash.get(\"type\") === \"recovery\" && hash.has(\"access_token\") && hash.has(\"refresh_token\")) ||\n      (query.get(\"type\") === \"recovery\" && query.has(\"token_hash\")) ||\n      (window.location.pathname === \"/reset-password\" && query.has(\"code\"));\n    var failed = query.get(\"error_code\") === \"otp_expired\" ||\n      (query.get(\"error\") === \"access_denied\" && query.has(\"error_description\"));\n    if (recovery) {\n      sessionStorage.setItem(\"mca-password-recovery-started\", String(Date.now()));\n    }\n    if (window.location.pathname === \"/\" && (recovery || failed)) {\n      window.location.replace(\"/reset-password\" + window.location.search + window.location.hash);\n    }\n  } catch (_) { /* Le routage habituel reste disponible. */ }\n})();";
+
 export default function RootLayout({
   children,
 }: {
@@ -40,6 +44,7 @@ export default function RootLayout({
   return (
     <html lang="fr">
       <body>
+        <script dangerouslySetInnerHTML={{ __html: recoveryEntryScript }} />
         <Providers>
           <RelayCapabilityProvider>
             <OfflineAccessGuard>{children}</OfflineAccessGuard>
