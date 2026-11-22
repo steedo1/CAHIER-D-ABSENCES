@@ -76,7 +76,13 @@ export async function POST(req: NextRequest) {
     if (email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || record.status === "revoked") {
       return cardJson({ error: "adresse_ou_statut_invalide" }, 400);
     }
-    const password = randomBytes(24).toString("base64url") + "!Aa7";
+    // Configuration privée du service Render : mot de passe initial des comptes
+    // Production Nexa uniquement. Ne pas le stocker dans le dépôt ou dans le client.
+    const configuredPassword = process.env.NEXA_PRODUCTION_INITIAL_PASSWORD?.trim();
+    if (configuredPassword && configuredPassword.length < 8) {
+      return cardJson({ error: "configuration_mot_de_passe_production_invalide" }, 503);
+    }
+    const password = configuredPassword || randomBytes(24).toString("base64url") + "!Aa7";
     const created = await access.srv.auth.admin.createUser({ email, password, email_confirm: true, role: PRODUCTION_ROLE });
     if (created.error || !created.data.user) {
       const code = created.error?.code;
