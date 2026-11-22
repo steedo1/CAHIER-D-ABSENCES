@@ -221,3 +221,25 @@ test("School preview only returns two bounded raster images and checks the enrol
     assert.ok(bytes.length < 45_000);
   }
 });
+
+test("Production Nexa securely prepares unprepared cards before generation", async () => {
+  const db = fixture(2);
+  const restricted = await create(db, { permissions: ["cards.read"] });
+  const studentId = db.tables.students[0].id;
+  const body = { action: "prepare", school: db.legacyId, year, studentIds: [studentId] };
+  const readonly = db.load(restricted)(route(api));
+  assert.equal((await readonly.POST(request(api, body))).status, 403);
+  const allowed = db.load(db.superId)(route(api));
+  const generation = { action: "generation", school: db.legacyId, year,
+    studentIds: [studentId], format: "pvc", flip: "long", allowMissing: true };
+  assert.equal((await allowed.POST(request(api, generation))).status, 409);
+  const prepared = await allowed.POST(request(api, body));
+  assert.equal(prepared.status, 200);
+  assert.equal((await prepared.json()).count, 1);
+  const cards = await (await allowed.GET(request(api + "?school=" + db.legacyId + "&year=" + year))).json();
+  assert.deepEqual(cards.preparedIds, [studentId]);
+  const result = await allowed.POST(request(api, generation));
+  assert.equal(result.status, 200);
+  assert.ok((await result.json()).ticket);
+  assert.equal((await allowed.POST(request(api, { ...body, studentIds: [randomUUID()] }))).status, 403);
+});
