@@ -78,12 +78,26 @@ export async function POST(req: NextRequest) {
   if (!requireCardOrigin(req)) return cardJson({ error: "origine_invalide" }, 403);
   try {
     const access = await productionAccess(); if ("error" in access) return access.error;
-    const body = await productionJson(req);
-    if (!isYear(body.year) || !["orderStatus", "generation"].includes(String(body.action))) {
+    const body = await productionJson(req, 400_000);
+    if (!isYear(body.year) || !["orderStatus", "generation", "prepare"].includes(String(body.action))) {
       return cardJson({ error: "demande_invalide" }, 400);
     }
     const permission = body.action === "orderStatus" ? "cards.orders" : "cards.generate";
     const ctx = await productionSchool(access, body.school, permission); if ("error" in ctx) return ctx.error;
+    if (body.action === "prepare") {
+      if (!ctx.configuration.enabled) return cardJson({ error: "cartes_suspendues" }, 403);
+      const ids = studentSelection(body.studentIds, 10_000);
+      const years = await readCardYears(ctx.service, ctx.instId);
+      if (!isCardYearValid(years.find(row => row.code === body.year))) {
+        return cardJson({ error: "annee_non_active_ou_expiree" }, 409);
+      }
+      await selectedCards(ctx, body.year, ids);
+      const result = await ctx.service.rpc("nexa_prepare_cards", {
+        p_school: ctx.instId, p_year: body.year, p_actor: access.userId, p_students: ids, p_order: false,
+      });
+      if (result.error) throw Error("preparation_cartes_indisponible");
+      return cardJson({ count: ids.length });
+    }
     if (body.action === "orderStatus") {
       if (!isUuid(body.orderId) || !Number.isInteger(body.revision) || typeof body.status !== "string") {
         return cardJson({ error: "commande_invalide" }, 400);
