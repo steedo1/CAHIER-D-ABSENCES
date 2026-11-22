@@ -289,7 +289,7 @@ export default function ProductionWorkspace() {
       <div className="flex flex-wrap items-center gap-2">
         <button className={field} disabled={batchLocked || loading} onClick={() => setSelected(new Set(rows.filter(isSelectable).map(row => row.studentId)))}>Sélectionner les résultats</button>
         <button className={field} disabled={batchLocked || loading} onClick={() => setSelected(new Set(cards.items
-          .filter(row => isSelectable(row) && (!orderStudents || orderStudents.has(row.studentId))).map(row => row.studentId)))}>Toutes les cartes préparées</button>
+          .filter(row => prepared.has(row.studentId) && isSelectable(row) && (!orderStudents || orderStudents.has(row.studentId))).map(row => row.studentId)))}>Toutes les cartes préparées</button>
         <button className={field} disabled={batchLocked || !selected.size} onClick={() => setSelected(new Set())}>Effacer</button>
         <span className="text-sm" aria-live="polite">{selected.size} sélectionnée(s){pendingPreparationIds.length > 0 ? " · " + pendingPreparationIds.length + " à préparer" : ""}</span>
       </div>
