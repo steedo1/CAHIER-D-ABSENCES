@@ -1,4 +1,5 @@
 import { EPC_DIMBOKRO_CODE } from "./school-student-programs";
+import { inferSchoolCycleFromLevel, type SchoolCycle, type SchoolCyclesSettings } from "./school-cycles";
 
 export const CARD_WIDTH_MM = 85.6;
 export const CARD_HEIGHT_MM = 54;
@@ -34,7 +35,21 @@ export function usesEpcSchoolCardLayout(school: Pick<CardSchool, "code">) {
 export const EPC_CARD_WATERMARK_OPACITY = 0.16;
 /** Warm sand beige reserved for the front of EPC Dimbokro cards. */
 export const EPC_CARD_FRONT_BEIGE = "#E8D4B2";
-export function schoolCardBackground(school: Pick<CardSchool, "code">, side: "front" | "back") {
+export const SECONDARY_CARD_PALETTE = {
+  front: "#D7DBE0", highlight: "#F1F3F5", silver: "#C0C0C0",
+  back: "#F1F3F5", accent: "#535C69", ink: "#26313E", muted: "#48535F",
+  rule: "#929BA6", paper: "#E1E4E8",
+} as const;
+/** Explicit configuration wins; unknown levels keep their existing card design. */
+export function schoolCardCycleForClass(classe: { id: string; level: string | null }, settings: SchoolCyclesSettings): SchoolCycle | undefined {
+  const configured = settings.enabled ? settings.classCycleById[classe.id] : undefined;
+  if (configured && settings.enabledCycles.includes(configured)) return configured;
+  const inferred = inferSchoolCycleFromLevel(classe.level);
+  if (inferred) return inferred;
+  return settings.enabled && settings.enabledCycles.length === 1 ? settings.enabledCycles[0] : undefined;
+}
+export function schoolCardBackground(school: Pick<CardSchool, "code">, side: "front" | "back", cycle?: SchoolCycle) {
+  if (cycle === "secondary") return SECONDARY_CARD_PALETTE[side];
   return usesEpcSchoolCardLayout(school) && side === "front" ? EPC_CARD_FRONT_BEIGE : "#FFFFFF";
 }
 export const EPC_CARD_USAGE = "Carte personnelle, à présenter pour les démarches scolaires et administratives.";
@@ -47,7 +62,7 @@ export const EPC_CARD_DIRECTOR = {
 export type CardYear = { code: string; start_date: string; end_date: string; is_current: boolean };
 export type CardClass = { id: string; label: string; level: string | null; academic_year: string };
 export type SchoolCard = {
-  enrollmentId: string; studentId: string; classId: string; year: string;
+  enrollmentId: string; studentId: string; classId: string; year: string; cycle?: SchoolCycle;
   name: string; matricule: string; birthdate: string; birthPlace: string; gender: string;
   classLabel: string; level: string; classes?: CardTeachingClass[]; tracks: string[]; cardTrack?: CardSlot | null; photoUrl: string | null;
   revoked: boolean; warnings: string[];
