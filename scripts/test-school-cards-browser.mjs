@@ -23,8 +23,8 @@ try {
     page.getByRole("button", { name: "Aperçu recto verso" }).click(),
   ]);
   assert.equal(previewResponse.status(), 200, (await previewResponse.text()).slice(0, 200));
-  await page.getByAltText("Aperçu recto filigrané").waitFor();
-  await page.getByAltText("Aperçu verso filigrané").waitFor();
+  await page.getByAltText("Aperçu recto", { exact: true }).waitFor();
+  await page.getByAltText("Aperçu verso", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: /Générer.*PDF|Imprimer/ }).count(), 0);
   await page.screenshot({ path: "tmp/school-cards/workspace-desktop.png", fullPage: true });
 
@@ -49,6 +49,7 @@ try {
   await page.getByLabel("Autoriser les informations manquantes", { exact: true }).check();
   await page.getByRole("button", { name: "Générer et archiver les PDF" }).click();
   await page.getByText("Version 1", { exact: true }).waitFor({ timeout: 30_000 });
+  await page.getByText("CP1 AR · CP1 FR", { exact: true }).waitFor();
   const [download] = await Promise.all([
     page.waitForEvent("download"), page.getByRole("button", { name: "Télécharger le PDF" }).click(),
   ]);
