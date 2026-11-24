@@ -3,7 +3,8 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { issueCardToken, openCardToken, createCardScanLimiter } from "../src/lib/school-card-token";
-import { cardSheetPosition, signatureSlotForTracks, cardTeachingTrackForClass, schoolCardMinistry, schoolCardBackground, EPC_CARD_FRONT_BEIGE } from "../src/lib/school-cards";
+import { cardSheetPosition, signatureSlotForTracks, cardTeachingTrackForClass, schoolCardMinistry, schoolCardBackground, EPC_CARD_FRONT_BEIGE, SECONDARY_CARD_PALETTE, schoolCardCycleForClass } from "../src/lib/school-cards";
+import { parseSchoolCyclesSettings } from "../src/lib/school-cycles";
 import { processSchoolCardSignature } from "../src/lib/school-card-image";
 import { schoolCardTextRuns } from "../src/lib/school-card-bidi";
 
@@ -24,6 +25,29 @@ test("only EPC Dimbokro fronts use beige paper; reverse and other schools stay w
   assert.equal(schoolCardBackground({ code: null }, "front"), "#FFFFFF");
 });
 
+test("silver palette applies only to secondary cards, including mixed-cycle institutions", () => {
+  for (const code of ["E020684", "ANOTHER", null]) {
+    const school = { code };
+    assert.equal(schoolCardBackground(school, "front", "secondary"), SECONDARY_CARD_PALETTE.front);
+    assert.equal(schoolCardBackground(school, "back", "secondary"), SECONDARY_CARD_PALETTE.back);
+    for (const cycle of ["primary", "preschool", undefined] as const) {
+      assert.equal(schoolCardBackground(school, "front", cycle), code === "E020684" ? EPC_CARD_FRONT_BEIGE : "#FFFFFF");
+      assert.equal(schoolCardBackground(school, "back", cycle), "#FFFFFF");
+    }
+  }
+  const settings = parseSchoolCyclesSettings({ school_cycles_v1: {
+    version: 1, enabled: true, enabledCycles: ["primary", "secondary"],
+    classCycleById: { arabic: "primary", college: "secondary" },
+  } });
+  assert.equal(schoolCardCycleForClass({id:"arabic",level:"nonstandard"},settings),"primary");
+  assert.equal(schoolCardCycleForClass({id:"college",level:"nonstandard"},settings),"secondary");
+  assert.equal(schoolCardCycleForClass({id:"a",level:"CP1"},settings),"primary");
+  assert.equal(schoolCardCycleForClass({id:"b",level:"3ème"},settings),"secondary");
+  assert.equal(schoolCardCycleForClass({id:"c",level:null},settings),undefined);
+  const legacy = parseSchoolCyclesSettings(null);
+  assert.equal(schoolCardCycleForClass({id:"a",level:"CM2"},legacy),"primary");
+  assert.equal(schoolCardCycleForClass({id:"b",level:"6e"},legacy),"secondary");
+});
 const key = "isolated-test-secret-not-a-real-key-2026";
 const identity = () => ({ institutionId:randomUUID(),studentId:randomUUID(),enrollmentId:randomUUID(),classId:randomUUID(),year:"2026-2027" });
 test("2026 Ivorian card header uses the checked ministry name and preserves other countries/history/custom ministries",()=>{

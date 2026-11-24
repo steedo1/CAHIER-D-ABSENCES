@@ -1,7 +1,7 @@
 import type PDFKit from "pdfkit";
 import { hasCardRtlText, schoolCardTextRuns } from "./school-card-bidi";
 import { documentNationalEmblem } from "./document-national-emblem";
-import { CARD_WIDTH_MM, CARD_HEIGHT_MM, SCHOOL_CARD_FOOTER, cardSheetPosition, schoolCardMinistry, schoolCardClasses, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_WATERMARK_OPACITY, schoolCardBackground, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
+import { CARD_WIDTH_MM, CARD_HEIGHT_MM, SCHOOL_CARD_FOOTER, cardSheetPosition, schoolCardMinistry, schoolCardClasses, usesEpcSchoolCardLayout, EPC_CARD_DIRECTOR, EPC_CARD_WATERMARK_OPACITY, schoolCardBackground, SECONDARY_CARD_PALETTE, EPC_CARD_USAGE, EPC_CARD_REPRODUCTION, type CardSchool, type PreparedCard, type CardSlot } from "./school-cards";
 
 export type CardPrintAssets = { font: Uint8Array; logo?: string; photos: Map<string, string>; signatures: Partial<Record<CardSlot, string>>; stamps?: Partial<Record<CardSlot, string>> };
 const mm = (value: number) => value * 72 / 25.4;
@@ -52,7 +52,9 @@ function imageFit(doc: PDFKit.PDFDocument, source: string | undefined, x: number
   if (source) doc.image(source, mm(x), mm(y), { fit: [mm(w), mm(h)], align: "center", valign: "center" });
 }
 function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: CardSchool, assets: CardPrintAssets, side: "front" | "back") {
-  const ink = "#192923", muted = "#485D53", darkGreen = "#134A35", paper = "#F3F7F4";
+  const secondary = card.cycle === "secondary", silver = SECONDARY_CARD_PALETTE;
+  const ink = secondary ? silver.ink : "#192923", muted = secondary ? silver.muted : "#485D53",
+    darkGreen = secondary ? silver.accent : "#134A35", paper = secondary ? silver.paper : "#F3F7F4";
   const rect = (x: number, y: number, w: number, h: number, color: string, radius = 0) =>
     doc.roundedRect(mm(x), mm(y), mm(w), mm(h), mm(radius)).fill(color);
 
@@ -127,7 +129,7 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
     doc.fillColor(muted);
     text(doc, EPC_CARD_REPRODUCTION, 5, 41.0, noticeWidth, 7.1, 5.6, noticeAlign);
     if (showDirector && (slot === "french" || slot === "arabic")) {
-      rect(40, 14.1, 0.28, 33.1, "#CBDAD1");
+      rect(40, 14.1, 0.28, 33.1, secondary ? silver.silver : "#CBDAD1");
       doc.fillColor(darkGreen);
       text(doc, EPC_CARD_DIRECTOR[slot].toLocaleUpperCase("fr"), 41, 14.3, 41.2, 3, 5.2, "center");
       imageFit(doc, stamp, 50.6, 18.1, 22, 20.4);
@@ -136,7 +138,7 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
       text(doc, card.signatoryName, 41, 45.8, 41.2, 3.5, 6.5, "center");
     }
   }
-  rect(4, 50, 77.6, 0.35, "#DAA754");
+  rect(4, 50, 77.6, 0.35, secondary ? silver.rule : "#DAA754");
   doc.fillColor(side === "front" ? darkGreen : muted);
   text(doc, side === "front" ? school.name : SCHOOL_CARD_FOOTER, 4, 50.9, 77.6, 2.9, 5.5);
 }
@@ -145,9 +147,20 @@ function drawEpcSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: 
 export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, school: CardSchool, assets: CardPrintAssets, side: "front" | "back", x = 0, y = 0) {
   doc.save().translate(mm(x), mm(y));
   // Print-ready card: keep the rounded background but no outer stroke (front or back).
-  doc.roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).fill(schoolCardBackground(school, side));
+  const secondary = card.cycle === "secondary", silver = SECONDARY_CARD_PALETTE;
+  const accent = secondary ? silver.accent : orange;
+  const ink = (original: string) => secondary ? silver.ink : original;
+  const muted = (original: string) => secondary ? silver.muted : original;
+  const background = schoolCardBackground(school, side, card.cycle);
+  if (secondary && side === "front") {
+    const gradient = doc.linearGradient(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM));
+    gradient.stop(0, silver.highlight).stop(0.48, background).stop(0.72, silver.highlight).stop(1, silver.silver);
+    doc.roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).fill(gradient);
+  } else {
+    doc.roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).fill(background);
+  }
   doc.save().roundedRect(0, 0, mm(CARD_WIDTH_MM), mm(CARD_HEIGHT_MM), mm(3)).clip();
-  doc.font("card").fillColor(green);
+  doc.font("card").fillColor(secondary ? silver.accent : green);
   if (usesEpcSchoolCardLayout(school)) {
     drawEpcSchoolCard(doc, card, school, assets, side);
   } else if (side === "front") {
@@ -156,26 +169,26 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     const nationalEmblem = documentNationalEmblem(school.country_name);
     imageFit(doc, assets.logo, 2.7, 1.6, 11, 11.5);
     imageFit(doc, nationalEmblem, 73.5, 1.6, 9, 10);
-    doc.fillColor(orange);
+    doc.fillColor(accent);
     text(doc, school.country_name || "République de Côte d’Ivoire", 15, 2.1, 55.5, 3, 6.2, "center");
-    doc.fillColor("#404A44");
+    doc.fillColor(muted("#404A44"));
     text(doc, school.country_motto || "Union - Discipline - Travail", 15, 5.3, 55.5, 2.5, 4.8, "center");
     const ministry = schoolCardMinistry(school, card.year);
     if (ministry) text(doc, ministry, 15, 7.8, 55.5, 4.2, 4.1, "center");
 
-    doc.roundedRect(mm(29), mm(12.2), mm(32), mm(4.7), mm(0.8)).fill("#0B7A22");
+    doc.roundedRect(mm(29), mm(12.2), mm(32), mm(4.7), mm(0.8)).fill(secondary ? silver.accent : "#0B7A22");
     doc.fillColor("#FFFFFF");
     text(doc, "CARTE SCOLAIRE", 29, 12.6, 32, 4.1, 8.1, "center");
-    doc.fillColor("#343E37");
+    doc.fillColor(muted("#343E37"));
     text(doc, `ANNÉE SCOLAIRE : ${card.year}`, 24.5, 17.4, 41, 2.7, 5.2, "center");
 
     imageFit(doc, assets.photos.get(card.studentId), 4.5, 21.2, 21.7, 24.5);
     if (!assets.photos.has(card.studentId)) {
-      doc.fillColor("#7C8B81");
+      doc.fillColor(muted("#7C8B81"));
       text(doc, "Photo absente", 6.2, 30, 18.1, 6, 5.4, "center");
     }
 
-    doc.fillColor("#151C17");
+    doc.fillColor(ink("#151C17"));
     text(doc, "Matricule :", 28, 21.6, 16, 3.3, 6.1);
     text(doc, card.matricule || "Non renseigné", 43, 21.3, 39, 4, 7.4);
     text(doc, "Nom et Prénoms :", 28, 26.1, 50, 2.8, 6.0);
@@ -193,8 +206,8 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     text(doc, teachingClasses.length > 1 ? "Classes" : "Classe", 28, 42.7, 11.5, 3.2, 6);
     teachingClasses.forEach((classe, index) =>
       text(doc, classe.label, 39.5, 42.5 + index * 2.65, 42.5, 3.25, 6.5));
-    doc.rect(mm(3.5), mm(48.5), mm(78.6), mm(0.7)).fill(orange);
-    doc.fillColor("#181F1A");
+    doc.rect(mm(3.5), mm(48.5), mm(78.6), mm(0.7)).fill(secondary ? silver.rule : orange);
+    doc.fillColor(ink("#181F1A"));
     text(doc, school.name, 4.0, 49.8, 77.6, 3.1, 7.1, "center");
   } else {
     // QR-free reverse: institutional identity and legal notices from the visual reference.
@@ -205,11 +218,11 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     const hasDirector = stamp || signature;
     imageFit(doc, stamp, 59.3, 2, 22.5, 15.7);
     imageFit(doc, signature, 59.3, stamp ? 18 : 10, 22.5, 5.5);
-    doc.fillColor("#17211B");
+    doc.fillColor(ink("#17211B"));
     if (hasDirector) text(doc, card.signatoryName, 57.6, 24, 25.5, 3, 5.1, "center");
     text(doc, school.name, 4.5, hasDirector ? 25.0 : 22, hasDirector ? 51 : 76.6, 4.6, 7.1, hasDirector ? "left" : "center");
 
-    doc.fillColor("#27342B");
+    doc.fillColor(ink("#27342B"));
     text(doc, "Cette carte est strictement personnelle et obligatoire pour toutes les démarches scolaires et administratives.",
       8, hasDirector ? 30.0 : 29, 69.6, hasDirector ? 6.0 : 6.5, 5.8, "center");
     text(doc, "Toute reproduction, altération ou utilisation frauduleuse est formellement interdite.",
@@ -217,8 +230,8 @@ export function drawSchoolCard(doc: PDFKit.PDFDocument, card: PreparedCard, scho
     text(doc, `En cas de perte, prière de contacter l’établissement au : ${school.phone || "coordonnées à renseigner"}`,
       8, 43.4, 69.6, 5.2, 5.5, "center");
 
-    doc.rect(mm(3.5), mm(50.3), mm(78.6), mm(0.5)).fill(orange);
-    doc.fillColor("#536157");
+    doc.rect(mm(3.5), mm(50.3), mm(78.6), mm(0.5)).fill(secondary ? silver.rule : orange);
+    doc.fillColor(muted("#536157"));
     text(doc, SCHOOL_CARD_FOOTER, 4, 51.3, 77.6, 2.0, 4.7, "center");
   }
   doc.restore().restore();

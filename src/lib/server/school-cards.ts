@@ -4,7 +4,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getRequestRoles, requireInstitutionRole } from "@/lib/auth/server-context";
 import { educatorNeedsAssignedClasses, educatorAssignmentCoversClass, loadEducatorAssignments } from "@/lib/auth/educator-class-scope";
-import { CARD_READ_ROLES, CARD_WRITE_ROLES, CARD_SLOTS, defaultCardConfiguration, cardWarnings, signatureSlotForTracks, cardTeachingTrackForClass, usesEpcSchoolCardLayout, type CardConfiguration, type SchoolCard, type CardSlot, type CardAsset } from "@/lib/school-cards";
+import { CARD_READ_ROLES, CARD_WRITE_ROLES, CARD_SLOTS, defaultCardConfiguration, cardWarnings, signatureSlotForTracks, cardTeachingTrackForClass, usesEpcSchoolCardLayout, schoolCardCycleForClass, type CardConfiguration, type SchoolCard, type CardSlot, type CardAsset } from "@/lib/school-cards";
 import { parseSchoolCyclesSettings, resolveSchoolCycleForClass } from "@/lib/school-cycles";
 import { readStudentProgramSettings, programsForStudent, isBilingualSchool, expandPedagogicalEnrollments } from "@/lib/school-student-programs";
 import { readSchoolTeachingSignatories } from "@/lib/school-teaching-signatories";
@@ -132,7 +132,7 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
     const arabicOnly = cardTrack === "arabic" && !orderedClasses.some(classe => classe.track === "french");
     const name = (arabicOnly ? student.full_name_ar?.trim() : "") ||
       student.full_name || [student.last_name, student.first_name].filter(Boolean).join(" ");
-    const item: SchoolCard = { enrollmentId: row.id, studentId: row.student_id, classId: home.id, year,
+    const item: SchoolCard = { enrollmentId: row.id, studentId: row.student_id, classId: home.id, year, cycle: schoolCardCycleForClass(home, cycles),
       name, matricule: student.matricule || "", birthdate: student.birthdate || "", birthPlace: student.birth_place || "",
       gender: student.gender || "", classLabel: home.label, level: home.level || "", classes: orderedClasses,
       photoUrl: photos.get(student.photo_path) || null, tracks, cardTrack, revoked: revocations.has(row.id), warnings: [] };
