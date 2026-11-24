@@ -65,7 +65,7 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
   const policy = readStudentProgramSettings(ctx.school.settings_json).years[year];
   const includeLinks = Object.values(policy?.classes || {}).some(classe => classe.linkedStudentIds?.length);
   const enrollmentClasses = includeLinks ? allClasses : classes;
-  let query = ctx.service.from("class_enrollments").select("id,student_id,class_id,start_date,end_date,students:student_id!inner(id,institution_id,full_name,full_name_ar,first_name,last_name,matricule,birthdate,birth_place,gender,photo_path,lifecycle_status)")
+  let query = ctx.service.from("class_enrollments").select("id,student_id,class_id,start_date,end_date,students:student_id!inner(id,institution_id,full_name,first_name,last_name,matricule,birthdate,birth_place,gender,photo_path,lifecycle_status)")
     .eq("institution_id", ctx.instId).is("end_date", null).in("class_id", enrollmentClasses.map(row => row.id))
     .eq("students.institution_id", ctx.instId).order("id");
   if (options.enrollmentIds) query = query.in("id", options.enrollmentIds);
@@ -129,9 +129,14 @@ export async function loadCardEnrollments(ctx: CardScope, year: string, options:
       ...teachingClasses.filter(classe => classe.track === "french"),
       ...teachingClasses.filter(classe => classe.track !== "french"),
     ];
-    const arabicOnly = cardTrack === "arabic" && !orderedClasses.some(classe => classe.track === "french");
-    const name = (arabicOnly ? student.full_name_ar?.trim() : "") ||
-      student.full_name || [student.last_name, student.first_name].filter(Boolean).join(" ");
+    // School cards always use the civil name in Latin script, regardless of teaching track.
+    // Never transliterate or substitute the Arabic display name for an official identity.
+    const latinName = (value: string | null | undefined) => {
+      const clean = value?.trim() || "";
+      return /\p{Script=Latin}/u.test(clean) && !/\p{Script=Arabic}/u.test(clean) ? clean : "";
+    };
+    const name = latinName(student.full_name) ||
+      latinName([student.last_name, student.first_name].filter(Boolean).join(" "));
     const item: SchoolCard = { enrollmentId: row.id, studentId: row.student_id, classId: home.id, year, cycle: schoolCardCycleForClass(home, cycles),
       name, matricule: student.matricule || "", birthdate: student.birthdate || "", birthPlace: student.birth_place || "",
       gender: student.gender || "", classLabel: home.label, level: home.level || "", classes: orderedClasses,
