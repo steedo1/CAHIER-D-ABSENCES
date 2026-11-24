@@ -35,12 +35,13 @@ test("silver palette applies only to secondary cards, including mixed-cycle inst
       assert.equal(schoolCardBackground(school, "back", cycle), "#FFFFFF");
     }
   }
+  const arabic = randomUUID(), college = randomUUID();
   const settings = parseSchoolCyclesSettings({ school_cycles_v1: {
     version: 1, enabled: true, enabledCycles: ["primary", "secondary"],
-    classCycleById: { arabic: "primary", college: "secondary" },
+    classCycleById: { [arabic]: "primary", [college]: "secondary" },
   } });
-  assert.equal(schoolCardCycleForClass({id:"arabic",level:"nonstandard"},settings),"primary");
-  assert.equal(schoolCardCycleForClass({id:"college",level:"nonstandard"},settings),"secondary");
+  assert.equal(schoolCardCycleForClass({id:arabic,level:"nonstandard"},settings),"primary");
+  assert.equal(schoolCardCycleForClass({id:college,level:"nonstandard"},settings),"secondary");
   assert.equal(schoolCardCycleForClass({id:"a",level:"CP1"},settings),"primary");
   assert.equal(schoolCardCycleForClass({id:"b",level:"3ème"},settings),"secondary");
   assert.equal(schoolCardCycleForClass({id:"c",level:null},settings),undefined);
