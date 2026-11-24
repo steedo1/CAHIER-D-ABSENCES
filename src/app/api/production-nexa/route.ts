@@ -47,10 +47,12 @@ export async function GET(req: NextRequest) {
         .eq("institution_id", inst).eq("academic_year", year).order("created_at", { ascending: false }).order("id").range(offset, offset + 49);
       if (error) throw Error("archives_indisponibles");
       const actorIds = [...new Set(data.map(row => row.actor_id))];
-      const actors = actorIds.length ? await ctx.service.from("nexa_production_accounts").select("user_id,email").in("user_id", actorIds) : null;
+      const [actors, recovered] = await Promise.all([
+        actorIds.length ? ctx.service.from("nexa_production_accounts").select("user_id,email").in("user_id", actorIds) : null,
+        recoverArchiveClasses(ctx, year, data as ProductionArchive[]).catch(() => new Map()),
+      ]);
       if (actors?.error) throw Error("responsables_indisponibles");
       const emails = new Map(actors?.data?.map(row => [row.user_id, row.email]));
-      const recovered = await recoverArchiveClasses(ctx, year, data as ProductionArchive[]).catch(() => new Map());
       return cardJson({ archives: data.map(row => ({ ...row, actor_name: emails.get(row.actor_id) ?? "Super-administration",
         ...(recovered.has(row.id) && { recovered_classes: recovered.get(row.id) }),
       })), ...permissions, nextOffset: data.length === 50 ? offset + 50 : null });
