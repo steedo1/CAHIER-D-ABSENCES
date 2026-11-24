@@ -183,7 +183,8 @@ test("EPC produces one card with both teaching classes with configured teaching 
   const bilingual = roster.items.find(row => row.enrollmentId === home.id);
   assert.deepEqual(bilingual.classes.map(row => row.id), [french.id, arabic.id]);
   const arabicCard = roster.items.find(row => row.enrollmentId === arabicOnly.id);
-  assert.equal(arabicCard.name, "عبد الرحمن محمد أمين");
+  assert.equal(arabicCard.name, db.tables.students[1].full_name);
+  assert.doesNotMatch(arabicCard.name, /\p{Script=Arabic}/u);
   assert.deepEqual(arabicCard.classes.map(row => row.id), [arabic.id]);
   assert.deepEqual(roster.items.find(row => row.enrollmentId === frenchOnly.id).classes.map(row => row.id), [french.id]);
 
@@ -193,6 +194,7 @@ test("EPC produces one card with both teaching classes with configured teaching 
   assert.equal(new Set(batch.map(card => card.studentId)).size, 3);
   assert.equal(batch.find(card => card.studentId === home.student_id).signatureSlot, "arabic");
   assert.equal(batch.find(card => card.studentId === arabicOnly.student_id).signatureSlot, "arabic");
+  assert.equal(batch.find(card => card.studentId === arabicOnly.student_id).name, db.tables.students[1].full_name);
   assert.equal(batch.find(card => card.studentId === frenchOnly.student_id).signatureSlot, "french");
   assert.ok(batch.every(card => !card.token));
   delete scope.configuration.signatures.french;
