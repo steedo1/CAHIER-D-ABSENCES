@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import PDFDocument from "pdfkit";
 import { PDFParse } from "pdf-parse";
 import sharp from "sharp";
-import { productionUpload } from "../src/lib/production-nexa.ts";
+import { productionUpload, productionArchiveStudent, archiveClassSummary } from "../src/lib/production-nexa.ts";
 import { renderCardPages } from "../src/lib/school-card-pdf.ts";
 import { createFixtureRouteLoader } from "./helpers/multicycle-fixture.mjs";
 import { schoolCardFixture, request, year } from "./helpers/school-card-fixture.mjs";
@@ -86,8 +86,7 @@ async function create(db, overrides = {}) {
   return account.user_id;
 }
 function archiveRequest(ticket, pdf, items) {
-  const body = productionUpload(new Blob([new Uint8Array(pdf)]), items.map(item =>
-    ({ id: item.studentId, name: item.name, matricule: item.matricule })));
+  const body = productionUpload(new Blob([new Uint8Array(pdf)]), items.map(productionArchiveStudent));
   const url = new URL(`https://cards.example.invalid${api}/archive`);
   return Object.assign(new Request(url, { method: "POST", headers: {
     origin: url.origin, "Content-Type": body.type, "X-Nexa-Production-Ticket": ticket,
@@ -175,9 +174,12 @@ test("School prepares and orders; scoped Production selects EPC cards, archives,
   assert.equal((await db.admin(route(`${api}/archive`)).POST(archiveRequest(data.ticket, pdf, data.items))).status, 403);
   assert.equal((await save.POST(archiveRequest(data.ticket.slice(0, -2), pdf, data.items))).status, 403);
   assert.equal((await save.POST(archiveRequest(data.ticket, pdf, data.items.map(item => ({ ...item, name: "Modified" })) ))).status, 400);
+  assert.equal((await save.POST(archiveRequest(data.ticket, pdf, data.items.map(item => ({ ...item, classes: [{ id: item.classId, label: "Fake", level: "CP1", track: null }] })) ))).status, 400);
   const firstSave = await save.POST(archiveRequest(data.ticket, pdf, data.items));
   assert.equal(firstSave.status, 201);
   const { archive } = await firstSave.json();
+  assert.deepEqual(archiveClassSummary(archive.students).map(row => row.label), ["CP1 AR", "CP1 FR"]);
+
   assert.equal((await save.POST(archiveRequest(data.ticket, pdf, data.items))).status, 200);
   assert.equal(db.files.size, 1);
   assert.equal((await (await generate()).json()).archive.id, archive.id);
@@ -191,6 +193,18 @@ test("School prepares and orders; scoped Production selects EPC cards, archives,
   assert.equal(version.version, 2);
   assert.equal(version.previous_id, archive.id);
   assert.equal((await generate(archive.id)).status, 409);
+  const list = () => production.GET(request(`${api}?${scope}&view=archives`));
+  const listed = await (await list()).json();
+  assert.deepEqual(archiveClassSummary(listed.archives.find(row => row.id === version.id).students).map(row => row.label), ["CP1 AR", "CP1 FR"]);
+  // Mimic a historical archive whose old manifest did not include class data.
+  const legacy = db.tables.nexa_card_archives.find(row => row.id === archive.id);
+  legacy.created_at = new Date().toISOString();
+  legacy.students = legacy.students.map(({ id, name, matricule }) => ({ id, name, matricule }));
+  const historical = await (await list()).json();
+  const oldArchive = historical.archives.find(row => row.id === archive.id);
+  assert.deepEqual(oldArchive.recovered_classes, [{ level: "CP1", label: "CP1 FR" }]);
+  assert.equal(oldArchive.students[0].classes, undefined);
+  assert.equal(historical.archives.find(row => row.id === version.id).recovered_classes, undefined);
   const params = Promise.resolve({ id: archive.id });
   const download = request(`${api}/archive/${archive.id}?school=${db.legacyId}`);
   assert.equal((await db.admin(route(`${api}/archive/[id]`)).GET(download, { params })).status, 403);

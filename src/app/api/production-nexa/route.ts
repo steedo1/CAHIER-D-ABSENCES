@@ -1,8 +1,8 @@
 import type { NextRequest } from "next/server";
-import { PDF_BATCH_SIZE, ORDER_TRANSITIONS, type OrderStatus } from "@/lib/production-nexa";
+import { PDF_BATCH_SIZE, ORDER_TRANSITIONS, productionArchiveStudent, type ProductionArchive, type OrderStatus } from "@/lib/production-nexa";
 import { activeOrder, ARCHIVE_FIELDS, canProduce, EVENT_FIELDS, isUuid, isYear, issueGenerationTicket,
   ORDER_FIELDS, productionAccess, productionBatchKey, productionStudentsDigest, ProductionError, productionFailure, productionJson, productionSchool,
-  selectedCards, studentSelection } from "@/lib/server/production-nexa";
+  recoverArchiveClasses, selectedCards, studentSelection } from "@/lib/server/production-nexa";
 import { cardJson, cardSignatureImages, cardStampImages, isCardYearValid, loadCardEnrollments,
   productionCardVisuals, readCardYears, requireCardOrigin } from "@/lib/server/school-cards";
 
@@ -50,7 +50,10 @@ export async function GET(req: NextRequest) {
       const actors = actorIds.length ? await ctx.service.from("nexa_production_accounts").select("user_id,email").in("user_id", actorIds) : null;
       if (actors?.error) throw Error("responsables_indisponibles");
       const emails = new Map(actors?.data?.map(row => [row.user_id, row.email]));
-      return cardJson({ archives: data.map(row => ({ ...row, actor_name: emails.get(row.actor_id) ?? "Super-administration" })), ...permissions, nextOffset: data.length === 50 ? offset + 50 : null });
+      const recovered = await recoverArchiveClasses(ctx, year, data as ProductionArchive[]).catch(() => new Map());
+      return cardJson({ archives: data.map(row => ({ ...row, actor_name: emails.get(row.actor_id) ?? "Super-administration",
+        ...(recovered.has(row.id) && { recovered_classes: recovered.get(row.id) }),
+      })), ...permissions, nextOffset: data.length === 50 ? offset + 50 : null });
     }
     if (page === "history") {
       const subject = params.get("id");
@@ -161,7 +164,7 @@ export async function POST(req: NextRequest) {
     const knownSlots = reuseVisuals && Array.isArray(body.visualSlots) ? body.visualSlots : [];
     const neededSlots = new Set([...slots].filter(slot => !knownSlots.includes(slot)));
     const [signatures, stamps] = await Promise.all([cardSignatureImages(ctx, neededSlots), cardStampImages(ctx, neededSlots)]);
-    const students = items.map(item => ({ id: item.studentId, name: item.name, matricule: item.matricule }));
+    const students = items.map(productionArchiveStudent);
     const ticket = issueGenerationTicket({
       actorId: access.userId, institutionId: ctx.instId, year: body.year, orderId: order?.data?.id ?? null,
       previousId: previous?.data?.id ?? null, batchKey, version: Number(previous?.data?.version ?? 0) + 1,

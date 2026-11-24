@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CardPreview, field, primary, productionDate, productionRequest, surface } from "@/components/production-nexa/shared";
 import { ORDER_LABELS, ORDER_TRANSITIONS, PDF_BATCH_SIZE, PRODUCTION_EVENT_LABELS, productionUpload, type OrderStatus,
-  type ProductionArchive, type ProductionEvent, type ProductionOrder } from "@/lib/production-nexa";
+  archiveClassSummary, archiveClassTitle, productionArchiveStudent, type ProductionArchive, type ProductionEvent, type ProductionOrder } from "@/lib/production-nexa";
 import { schoolCardClasses, type CardClass, type CardSchool, type CardSlot, type CardYear,
   type PreparedCard, type SchoolCard } from "@/lib/school-cards";
 
@@ -225,7 +225,7 @@ export default function ProductionWorkspace() {
       const { blob, missing } = await exportSchoolCardPdf(data.items, assets.school, assets.signatures,
         { individual: options.format === "pvc", flip: options.flip, stamps: assets.stamps });
       if (missing.length) throw Error(`Images indisponibles. Relancez après vérification. ${missing.join(", ")}`);
-      const payload = productionUpload(blob, data.items.map(item => ({ id: item.studentId, name: item.name, matricule: item.matricule })));
+      const payload = productionUpload(blob, data.items.map(productionArchiveStudent));
       pending.current = { payload, ticket: data.ticket, ids: old ? [] : data.items.map(item => item.studentId) };
       setCanRetry(true);
       await upload();
@@ -373,6 +373,8 @@ export default function ProductionWorkspace() {
       {!archives.length && !loading && <p>Aucune production archivée.</p>}
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={batchLocked} checked={allowMissing} onChange={e => setAllowMissing(e.target.checked)} /> Autoriser les informations manquantes lors d’une régénération</label>
       {archives.map(item => <article key={item.id} className="space-y-2 rounded-lg border p-3 text-sm">
+        <p className="font-semibold text-base text-slate-900">{archiveClassTitle(item.recovered_classes ?? archiveClassSummary(item.students)) || "Classe non renseignée"}</p>
+        {item.recovered_classes !== undefined && <p className="text-xs text-slate-500">Classes retrouvées dans les inscriptions de cette année à la date d’archivage.</p>}
         <p><strong>Version {item.version}</strong> · {item.student_ids.length} carte(s) · {item.format === "pvc" ? "PVC" : "A4"} · {productionDate(item.created_at)}</p>
         <p className="text-slate-600">Responsable {item.actor_name ?? item.actor_id}{item.order_id ? ` · Commande ${item.order_id.slice(0, 8)}` : ""}</p>
         <details><summary>Élèves concernés</summary><ul className="ml-5 list-disc">{item.students.map(student =>
