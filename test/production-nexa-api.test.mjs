@@ -193,6 +193,18 @@ test("School prepares and orders; scoped Production selects EPC cards, archives,
   assert.equal(version.version, 2);
   assert.equal(version.previous_id, archive.id);
   assert.equal((await generate(archive.id)).status, 409);
+  const list = () => production.GET(request(`${api}?${scope}&view=archives`));
+  const listed = await (await list()).json();
+  assert.deepEqual(archiveClassSummary(listed.archives.find(row => row.id === version.id).students).map(row => row.label), ["CP1 AR", "CP1 FR"]);
+  // Mimic a historical archive whose old manifest did not include class data.
+  const legacy = db.tables.nexa_card_archives.find(row => row.id === archive.id);
+  legacy.created_at = new Date().toISOString();
+  legacy.students = legacy.students.map(({ id, name, matricule }) => ({ id, name, matricule }));
+  const historical = await (await list()).json();
+  const oldArchive = historical.archives.find(row => row.id === archive.id);
+  assert.deepEqual(oldArchive.recovered_classes, [{ level: "CP1", label: "CP1 FR" }]);
+  assert.equal(oldArchive.students[0].classes, undefined);
+  assert.equal(historical.archives.find(row => row.id === version.id).recovered_classes, undefined);
   const params = Promise.resolve({ id: archive.id });
   const download = request(`${api}/archive/${archive.id}?school=${db.legacyId}`);
   assert.equal((await db.admin(route(`${api}/archive/[id]`)).GET(download, { params })).status, 403);
