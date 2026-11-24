@@ -7,7 +7,7 @@ import {execFileSync} from "node:child_process";
 import {createClient} from "@supabase/supabase-js";
 import sharp from "sharp";
 import PDFDocument from "pdfkit";
-import { productionUpload } from "../src/lib/production-nexa.ts";
+import { productionUpload, productionArchiveStudent } from "../src/lib/production-nexa.ts";
 import { renderCardPages } from "../src/lib/school-card-pdf.ts";
 const localStatus=JSON.parse(await readFile(process.env.CARD_LOCAL_STATUS || "/tmp/card-supabase-status.json","utf8"));
 const get=key=>localStatus[key]||localStatus[key.toLowerCase()];
@@ -151,7 +151,7 @@ const doc=new PDFDocument({autoFirstPage:false}),chunks=[];
 const done=new Promise((resolve,reject)=>{doc.on("data",chunk=>chunks.push(chunk));doc.on("end",()=>resolve(Buffer.concat(chunks)));doc.on("error",reject);});
 renderCardPages(doc,prepared.items,prepared.school,{font,photos:new Map(),signatures:prepared.signatures,stamps:prepared.stamps},{individual:true});doc.end();
 const pdf=await done;
-const payload=productionUpload(new Blob([new Uint8Array(pdf)]),prepared.items.map(item=>({id:item.studentId,name:item.name,matricule:item.matricule})));
+const payload=productionUpload(new Blob([new Uint8Array(pdf)]),prepared.items.map(productionArchiveStudent));
 const upload=await fetch(origin+production+"/archive",{method:"POST",headers:{Cookie:epc.actors.production.cookie,Origin:origin,
   "Content-Type":payload.type,"X-Nexa-Production-Ticket":prepared.ticket},body:payload});
 assert.equal(upload.status,201);

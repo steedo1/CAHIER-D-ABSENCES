@@ -1,3 +1,5 @@
+import { schoolCardClasses, type SchoolCard } from "./school-cards";
+
 export const PRODUCTION_ROLE = "nexa_production";
 export const PRODUCTION_PERMISSIONS = ["cards.read", "cards.orders", "cards.generate", "cards.download"] as const;
 export type ProductionPermission = typeof PRODUCTION_PERMISSIONS[number];
@@ -12,7 +14,29 @@ export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
 };
 export const PDF_BATCH_SIZE = 40;
 export const PDF_MAX_BYTES = 12 * 1024 * 1024;
-export function productionUpload(pdf: Blob, students: { id: string; name: string; matricule: string }[]) {
+export type ArchiveClass = { level: string; label: string };
+export type ArchiveStudent = { id: string; name: string; matricule: string; classes?: ArchiveClass[] };
+export function productionArchiveStudent(card: SchoolCard): ArchiveStudent {
+  return { id: card.studentId, name: card.name, matricule: card.matricule,
+    classes: schoolCardClasses(card).map(({ level, label }) => ({ level, label })) };
+}
+export function archiveClassSummary(students: ArchiveStudent[]): ArchiveClass[] {
+  const distinct = new Map<string, ArchiveClass>();
+  for (const student of students) for (const classe of student.classes ?? []) {
+    if (!classe.label && !classe.level) continue;
+    distinct.set(JSON.stringify([classe.level, classe.label]), classe);
+  }
+  return [...distinct.values()].sort((a, b) => a.level.localeCompare(b.level, "fr", { numeric: true }) ||
+    a.label.localeCompare(b.label, "fr", { numeric: true }));
+}
+export function archiveClassTitle(classes: ArchiveClass[]) {
+  return classes.map(({ level, label }) => {
+    if (!label) return level;
+    if (!level || label.toLocaleLowerCase("fr").startsWith(level.toLocaleLowerCase("fr"))) return label;
+    return [level, label].join(" — ");
+  }).join(" · ");
+}
+export function productionUpload(pdf: Blob, students: ArchiveStudent[]) {
   const manifest = new TextEncoder().encode(JSON.stringify(students));
   const length = new Uint8Array(4);
   new DataView(length.buffer).setUint32(0, manifest.byteLength);
@@ -25,7 +49,8 @@ export type ProductionOrder = {
 };
 export type ProductionArchive = {
   id: string; order_id: string | null; previous_id: string | null; version: number;
-  academic_year: string; actor_id: string; actor_name?: string; student_ids: string[]; students: { id: string; name: string; matricule: string }[];
+  academic_year: string; actor_id: string; actor_name?: string; student_ids: string[]; students: ArchiveStudent[];
+  recovered_classes?: ArchiveClass[];
   format: "pvc" | "a4"; flip: "long" | "short"; created_at: string;
 };
 export type ProductionEvent = {

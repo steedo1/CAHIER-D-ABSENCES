@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
-import { PRODUCTION_BUCKET, PDF_MAX_BYTES } from "@/lib/production-nexa";
+import { PRODUCTION_BUCKET, PDF_MAX_BYTES, type ArchiveStudent } from "@/lib/production-nexa";
 import { ARCHIVE_FIELDS, canProduce, openGenerationTicket, productionAccess, ProductionError, productionFailure, productionStudentsDigest, readLimited } from "@/lib/server/production-nexa";
 import { cardJson, requireCardOrigin } from "@/lib/server/school-cards";
 
@@ -28,13 +28,17 @@ export async function POST(req: NextRequest) {
       const payload = await readLimited(req, PDF_MAX_BYTES + 65_536);
       const metadataSize = payload.length >= 4 ? payload.readUInt32BE(0) : 0;
       if (!metadataSize || metadataSize > 65_532 || metadataSize + 4 >= payload.length) throw new ProductionError("fiche_production_invalide", 400);
-      let students: { id: string; name: string; matricule: string }[];
+      let students: ArchiveStudent[];
       try {
         students = JSON.parse(payload.subarray(4, 4 + metadataSize).toString("utf8"));
         if (!Array.isArray(students) || students.length !== ticket.studentIds.length || students.some((item, index) =>
-          !item || item.id !== ticket.studentIds[index] || typeof item.name !== "string" || typeof item.matricule !== "string") ||
+          !item || item.id !== ticket.studentIds[index] || typeof item.name !== "string" || typeof item.matricule !== "string" ||
+          (item.classes !== undefined && (!Array.isArray(item.classes) || item.classes.some(classe =>
+            !classe || typeof classe.level !== "string" || typeof classe.label !== "string")))) ||
           productionStudentsDigest(students) !== ticket.studentsDigest) throw Error();
-        students = students.map(({ id, name, matricule }) => ({ id, name, matricule }));
+        students = students.map(({ id, name, matricule, classes }) => ({ id, name, matricule,
+          ...(classes !== undefined && { classes: classes.map(({ level, label }) => ({ level, label })) }),
+        }));
       } catch { throw new ProductionError("fiche_production_invalide", 400); }
       const bytes = payload.subarray(4 + metadataSize);
       if (bytes.length > PDF_MAX_BYTES) throw new ProductionError("pdf_trop_volumineux", 413);

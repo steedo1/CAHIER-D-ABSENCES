@@ -6,7 +6,7 @@ import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-s
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { CARD_UUID } from "@/lib/school-card-token";
 import { cardFeatureEnabled, cardJson, loadCardClasses, loadCardEnrollments, loadCardScope, type CardScope } from "./school-cards";
-import { PDF_BATCH_SIZE, PRODUCTION_ROLE, type ProductionPermission } from "@/lib/production-nexa";
+import { PDF_BATCH_SIZE, PRODUCTION_ROLE, archiveClassSummary, type ArchiveStudent, type ProductionArchive, type ProductionPermission } from "@/lib/production-nexa";
 
 export const ORDER_FIELDS = "id,academic_year,status,student_ids,created_at,submitted_by,revision";
 export const ARCHIVE_FIELDS = "id,order_id,previous_id,version,academic_year,actor_id,student_ids,students,format,flip,created_at";
@@ -124,8 +124,45 @@ function signTicket(payload: string) {
 export function productionBatchKey(school: string, year: string, order: string | null, format: unknown, flip: unknown, ids: string[]) {
   return createHash("sha256").update(JSON.stringify([school, year, order, format, flip, ids])).digest("hex");
 }
-export function productionStudentsDigest(students: { id: string; name: string; matricule: string }[]) {
-  return createHash("sha256").update(JSON.stringify(students.map(({ id, name, matricule }) => ({ id, name, matricule })))).digest("hex");
+export function productionStudentsDigest(students: ArchiveStudent[]) {
+  return createHash("sha256").update(JSON.stringify(students.map(({ id, name, matricule, classes }) => ({
+    id, name, matricule, ...(classes !== undefined && { classes: classes.map(({ level, label }) => ({ level, label })) }),
+  })))).digest("hex");
+}
+
+/** Older PDF manifests omitted class labels. Recover the historical enrollment where possible,
+ * without modifying any stored archive or claiming that the old PDF contained these labels. */
+export async function recoverArchiveClasses(ctx: CardScope, year: string, archives: ProductionArchive[]) {
+  const old = archives.filter(row => row.students.some(student => student.classes === undefined));
+  if (!old.length) return new Map<string, ReturnType<typeof archiveClassSummary>>();
+  const classes = await loadCardClasses(ctx, year);
+  const byClass = new Map(classes.map(row => [row.id, row]));
+  const ids = [...new Set(old.flatMap(row => row.student_ids))];
+  type Enrollment = { student_id: string; class_id: string; start_date: string | null; end_date: string | null };
+  const byStudent = new Map<string, Enrollment[]>();
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const { data, error } = await ctx.service.from("class_enrollments").select("student_id,class_id,start_date,end_date")
+      .eq("institution_id", ctx.instId).in("student_id", ids.slice(offset, offset + 100));
+    if (error) throw Error("classes_archive_indisponibles");
+    for (const row of (data ?? []) as Enrollment[]) {
+      if (!byClass.has(row.class_id)) continue;
+      const list = byStudent.get(row.student_id) ?? [];
+      list.push(row);
+      byStudent.set(row.student_id, list);
+    }
+  }
+  return new Map(old.map(row => {
+    const day = row.created_at.slice(0, 10);
+    const recovered = row.students.map(student => ({
+      ...student,
+      classes: student.classes ?? (byStudent.get(student.id) ?? [])
+        .filter(enrollment => enrollment.start_date && enrollment.start_date <= day &&
+          (!enrollment.end_date || enrollment.end_date >= day))
+        .map(enrollment => byClass.get(enrollment.class_id)!)
+        .map(classe => ({ level: classe.level ?? "", label: classe.label })),
+    }));
+    return [row.id, archiveClassSummary(recovered)] as const;
+  }));
 }
 export function issueGenerationTicket(data: Omit<GenerationTicket, "id" | "expires">) {
   const payload = Buffer.from(JSON.stringify({ ...data, id: randomUUID(), expires: Date.now() + 20 * 60_000 })).toString("base64url");
