@@ -38,6 +38,7 @@ export default function ProductionWorkspace() {
   const [loading, setLoading] = useState(false), [busy, setBusy] = useState(false);
   const [error, setError] = useState(""), [status, setStatus] = useState("");
   const pending = useRef<Pending | null>(null);
+  const archivesPrefetched = useRef(false);
   const [canRetry, setCanRetry] = useState(false);
   const scope = `school=${encodeURIComponent(school)}&year=${encodeURIComponent(year)}`;
 
@@ -87,13 +88,32 @@ export default function ProductionWorkspace() {
         if (!controller.signal.aborted) { setOrders(page.orders); setNextPage(page.nextOffset); setCapabilities(page); }
       } else {
         const page = await productionRequest<{ archives: ProductionArchive[]; nextOffset: number | null } & Capabilities>(url, undefined, controller.signal);
-        if (!controller.signal.aborted) { setArchives(page.archives); setNextPage(page.nextOffset); setCapabilities(page); }
+        if (!controller.signal.aborted) {
+          archivesPrefetched.current = true;
+          setArchives(page.archives); setNextPage(page.nextOffset); setCapabilities(page);
+        }
       }
     }
     void load().catch(e => { if (!controller.signal.aborted) setError(e.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [school, year, scope, view]);
+
+  // Warm the archive list after the cards are available, without blocking card navigation.
+  // Keep the previous list visible while the active archive request refreshes it.
+  const cardsReady = cards !== null;
+  useEffect(() => {
+    if (!school || !year || view !== "cards" || !cardsReady || busy || archivesPrefetched.current) return;
+    const controller = new AbortController();
+    void productionRequest<{ archives: ProductionArchive[] }>(`${api}?${scope}&view=archives`, undefined, controller.signal)
+      .then(page => {
+        if (!controller.signal.aborted) {
+          archivesPrefetched.current = true;
+          setArchives(page.archives);
+        }
+      }).catch(() => { /* A normal archive request will retry and display any error. */ });
+    return () => controller.abort();
+  }, [school, year, scope, view, cardsReady, busy]);
 
   const prepared = useMemo(() => new Set(cards?.preparedIds), [cards]);
   const orderStudents = useMemo(() => order ? new Set(order.student_ids) : null, [order]);
@@ -120,6 +140,7 @@ export default function ProductionWorkspace() {
   }
 
   function resetScope() {
+    archivesPrefetched.current = false;
     setCards(null); setCapabilities(null); setOrders([]); setArchives([]); setNextPage(null); setLoading(false);
     setOrder(null); setHistory(null); setPreview(null); setSelected(new Set()); setClassId(""); setQuery(""); setError(""); setStatus("");
   }
@@ -129,7 +150,7 @@ export default function ProductionWorkspace() {
   }
   function setRecordsForView(next: View) {
     if (next !== view && next === "orders") setOrders([]);
-    if (next !== view && next === "archives") setArchives([]);
+    // Archive rows belong to this school/year and are cleared only when that scope changes.
   }
   async function run(action: () => Promise<void>) {
     setBusy(true); setError("");
