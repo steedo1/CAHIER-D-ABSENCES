@@ -40,7 +40,8 @@ test("le registre propose le contexte pédagogique puis les filtres métier", ()
 test("le registre affiche un vrai cahier de notes et permet la saisie admin", () => {
   assert.match(page, /Registre des notes/);
   assert.match(page, /Ajouter une note/);
-  assert.match(page, /Moyenne \/20/);
+  assert.match(page, /Bulletin \/20/);
+  assert.match(page, /official_averages/);
   assert.match(page, /Note \$\{index \+ 1\}/);
   assert.match(page, /action: "create_evaluation"/);
   assert.match(page, /action: "save_scores"/);
