@@ -3,6 +3,7 @@ import { isPrimaryGradeRegisterClass } from "@/lib/grades/grade-register-scope";
 import { primaryTitleScale } from "@/lib/grades/primary-storage-scale";
 import { selectProgramComponents } from "@/lib/school-subject-components";
 import { NextRequest, NextResponse } from "next/server";
+import { GET as readOfficialBulletin } from "../bulletin/route";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
@@ -587,6 +588,55 @@ async function loadRegisterOverview(
   );
 }
 
+// Same official, read-only calculation as the bulletin. Never derive an official
+// average from a teacher or publication filter, and never issue a QR.
+async function readRegisterOfficialAverages(req: NextRequest, classId: string, academicYear: string, period: PeriodRow | null, subjectId: string) {
+  const averages: Record<string, number | null> = {};
+  if (!period?.start_date || !period?.end_date) return { status: "not_applicable", averages };
+  try {
+    const url = new URL("/api/admin/grades/bulletin", req.url);
+    url.search = new URLSearchParams({
+      class_id: classId, academic_year: academicYear, grading_period_id: period.id,
+      from: period.start_date, to: period.end_date, export_light: "1",
+    }).toString();
+    const response = await readOfficialBulletin(new NextRequest(url, { headers: req.headers }));
+    const data = await response.json();
+    if (!response.ok || !data?.ok) return { status: "unavailable", averages };
+    const asAverage = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
+    if (data.specialized) {
+      if (data.specialized.cycle === "primary" || !Array.isArray(data.specialized.documents)) {
+        return { status: "not_applicable", averages };
+      }
+      let found = false;
+      for (const row of data.specialized.documents) {
+        const matches = [row.document?.french, row.document?.arabic].flatMap(program =>
+          Array.isArray(program?.subjects) ? program.subjects.filter((s: any) => s.id === subjectId) : []);
+        if (matches.length > 1 || (matches[0]?.denominator != null && Number(matches[0].denominator) !== 20)) {
+          return { status: "not_applicable", averages: {} };
+        }
+        if (matches.length) found = true;
+        if (row.studentId) averages[String(row.studentId)] = asAverage(matches[0]?.average);
+      }
+      return { status: found ? "ok" : "not_applicable", averages };
+    }
+    if (data.period?.from !== period.start_date || data.period?.to !== period.end_date ||
+        !Array.isArray(data.items) || !Array.isArray(data.subjects)) {
+      return { status: "unavailable", averages };
+    }
+    if (!data.subjects.some((s: any) => s.subject_id === subjectId)) {
+      return { status: "not_applicable", averages };
+    }
+    for (const row of data.items) {
+      if (!row.student_id || !Array.isArray(row.per_subject)) return { status: "unavailable", averages: {} };
+      averages[String(row.student_id)] = asAverage(row.per_subject.find((s: any) => s.subject_id === subjectId)?.avg20);
+    }
+    return { status: "ok", averages };
+  } catch (error) {
+    console.warn("[grade-register] official averages unavailable", error);
+    return { status: "unavailable", averages: {} };
+  }
+}
+
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireAdmin();
@@ -647,18 +697,21 @@ export async function GET(req: NextRequest) {
         "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,title,eval_date,eval_kind,scale,coeff,is_published,published_at,publication_status,submitted_at,reviewed_at",
       )
       .eq("class_id", classId)
-      .eq("teacher_id", teacherId)
       .in("subject_id", subject.ids);
+    const teacherScoped = teacherId === "__all__" ? evaluationBase : evaluationBase.eq("teacher_id", teacherId);
     const evaluationQuery = period
-      ? evaluationBase.or(buildPeriodScope(periodId, period))
-      : evaluationBase.eq("academic_year", academicYear);
+      ? teacherScoped.or(buildPeriodScope(periodId, period))
+      : teacherScoped.eq("academic_year", academicYear);
 
-    const { data: evaluationsRaw, error: evalError } = await evaluationQuery
-      .order("eval_date", { ascending: true })
-      .order("id", { ascending: true });
-    if (evalError) throw evalError;
-
-    const evaluations = (evaluationsRaw || []) as unknown as EvaluationRow[];
+    const evaluations: EvaluationRow[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data: page, error: evalError } = await evaluationQuery
+        .order("eval_date", { ascending: true }).order("id", { ascending: true })
+        .range(offset, offset + 999);
+      if (evalError) throw evalError;
+      evaluations.push(...((page || []) as unknown as EvaluationRow[]));
+      if ((page || []).length < 1000) break;
+    }
     const evaluationIds = uniqueStrings(evaluations.map((ev) => ev.id));
 
     const { scores, publishedEvaluationIds, workingEvaluationIds } =
@@ -713,8 +766,19 @@ export async function GET(req: NextRequest) {
       .eq("id", institutionId)
       .maybeSingle();
 
+    const official = await readRegisterOfficialAverages(req, classId, academicYear, period, subject.globalId);
+    const teachersById = new Map<string, string>();
+    const evaluationTeacherIds = uniqueStrings(evaluations.map(ev => ev.teacher_id));
+    for (const part of chunks(evaluationTeacherIds)) {
+      const { data: rows, error } = await srv.from("profiles").select("id,display_name").in("id", part);
+      if (error) throw error;
+      for (const row of rows || []) teachersById.set(String(row.id), String(row.display_name || "Enseignant"));
+    }
+
     return json({
       ok: true,
+      official_averages: official.averages,
+      official_average_status: official.status,
       institution_name: String(institution?.name || "").trim() || null,
       meta: {
         subject_ids_used: subject.ids,
@@ -750,6 +814,7 @@ export async function GET(req: NextRequest) {
       roster,
       evaluations: evaluations.map((ev, index) => ({
         ...ev,
+        teacher_name: teachersById.get(String(ev.teacher_id || "")) || null,
         scale: primaryTitleScale(ev.title) ?? ev.scale,
         column_label: `Note ${index + 1}`,
         component_label: ev.subject_component_id
