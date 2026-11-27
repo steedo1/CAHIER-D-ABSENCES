@@ -899,7 +899,6 @@ export async function GET(req: NextRequest) {
     searchParams.get("period_code") || searchParams.get("period") || "",
   ).trim();
 
-  const hasDateFilter = !!from || !!to;
 
   if (!class_id) {
     return NextResponse.json({ error: "class_id_required" }, { status: 400 });
@@ -951,33 +950,38 @@ export async function GET(req: NextRequest) {
   );
 
   // ───────────────── Roster ─────────────────
-  let enrollQuery = srv
+  // Les dates de calcul ne définissent pas l'effectif de la classe.
+  // Pour une période terminée, conserver l'effectif à sa clôture.
+  // Pour une période en cours (ou future), afficher l'effectif d'aujourd'hui.
+  // Une inscription clôturée à cette date n'est plus active : lors d'un
+  // transfert, l'ancienne classe ne doit pas afficher l'élève.
+  const today = new Date().toISOString().slice(0, 10);
+  const rosterDate = /^\d{4}-\d{2}-\d{2}$/.test(to) && to < today ? to : today;
+
+  const { data: enroll, error: eErr } = await srv
     .from("class_enrollments")
     .select(
       `student_id, start_date, end_date, students:student_id ( id, first_name, last_name )`,
     )
     .eq("class_id", class_id)
-    .eq("institution_id", institution_id);
-
-  if (!hasDateFilter) {
-    enrollQuery = enrollQuery.is("end_date", null);
-  } else if (from) {
-    enrollQuery = enrollQuery.or(`end_date.gte.${from},end_date.is.null`);
-  }
-
-  const { data: enroll, error: eErr } = await enrollQuery;
+    .eq("institution_id", institution_id)
+    .lte("start_date", rosterDate)
+    .or(`end_date.gt.${rosterDate},end_date.is.null`);
 
   if (eErr) {
     return NextResponse.json({ error: eErr.message }, { status: 400 });
   }
 
-  const roster = (enroll ?? []).map((r: any) => {
-    const s = r.students || {};
-    return {
-      student_id: s.id as string,
+  const rosterByStudent = new Map<string, { student_id: string; full_name: string }>();
+  for (const r of enroll ?? []) {
+    const s = (r as any).students;
+    if (!s?.id || rosterByStudent.has(s.id)) continue;
+    rosterByStudent.set(s.id, {
+      student_id: s.id,
       full_name: `${s.last_name ?? ""} ${s.first_name ?? ""}`.trim() || "—",
-    };
-  });
+    });
+  }
+  const roster = Array.from(rosterByStudent.values());
 
   const studentIds = roster
     .map((r) => r.student_id)
