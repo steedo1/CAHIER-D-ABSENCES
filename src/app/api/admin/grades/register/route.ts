@@ -1,6 +1,8 @@
 import { loadClassComponentContext } from "@/lib/server/school-subject-components";
 import { isPrimaryGradeRegisterClass } from "@/lib/grades/grade-register-scope";
 import { primaryTitleScale } from "@/lib/grades/primary-storage-scale";
+import { publishEvaluationOfficially } from "@/lib/grades/publication";
+import { requiresDirectGradePublication, usesDirectGradePublication } from "@/lib/grades/franco-arabic-publication-policy";
 import { selectProgramComponents } from "@/lib/school-subject-components";
 import { NextRequest, NextResponse } from "next/server";
 import { GET as readOfficialBulletin } from "../bulletin/route";
@@ -19,6 +21,7 @@ type AdminContext = {
   srv: ReturnType<typeof getSupabaseServiceClient>;
   userId: string;
   institutionId: string;
+  canPublish: boolean;
 };
 
 type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
@@ -154,7 +157,8 @@ async function requireAdmin(): Promise<
 
   return {
     ok: true,
-    ctx: { srv, userId: user.id, institutionId },
+    ctx: { srv, userId: user.id, institutionId, canPublish: ((roles || []) as RoleRow[]).some(row =>
+      row.role === "super_admin" || (row.role === "admin" && String(row.institution_id || "") === institutionId)) },
   };
 }
 
@@ -661,7 +665,7 @@ export async function GET(req: NextRequest) {
     const auth = await requireAdmin();
     if (!auth.ok) return auth.response;
 
-    const { srv, institutionId } = auth.ctx;
+    const { srv, institutionId, canPublish } = auth.ctx;
     const classId = String(req.nextUrl.searchParams.get("class_id") || "").trim();
     const rawSubjectId = String(req.nextUrl.searchParams.get("subject_id") || "").trim();
     const teacherId = String(req.nextUrl.searchParams.get("teacher_id") || "").trim();
@@ -781,7 +785,7 @@ export async function GET(req: NextRequest) {
     // Un seul accès léger pour l'en-tête du PDF ; toutes les notes proviennent du registre déjà chargé.
     const { data: institution } = await srv
       .from("institutions")
-      .select("name")
+      .select("name,settings_json")
       .eq("id", institutionId)
       .maybeSingle();
 
@@ -796,6 +800,7 @@ export async function GET(req: NextRequest) {
 
     return json({
       ok: true,
+      can_publish: canPublish && Boolean(institution) && !usesDirectGradePublication(institution?.settings_json),
       official_averages: official.averages,
       official_average_status: official.status,
       institution_name: String(institution?.name || "").trim() || null,
@@ -859,6 +864,93 @@ export async function POST(req: NextRequest) {
     const { srv, userId, institutionId } = auth.ctx;
     const body = await req.json().catch(() => ({}));
     const action = String(body?.action || "").trim();
+
+    if (action === "publish_evaluations") {
+      if (!auth.ctx.canPublish) return bad("PUBLICATION_ADMIN_REQUIRED", 403);
+      if (await requiresDirectGradePublication(srv, institutionId)) return bad("DIRECT_PUBLICATION_NO_ADMIN_APPROVAL", 403);
+
+      const classId = String(body.class_id || "").trim();
+      const subjectId = String(body.subject_id || "").trim();
+      const teacherId = String(body.teacher_id || "").trim();
+      const periodId = String(body.grading_period_id || "").trim();
+      const year = String(body.academic_year || "").trim();
+      if (!Array.isArray(body.evaluation_ids) || body.evaluation_ids.some((id: unknown) => typeof id !== "string")) {
+        return bad("INVALID_EVALUATION_IDS", 400);
+      }
+      const ids = uniqueStrings(body.evaluation_ids);
+      if (!classId || !subjectId || !teacherId || !year || !ids.length || ids.length > 50) {
+        return bad("INVALID_PUBLICATION_SCOPE", 400);
+      }
+      const classRow = await ensureClass(srv, institutionId, classId);
+      if (!classRow) return bad("CLASS_NOT_FOUND", 404);
+      if (String(classRow.academic_year || "") !== year) return bad("ACADEMIC_YEAR_MISMATCH", 400);
+      if (!periodId && !isPrimaryGradeRegisterClass(classRow)) return bad("MISSING_FILTERS", 400);
+      const period = periodId ? await ensurePeriod(srv, institutionId, periodId) : null;
+      if (periodId && !period) return bad("GRADE_PERIOD_NOT_FOUND", 404);
+      if (period?.academic_year && period.academic_year !== year) return bad("ACADEMIC_YEAR_MISMATCH", 400);
+      const subject = await resolveSubjectIds(srv, institutionId, subjectId);
+      if (!subject.globalId || !subject.ids.length) return bad("SUBJECT_NOT_FOUND", 404);
+
+      // Validate the entire selection before making any official publication.
+      const baseQuery = srv.from("grade_evaluations")
+        .select("id,class_id,subject_id,teacher_id,grading_period_id,academic_year,eval_date,title,scale,coeff,is_published,publication_status")
+        .eq("class_id", classId).in("subject_id", subject.ids).in("id", ids);
+      const scoped = teacherId === "__all__" ? baseQuery : baseQuery.eq("teacher_id", teacherId);
+      const { data: rows, error: scopeError } = await (period
+        ? scoped.or(buildPeriodScope(periodId, period))
+        : scoped.eq("academic_year", year));
+      if (scopeError) throw scopeError;
+      if ((rows || []).length !== ids.length) return bad("EVALUATION_OUTSIDE_REGISTER_SCOPE", 403);
+      const selected = (rows || []) as unknown as EvaluationRow[];
+      const alreadyPublished = (ev: EvaluationRow) => ev.is_published === true || String(ev.publication_status || "").toLowerCase() === "published";
+      const pending = selected.filter(ev => !alreadyPublished(ev));
+      const pendingIds = pending.map(ev => ev.id);
+      if (pendingIds.length) {
+        const { data: lockRows, error: lockError } = await srv.from("grade_evaluation_locks")
+          .select("evaluation_id,is_locked").in("evaluation_id", pendingIds);
+        if (lockError) throw lockError;
+        if ((lockRows || []).some(row => row.is_locked === true)) return bad("EVALUATION_LOCKED", 423);
+      }
+      if (pending.some(ev => !["draft", "submitted", "changes_requested"].includes(String(ev.publication_status || "draft").toLowerCase()))) {
+        return bad("INVALID_PUBLICATION_STATUS", 409);
+      }
+      const { scores } = await loadRegisterScores(srv, pending);
+      const countByEvaluation = new Map<string, number>();
+      for (const row of scores) {
+        if (row.score !== null && Number.isFinite(row.score)) {
+          countByEvaluation.set(row.evaluation_id, (countByEvaluation.get(row.evaluation_id) || 0) + 1);
+        }
+      }
+      const empty = pending.filter(ev => !countByEvaluation.has(ev.id));
+      if (empty.length) return bad("EVALUATION_WITHOUT_SCORES", 409, { evaluation_ids: empty.map(ev => ev.id) });
+
+      const results: Array<{ evaluation_id: string; status: "published" | "already_published" | "failed"; error?: string }> = [];
+      for (const id of ids) {
+        const ev = selected.find(row => row.id === id)!;
+        if (alreadyPublished(ev)) {
+          results.push({ evaluation_id: id, status: "already_published" });
+          continue;
+        }
+        try {
+          const result = await publishEvaluationOfficially({
+            evaluationId: id, actorProfileId: userId,
+            comment: "Publication administrative depuis le registre des notes",
+            forceNewVersion: false, queuePush: true,
+          });
+          if (!result.ok) {
+            results.push({ evaluation_id: id, status: "failed", error: result.error });
+          } else {
+            results.push({ evaluation_id: id, status: result.action === "already_published" ? "already_published" : "published" });
+          }
+        } catch (error) {
+          console.error("[admin/grades/register] publication failed", id, error);
+          results.push({ evaluation_id: id, status: "failed", error: "PUBLICATION_FAILED" });
+        }
+      }
+      return json({ ok: true, results, published_count: results.filter(row => row.status === "published").length,
+        already_published_count: results.filter(row => row.status === "already_published").length,
+        failed_count: results.filter(row => row.status === "failed").length });
+    }
 
     if (action === "create_evaluation") {
       const classId = String(body.class_id || "").trim();
