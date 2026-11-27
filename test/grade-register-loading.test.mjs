@@ -489,3 +489,38 @@ test("la synthèse affiche uniquement les affectations actives de la classe et n
   assert.deepEqual(items[0].assigned_teacher_names, ["Professeur test"]);
   assert.equal(items[0].notes_count, 1);
 });
+
+test("publication administrative directe : une ou plusieurs évaluations, zéro valide et périmètre strict", async () => {
+  const { mocks } = handlers({
+    ...overviewBase,
+    grade_evaluations: [overviewEval("one"), overviewEval("two", { teacher_id: "other" }), overviewEval("old", { is_published: true, publication_status: "published" }), overviewEval("empty"), overviewEval("locked"), overviewEval("outside", { class_id: "other" })],
+    student_grades: [{ evaluation_id: "one", student_id: "student", score: 0 }, { evaluation_id: "two", student_id: "student", score: 12 }, { evaluation_id: "locked", student_id: "student", score: 9 }],
+    grade_evaluation_locks: [{ evaluation_id: "locked", is_locked: true }],
+  });
+  const calls = [];
+  mocks["@/lib/grades/publication"] = { publishEvaluationOfficially: async (args) => { calls.push(args); return { ok: true, action: "published" }; } };
+  const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+  const post = (ids, extra = {}) => route.POST({ json: async () => ({ action: "publish_evaluations", class_id: "6e1", subject_id: "inst-subject", teacher_id: "__all__", grading_period_id: "T1", academic_year: "2026-2027", evaluation_ids: ids, ...extra }) });
+  for (const [ids, expected, extra] of [
+    [["one", "outside"], 403, {}], [["one", "empty"], 409, {}], [["one", "locked"], 423, {}],
+    [["two"], 403, { teacher_id: "teacher" }], [["one"], 400, { academic_year: "2025-2026" }],
+  ]) {
+    assert.equal((await post(ids, extra)).status, expected);
+    assert.equal(calls.length, 0);
+  }
+  const single = await (await post(["one"])).json();
+  assert.equal(single.published_count, 1);
+  const batch = await (await post(["one", "two", "old"])).json();
+  assert.equal(batch.published_count, 2);
+  assert.equal(batch.already_published_count, 1);
+  assert.deepEqual(calls.map(call => call.evaluationId), ["one", "one", "two"]);
+  assert.ok(calls.every(call => call.actorProfileId === "admin" && call.forceNewVersion === false && call.queuePush === true));
+});
+
+test("un correspondant fichier ne reçoit pas le droit de publication du registre", async () => {
+  const { mocks } = handlers({ ...overviewBase, user_roles: [{ profile_id: "admin", institution_id: "csca", role: "file_correspondent" }] });
+  mocks["@/lib/grades/publication"] = { publishEvaluationOfficially: async () => { throw Error("must not publish"); } };
+  const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+  const res = await route.POST({ json: async () => ({ action: "publish_evaluations", evaluation_ids: ["one"] }) });
+  assert.equal(res.status, 403);
+});
