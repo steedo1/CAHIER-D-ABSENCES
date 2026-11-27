@@ -83,6 +83,7 @@ type RegisterEvaluation = {
   subject_component_id?: string | null;
   component_label?: string | null;
   column_label?: string | null;
+  teacher_name?: string | null;
   is_locked?: boolean;
   editable?: boolean;
 };
@@ -120,6 +121,8 @@ type RegisterResponse = {
   evaluations?: RegisterEvaluation[];
   scores?: RegisterScore[];
   components?: SubjectComponent[];
+  official_averages?: Record<string, number | null>;
+  official_average_status?: string;
 };
 
 type RegisterOverviewItem = {
@@ -427,7 +430,23 @@ export default function AdminGradeRegisterPage() {
     });
   }, [roster, search]);
 
-  const filteredOverview = overviewItems.filter((item) => {
+  // Keep original teacher rows for the optional teacher filter, but present one
+  // consolidated row per discipline in the overview.
+  const disciplineOverview = useMemo(() => {
+    const map = new Map<string, RegisterOverviewItem>();
+    for (const row of overviewItems) {
+      const current = map.get(row.subject_id);
+      if (!current) { map.set(row.subject_id, { ...row, teacher_id: "__all__" }); continue; }
+      current.evaluations_count += row.evaluations_count;
+      current.notes_count += row.notes_count;
+      current.published_notes_count += row.published_notes_count;
+      current.unpublished_notes_count += row.unpublished_notes_count;
+      if (row.last_eval_date > current.last_eval_date) current.last_eval_date = row.last_eval_date;
+      current.teacher_name = [...new Set([...current.teacher_name.split(" · "), row.teacher_name])].join(" · ");
+    }
+    return [...map.values()].sort((a, b) => a.subject_label.localeCompare(b.subject_label, "fr"));
+  }, [overviewItems]);
+  const filteredOverview = disciplineOverview.filter((item) => {
     if (publicationFilter === "published" && !item.published_notes_count) return false;
     if (publicationFilter === "unpublished" && !item.unpublished_notes_count) return false;
     const query = search.trim().toLocaleLowerCase("fr");
@@ -590,9 +609,9 @@ export default function AdminGradeRegisterPage() {
 
   useEffect(() => {
     setSelectedTeacherId((current) =>
-      overviewMode ? "" : current && teacherOptions.some((row) => row.id === current)
+      overviewMode ? "" : current === "__all__" || teacherOptions.some((row) => row.id === current)
         ? current
-        : teacherOptions[0]?.id || "",
+        : "__all__",
     );
   }, [teacherOptions, overviewMode]);
 
@@ -625,7 +644,7 @@ export default function AdminGradeRegisterPage() {
 
   function openTeacherNotes(item: RegisterOverviewItem) {
     setSelectedSubjectId(item.subject_id);
-    setSelectedTeacherId(item.teacher_id);
+    setSelectedTeacherId("__all__");
     setSearch("");
     setShowNewEvaluation(false);
   }
@@ -718,6 +737,8 @@ export default function AdminGradeRegisterPage() {
   }
 
   function studentAverage20(studentId: string) {
+    // This indicative calculation is never presented as a bulletin average.
+    if (selectedTeacherId !== "__all__" || (register?.components || []).length > 0 || evaluations.some(ev => ev.subject_component_id)) return null;
     let numerator = 0;
     let denominator = 0;
 
@@ -806,7 +827,7 @@ export default function AdminGradeRegisterPage() {
   }
 
   async function createEvaluation() {
-    if (!selectedClassId || (!primaryRegister && !selectedPeriodId) || !selectedSubjectId || !selectedTeacherId) {
+    if (!selectedClassId || (!primaryRegister && !selectedPeriodId) || !selectedSubjectId || !selectedTeacherId || selectedTeacherId === "__all__") {
       setError("Complétez d’abord les sélections du registre.");
       return;
     }
@@ -938,7 +959,7 @@ export default function AdminGradeRegisterPage() {
                 <RefreshCw className={`h-4 w-4 ${registerLoading ? "animate-spin" : ""}`} />
                 Actualiser
               </Button>
-              <Button type="button" tone="secondary" onClick={openNewEvaluation} disabled={!ready}>
+              <Button type="button" tone="secondary" onClick={openNewEvaluation} disabled={!ready || selectedTeacherId === "__all__"}>
                 <Plus className="h-4 w-4" />
                 Ajouter une note
               </Button>
@@ -1039,9 +1060,9 @@ export default function AdminGradeRegisterPage() {
               <Select
                 value={selectedTeacherId}
                 onChange={(event) => setSelectedTeacherId(event.target.value)}
-                disabled={overviewMode || affectationsLoading || !teacherOptions.length}
+                disabled={overviewMode || affectationsLoading}
               >
-                {overviewMode && <option value="">Tous les enseignants</option>}
+                <option value={overviewMode ? "" : "__all__"}>Tous les enseignants</option>
                 {teacherOptions.map((row) => (
                   <option key={row.id} value={row.id}>{row.label}</option>
                 ))}
@@ -1205,7 +1226,7 @@ export default function AdminGradeRegisterPage() {
                 <span className="text-slate-300">•</span>
                 <span className="inline-flex items-center gap-1 text-slate-600">
                   <UserRound className="h-3.5 w-3.5" />
-                  {overviewMode ? "Tous les enseignants" : selectedTeacher?.label || "Professeur"}
+                  {overviewMode ? "Tous les enseignants" : selectedTeacherId === "__all__" ? "Tous les enseignants" : selectedTeacher?.label || "Professeur"}
                 </span>
                 <span className="text-slate-300">•</span>
                 <span className="inline-flex items-center gap-1 text-slate-600">
@@ -1220,7 +1241,7 @@ export default function AdminGradeRegisterPage() {
               )}
               {overviewMode && contextReady && (
                 <p className="mt-1 text-xs text-slate-500">
-                  Cliquez sur une ligne pour consulter les notes de l’enseignant.
+                  Cliquez sur une discipline pour consulter toutes ses évaluations et moyennes.
                 </p>
               )}
             </div>
@@ -1270,16 +1291,16 @@ export default function AdminGradeRegisterPage() {
           ) : overviewMode && contextReady ? (
             error ? null : filteredOverview.length === 0 ? (
               <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm text-slate-500">
-                Aucun enseignant avec des notes saisies pour cette sélection.
+                Aucune discipline avec des notes saisies pour cette sélection.
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <caption className="sr-only">Enseignants ayant saisi des notes pour la classe et la période sélectionnées</caption>
+                  <caption className="sr-only">Disciplines ayant des notes pour la classe et la période sélectionnées</caption>
                   <thead className="bg-slate-50 text-left text-slate-600">
                     <tr>
-                      <th scope="col" className="px-4 py-3">Enseignant</th>
                       <th scope="col" className="px-4 py-3">Discipline</th>
+                      <th scope="col" className="px-4 py-3">Contributeurs aux notes</th>
                       <th scope="col" className="px-4 py-3 text-center">Évaluations</th>
                       <th scope="col" className="px-4 py-3 text-center">Notes saisies</th>
                       <th scope="col" className="px-4 py-3 text-center">Publiées</th>
@@ -1295,11 +1316,11 @@ export default function AdminGradeRegisterPage() {
                         className="cursor-pointer border-t border-slate-100 transition hover:bg-emerald-50/60 focus-within:bg-emerald-50/60"
                       >
                         <td className="px-4 py-3 font-semibold text-slate-900">
-                          <button type="button" className="rounded text-left text-emerald-700 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600" aria-label={`Voir les notes de ${item.teacher_name} en ${item.subject_label}`}>
-                            {item.teacher_name}
+                          <button type="button" className="rounded text-left text-emerald-700 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600" aria-label={`Voir toutes les notes de ${item.subject_label}`}>
+                            {item.subject_label}
                           </button>
                         </td>
-                        <td className="px-4 py-3">{item.subject_label}</td>
+                        <td className="px-4 py-3 text-xs text-slate-500">{item.teacher_name}</td>
                         <td className="px-4 py-3 text-center tabular-nums">{item.evaluations_count}</td>
                         <td className="px-4 py-3 text-center font-semibold tabular-nums">{item.notes_count}</td>
                         <td className="px-4 py-3 text-center tabular-nums text-emerald-700">{item.published_notes_count}</td>
@@ -1325,10 +1346,10 @@ export default function AdminGradeRegisterPage() {
               <div>
                 <p className="font-semibold text-slate-800">Aucune note pour cette sélection.</p>
                 <p className="mt-1 text-sm text-slate-500">
-                  Ajoutez la première colonne de notes pour commencer la saisie.
+                  Choisissez un enseignant pour ajouter une colonne de notes.
                 </p>
               </div>
-              <Button type="button" onClick={openNewEvaluation}>
+              <Button type="button" onClick={openNewEvaluation} disabled={selectedTeacherId === "__all__"}>
                 <Plus className="h-4 w-4" />
                 Ajouter une note
               </Button>
@@ -1339,10 +1360,12 @@ export default function AdminGradeRegisterPage() {
             </div>
           ) : register ? (
             <>
+              <p className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">{register.official_average_status === "ok" ? "La moyenne Bulletin /20 provient du calcul officiel de la discipline entière, indépendamment des filtres. Un tiret signifie qu’aucune moyenne officielle n’est disponible pour cet élève." : "Moyenne officielle indisponible ou non applicable à ce bulletin. Aucun calcul local ne la remplace."} La moyenne indicative des notes saisies, lorsqu’elle est affichée, n’est pas une moyenne officielle.</p>
               <div className="max-h-[72vh] overflow-y-auto p-3 md:hidden">
                 <div className="space-y-3">
                   {filteredRoster.map((student) => {
-                    const average = studentAverage20(student.id);
+                    const average = register.official_averages?.[student.id] ?? null;
+                    const indicative = studentAverage20(student.id);
                     return (
                       <article key={student.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                         <div className="flex items-start justify-between gap-3">
@@ -1351,10 +1374,11 @@ export default function AdminGradeRegisterPage() {
                             {student.matricule && <div className="mt-0.5 text-xs text-slate-500">{student.matricule}</div>}
                           </div>
                           <div className="shrink-0 rounded-lg bg-slate-100 px-3 py-2 text-center">
-                            <div className="text-[11px] text-slate-600">Moyenne /20</div>
+                            <div className="text-[11px] text-slate-600">Bulletin /20</div>
                             <div className="font-bold tabular-nums text-slate-900">
                               {average === null ? "—" : average.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
+                            {indicative !== null && <div className="mt-1 text-[10px] text-amber-700">Indicative : {indicative.toFixed(2)}</div>}
                           </div>
                         </div>
                         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -1397,7 +1421,7 @@ export default function AdminGradeRegisterPage() {
                 )}
               </div>
               <div className="hidden max-h-[68vh] overflow-auto md:block">
-              <table className="min-w-max border-separate border-spacing-0 text-sm">
+              <table className="w-full min-w-max border-separate border-spacing-0 text-sm">
                 <thead className="sticky top-0 z-30 bg-slate-50/95 backdrop-blur">
                   <tr>
                     <th className="sticky left-0 z-40 min-w-[250px] border-b border-r border-slate-200 bg-slate-50 px-4 py-3 text-left font-semibold text-slate-700">
@@ -1408,11 +1432,12 @@ export default function AdminGradeRegisterPage() {
                       return (
                         <th
                           key={evaluation.id}
-                          className="min-w-[150px] border-b border-r border-slate-200 bg-slate-50 px-3 py-2 text-center align-top"
+                          className="min-w-[110px] border-b border-r border-slate-200 bg-slate-50 px-3 py-2 text-center align-top"
                         >
                           <div className="font-bold text-slate-800">
                             {evaluation.column_label || `Note ${index + 1}`}
                           </div>
+                          {selectedTeacherId === "__all__" && evaluation.teacher_name && <div className="mt-1 max-w-[130px] text-[10px] font-normal text-slate-500">{evaluation.teacher_name}</div>}
                           <div className="mt-0.5 text-[11px] font-normal text-slate-500">
                             {evalKindLabel(evaluation.eval_kind)} · {formatDate(evaluation.eval_date)} · /{evaluation.scale}
                             {Number(evaluation.coeff || 1) !== 1 ? ` · Coef. ${evaluation.coeff}` : ""}
@@ -1432,14 +1457,15 @@ export default function AdminGradeRegisterPage() {
                       );
                     })}
                     <th className="sticky right-0 z-40 min-w-[120px] border-b border-l border-slate-200 bg-slate-100 px-4 py-3 text-center font-bold text-slate-800">
-                      Moyenne /20
-                      <div className="text-[10px] font-normal text-slate-500">Toutes les notes saisies</div>
+                      Bulletin /20
+                      <div className="text-[10px] font-normal text-slate-500">Moyenne officielle</div>
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredRoster.map((student, rowIndex) => {
-                    const average = studentAverage20(student.id);
+                    const average = register.official_averages?.[student.id] ?? null;
+                    const indicative = studentAverage20(student.id);
                     return (
                       <tr key={student.id} className={rowIndex % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
                         <td className="sticky left-0 z-20 border-b border-r border-slate-100 bg-inherit px-4 py-2.5">
@@ -1476,6 +1502,7 @@ export default function AdminGradeRegisterPage() {
 
                         <td className="sticky right-0 z-20 border-b border-l border-slate-200 bg-slate-100 px-4 py-2.5 text-center font-bold tabular-nums text-slate-900">
                           {average === null ? "—" : average.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {indicative !== null && <div className="mt-1 text-[10px] font-normal text-amber-700">Indicative : {indicative.toFixed(2)}</div>}
                         </td>
                       </tr>
                     );
