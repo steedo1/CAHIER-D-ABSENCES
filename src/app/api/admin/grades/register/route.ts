@@ -533,18 +533,35 @@ async function loadRegisterOverview(
   );
   if (!withNotes.length) return [];
 
-  const teacherIds = uniqueStrings(withNotes.map((ev) => ev.teacher_id));
-  const [{ data: teachers, error: teacherError }, { data: links, error: linkError }] = await Promise.all([
-    srv.from("profiles").select("id,display_name").in("id", teacherIds),
+  // Teaching assignments are independent of evaluation ownership. An admin or
+  // former teacher associated with a grade must never become the assigned teacher.
+  const [{ data: links, error: linkError }, { data: assignments, error: assignmentError }] = await Promise.all([
     srv.from("institution_subjects").select("id,subject_id,custom_name")
       .eq("institution_id", institutionId).order("id", { ascending: true }),
+    srv.from("class_teachers").select("teacher_id,subject_id")
+      .eq("institution_id", institutionId).eq("class_id", classId).is("end_date", null),
   ]);
-  if (teacherError) throw teacherError;
   if (linkError) throw linkError;
-  const teacherNames = new Map((teachers || []).map((row) => [String(row.id), String(row.display_name || "Enseignant")]));
+  if (assignmentError) throw assignmentError;
+  const teacherIds = uniqueStrings([...withNotes.map(ev => ev.teacher_id), ...(assignments || []).map(row => row.teacher_id)]);
+  const teacherNames = new Map<string, string>();
+  for (const part of chunks(teacherIds)) {
+    const { data: teachers, error: teacherError } = await srv.from("profiles").select("id,display_name").in("id", part);
+    if (teacherError) throw teacherError;
+    for (const row of teachers || []) teacherNames.set(String(row.id), String(row.display_name || "").trim());
+  }
   const subjectLinks = links || [];
   const linkFor = (id: string) => subjectLinks.find((row) => row.id === id)
     || subjectLinks.find((row) => row.subject_id === id);
+  const assignedBySubject = new Map<string, Map<string, string>>();
+  for (const row of assignments || []) {
+    if (!row.subject_id || !row.teacher_id) continue;
+    const globalId = String(linkFor(String(row.subject_id))?.subject_id || row.subject_id);
+    const id = String(row.teacher_id);
+    const names = assignedBySubject.get(globalId) || new Map<string, string>();
+    names.set(id, teacherNames.get(id) || "Nom non renseigné");
+    assignedBySubject.set(globalId, names);
+  }
   const globalIds = uniqueStrings(withNotes.map((ev) => linkFor(String(ev.subject_id))?.subject_id || ev.subject_id));
   const { data: subjects, error: subjectError } = await srv.from("subjects").select("id,name,code").in("id", globalIds);
   if (subjectError) throw subjectError;
@@ -552,6 +569,7 @@ async function loadRegisterOverview(
   const publishedSet = new Set(publishedEvaluationIds);
   const groups = new Map<string, {
     teacher_id: string; teacher_name: string; subject_id: string; subject_label: string;
+    assigned_teacher_names: string[];
     notes_count: number; published_notes_count: number; unpublished_notes_count: number;
     evaluations_count: number; published_evaluations_count: number; unpublished_evaluations_count: number;
     last_eval_date: string;
@@ -568,6 +586,7 @@ async function loadRegisterOverview(
         teacher_name: teacherNames.get(teacherId) || "Enseignant",
         subject_id: String(link?.id || globalId),
         subject_label: String(link?.custom_name || subjectNames.get(globalId) || "Discipline"),
+        assigned_teacher_names: [...new Set(assignedBySubject.get(globalId)?.values() || [])].sort((a, b) => a.localeCompare(b, "fr")),
         notes_count: 0, published_notes_count: 0, unpublished_notes_count: 0,
         evaluations_count: 0, published_evaluations_count: 0, unpublished_evaluations_count: 0,
         last_eval_date: ev.eval_date,
