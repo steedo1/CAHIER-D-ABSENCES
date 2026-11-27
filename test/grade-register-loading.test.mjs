@@ -245,6 +245,7 @@ test("toutes les disciplines ne liste que les enseignants avec des notes, publi�
   const { items } = await response.json();
   assert.deepEqual(items, [{
     teacher_id: "teacher", teacher_name: "Professeur test", subject_id: "inst-subject", subject_label: "Anglais",
+    assigned_teacher_names: ["Professeur test"],
     notes_count: 3, published_notes_count: 1, unpublished_notes_count: 2,
     evaluations_count: 3, published_evaluations_count: 1, unpublished_evaluations_count: 2,
     last_eval_date: "2026-09-21",
@@ -298,6 +299,7 @@ test("les notes d'un ancien enseignant s'ouvrent mais la création exige toujour
 test("un clic sur la synthèse consolidée sélectionne la discipline et tous ses enseignants", () => {
   const item = {
     teacher_id: "teacher", teacher_name: "Professeur test", subject_id: "inst-subject", subject_label: "Anglais",
+    assigned_teacher_names: ["Professeur test"],
     notes_count: 28, published_notes_count: 0, unpublished_notes_count: 28, evaluations_count: 1, last_eval_date: "2026-09-16",
   };
   const states = [
@@ -320,7 +322,8 @@ test("un clic sur la synthèse consolidée sélectionne la discipline et tous se
   const markup = () => { index = 0; return renderToStaticMarkup(React.createElement(Page)); };
   assert.match(markup(), /Toutes les disciplines/);
   assert.match(markup(), /Professeur test/);
-  assert.match(markup(), /Autre professeur/);
+  assert.doesNotMatch(markup(), /Autre professeur/);
+  assert.match(markup(), /Professeur affecté/);
   assert.match(markup(), />40</);
   assert.equal((markup().match(/aria-label="Voir toutes les notes de Anglais"/g) || []).length, 1);
   states[16] = "published";
@@ -463,4 +466,26 @@ test("le registre consolidé reprend la moyenne du bulletin et conserve les note
     assert.deepEqual(data.scores.map(row => row.score), teacher === "__all__" ? [0, 16] : [0]);
   }
   assert.equal(bulletinCalls, 2);
+});
+
+test("la synthèse affiche uniquement les affectations actives de la classe et non le compte des évaluations", async () => {
+  const { mocks } = handlers({
+    ...overviewBase,
+    profiles: [...overviewBase.profiles, { id: "admin-notes", display_name: "Compte administratif" }, { id: "former", display_name: "Ancien professeur" }],
+    class_teachers: [
+      { ...assignment, subject_id: subject.id },
+      { ...assignment, teacher_id: "former", end_date: "2026-09-01" },
+      { ...assignment, teacher_id: "admin-notes", class_id: "5e1" },
+      { ...assignment, teacher_id: "admin-notes", institution_id: "other" },
+    ],
+    grade_evaluations: [overviewEval("admin-eval", { teacher_id: "admin-notes" })],
+    student_grades: [{ evaluation_id: "admin-eval", student_id: "student", score: 14 }],
+  });
+  const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+  const response = await route.GET(overviewUrl());
+  assert.equal(response.status, 200);
+  const { items } = await response.json();
+  assert.equal(items[0].teacher_name, "Compte administratif");
+  assert.deepEqual(items[0].assigned_teacher_names, ["Professeur test"]);
+  assert.equal(items[0].notes_count, 1);
 });
