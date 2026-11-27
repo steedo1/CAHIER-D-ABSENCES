@@ -167,7 +167,7 @@ test("le registre affiche et filtre les deux publications sans masquer le statut
     { id: "draft", column_label: "Note 1", eval_date: "2026-09-16", scale: 20, coeff: 1, is_published: false, publication_status: "draft", editable: true },
     { id: "official", column_label: "Note 2", eval_date: "2026-09-17", scale: 20, coeff: 1, is_published: true, publication_status: "published", is_locked: true, editable: false },
   ];
-  const register = { ok: true, evaluations, roster: [{ id: "student", full_name: "Élève test" }], scores: [
+  const register = { ok: true, official_average_status: "ok", official_averages: { student: 15 }, evaluations, roster: [{ id: "student", full_name: "Élève test" }], scores: [
     { evaluation_id: "draft", student_id: "student", score: 0 },
     { evaluation_id: "official", student_id: "student", score: 15 },
   ] };
@@ -197,9 +197,11 @@ test("le registre affiche et filtre les deux publications sans masquer le statut
   const unpublished = render("unpublished");
   assert.match(unpublished, />Note 1</);
   assert.doesNotMatch(unpublished, />Note 2</);
-  // Le filtre est visuel : la moyenne reste celle de toutes les notes saisies.
-  assert.match(published, /7,50/);
-  assert.match(unpublished, /7,50/);
+  // Le filtre est visuel : la moyenne officielle reste celle du bulletin, pas 7,50.
+  for (const html of [all, published, unpublished]) {
+    assert.match(html, /15,00/);
+    assert.doesNotMatch(html, /7,50/);
+  }
 });
 
 const overviewPeriod = { id: "T1", institution_id: "csca", academic_year: "2026-2027", start_date: "2026-08-31", end_date: "2026-12-04" };
@@ -293,14 +295,14 @@ test("les notes d'un ancien enseignant s'ouvrent mais la création exige toujour
   assert.equal(create.status, 403);
 });
 
-test("un clic sur la ligne de synthèse sélectionne la discipline et l'enseignant du registre", () => {
+test("un clic sur la synthèse consolidée sélectionne la discipline et tous ses enseignants", () => {
   const item = {
     teacher_id: "teacher", teacher_name: "Professeur test", subject_id: "inst-subject", subject_label: "Anglais",
     notes_count: 28, published_notes_count: 0, unpublished_notes_count: 28, evaluations_count: 1, last_eval_date: "2026-09-16",
   };
   const states = [
     [classRow], false, "2026-2027", { educationType: "general_secondary", formationCode: "", levelCode: "6e", classId: "6e1" },
-    [overviewPeriod], false, "T1", [], false, "", "", null, false, null, null, "", "all", {}, false, false, false, {}, [item],
+    [overviewPeriod], false, "T1", [], false, "", "", null, false, null, null, "", "all", {}, false, false, false, {}, [item, { ...item, teacher_id: "other", teacher_name: "Autre professeur", notes_count: 12, unpublished_notes_count: 12 }],
   ];
   let index = 0;
   const hooks = { ...React,
@@ -318,9 +320,11 @@ test("un clic sur la ligne de synthèse sélectionne la discipline et l'enseigna
   const markup = () => { index = 0; return renderToStaticMarkup(React.createElement(Page)); };
   assert.match(markup(), /Toutes les disciplines/);
   assert.match(markup(), /Professeur test/);
-  assert.match(markup(), /28/);
+  assert.match(markup(), /Autre professeur/);
+  assert.match(markup(), />40</);
+  assert.equal((markup().match(/aria-label="Voir toutes les notes de Anglais"/g) || []).length, 1);
   states[16] = "published";
-  assert.doesNotMatch(markup(), /Voir les notes de Professeur test/);
+  assert.doesNotMatch(markup(), /Voir toutes les notes de Anglais/);
   states[16] = "all";
   index = 0;
   const tree = Page();
@@ -331,7 +335,7 @@ test("un clic sur la ligne de synthèse sélectionne la discipline et l'enseigna
   };
   findRow(tree).props.onClick();
   assert.equal(states[9], "inst-subject");
-  assert.equal(states[10], "teacher");
+  assert.equal(states[10], "__all__");
   states[11] = { ok: true, evaluations: [{ id: "draft", column_label: "Note 1", eval_date: "2026-09-16", is_published: false, scale: 20 }], roster: [{ id: "student", full_name: "Élève test" }], scores: [{ evaluation_id: "draft", student_id: "student", score: 13 }] };
   assert.match(markup(), /Élève test/);
   assert.match(markup(), />Note 1</);
@@ -423,4 +427,40 @@ test("le registre refuse une note au-dessus du barème réel primaire", async ()
   }) });
   assert.equal(response.status, 422);
   assert.equal((await response.json()).scale, 15);
+});
+
+test("le registre consolidé reprend la moyenne du bulletin et conserve les notes des deux enseignants", async () => {
+  const { mocks } = handlers({
+    ...overviewBase,
+    profiles: [...overviewBase.profiles, { id: "other", display_name: "Autre professeur" }],
+    grade_evaluations: [
+      overviewEval("draft", { scale: 10 }),
+      overviewEval("published", { teacher_id: "other", is_published: true, publication_status: "published", scale: 20 }),
+      overviewEval("outside", { teacher_id: "other", grading_period_id: "T2" }),
+    ],
+    class_enrollments: [{ class_id: classRow.id, student_id: "student", students: { id: "student", first_name: "Test", last_name: "Élève" } }],
+    student_grades: [{ evaluation_id: "draft", student_id: "student", score: 0 }],
+    v_grade_scores_official_for_reports: [{ evaluation_id: "published", student_id: "student", score: 16 }],
+  });
+  let bulletinCalls = 0;
+  mocks["../bulletin/route"] = { GET: async (req) => {
+    bulletinCalls++;
+    assert.equal(req.nextUrl.searchParams.get("export_light"), "1");
+    assert.equal(req.nextUrl.searchParams.get("grading_period_id"), "T1");
+    assert.equal(req.nextUrl.searchParams.get("class_id"), "6e1");
+    return Response.json({ ok: true, period: { from: overviewPeriod.start_date, to: overviewPeriod.end_date },
+      subjects: [{ subject_id: subject.id }], items: [{ student_id: "student", per_subject: [{ subject_id: subject.id, avg20: 16 }] }] });
+  } };
+  const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+  const { NextRequest } = require("next/server");
+  for (const teacher of ["__all__", "teacher"]) {
+    const result = await route.GET(new NextRequest("https://test/api?class_id=6e1&subject_id=inst-subject&teacher_id=" + teacher + "&grading_period_id=T1"));
+    assert.equal(result.status, 200);
+    const data = await result.json();
+    assert.equal(data.official_average_status, "ok");
+    assert.equal(data.official_averages.student, 16);
+    assert.deepEqual(data.evaluations.map(row => row.id), teacher === "__all__" ? ["draft", "published"] : ["draft"]);
+    assert.deepEqual(data.scores.map(row => row.score), teacher === "__all__" ? [0, 16] : [0]);
+  }
+  assert.equal(bulletinCalls, 2);
 });
