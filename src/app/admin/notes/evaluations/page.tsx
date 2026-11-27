@@ -164,6 +164,7 @@ type MatrixEval = {
   title: string | null;
   teacher_id: string | null;
   teacher_name: string | null;
+  is_published: boolean;
 };
 
 type MatrixStudent = {
@@ -687,7 +688,7 @@ export default function AdminNotesEvaluationsPage() {
       ...matrixEvals.map(
         (ev, idx) => `Eval ${idx + 1} (${ev.eval_date} /${ev.scale})`
       ),
-      "Moyenne_20",
+      "Moyenne_indicative_20",
     ];
 
     const rows: string[] = [];
@@ -749,302 +750,122 @@ export default function AdminNotesEvaluationsPage() {
     URL.revokeObjectURL(url);
   }
 
-  // Export PDF (via fenêtre d'impression) des notes publiées
-  function exportMatrixPdf() {
-    if (!matrixStudents.length || !matrixEvals.length) {
-      setMatrixError(
-        "Aucune donnée à exporter. Chargez d'abord la matrice pour une classe et une matière."
-      );
+  // Registre imprimable : les notes gardent leur barème d'origine ; la moyenne
+  // est lue directement dans le calcul officiel du bulletin, sans créer de QR.
+  async function exportMatrixPdf() {
+    if (!selectedClassId || !selectedSubjectId || !from || !to) {
+      setMatrixError("Choisissez une classe, une matière et les dates exactes d'une période de bulletin.");
       return;
     }
 
-    if (status !== "published") {
-      setMatrixError(
-        "Pour l'export PDF, filtrez d'abord sur « Publié pour les parents » afin de n'inclure que les notes publiées."
-      );
-      return;
-    }
-
-    setMatrixError(null);
-
-    // Calcul des moyennes /20 par élève (comme dans le tableau)
-    const studentsWithAvg = matrixStudents.map((st) => {
-      const mForStudent = matrixMarks[st.student_id] || {};
-      let sum20 = 0;
-      let cnt20 = 0;
-
-      for (const ev of matrixEvals) {
-        const cell = mForStudent[ev.id];
-        if (!cell) continue;
-        let v20: number | null = null;
-        if (cell.mark_20 != null) {
-          v20 = Number(cell.mark_20);
-        } else if (cell.raw != null) {
-          const raw = Number(cell.raw);
-          v20 = ev.scale ? (raw / ev.scale) * 20 : null;
-        }
-        if (v20 != null) {
-          sum20 += v20;
-          cnt20++;
-        }
-      }
-
-      const avg = cnt20 ? sum20 / cnt20 : null;
-      return { st, avg };
-    });
-
-    const studentsWithAvgPresent = studentsWithAvg.filter((x) => x.avg != null) as {
-      st: MatrixStudent;
-      avg: number;
-    }[];
-
-    const sorted = [...studentsWithAvgPresent].sort((a, b) => b.avg - a.avg);
-    const best = sorted[0];
-    const worst = sorted[sorted.length - 1];
-
-    const nbAtLeast10 = studentsWithAvgPresent.filter((x) => x.avg >= 10).length;
-
-    // Répartition par tranches de moyennes
-    const dist = { "0-5": 0, "5-10": 0, "10-15": 0, "15-20": 0 };
-    for (const x of studentsWithAvgPresent) {
-      const v = x.avg;
-      if (v < 5) dist["0-5"]++;
-      else if (v < 10) dist["5-10"]++;
-      else if (v < 15) dist["10-15"]++;
-      else dist["15-20"]++;
-    }
-
-    // Nom du professeur = 1er non vide dans les évaluations
-    const teacherName =
-      matrixEvals.find((ev) => ev.teacher_name)?.teacher_name || "";
-
-    const classLabel = selectedClass?.name || "";
-    const subjectName = selectedSubject?.name || "";
-
-    // Année scolaire : d'abord le filtre choisi, sinon estimation sur les dates
-    let academicYearLabel = selectedYearCode || "";
-    if (!academicYearLabel) {
-      const sampleDateStr =
-        from || to || matrixEvals[0]?.eval_date || new Date().toISOString();
-      try {
-        const d = new Date(sampleDateStr);
-        if (!Number.isNaN(d.getTime())) {
-          const month = d.getMonth() + 1;
-          const startYear = month >= 8 ? d.getFullYear() : d.getFullYear() - 1;
-          academicYearLabel = `${startYear}-${startYear + 1}`;
-        }
-      } catch {
-        academicYearLabel = "";
-      }
-    }
-
-    const periodLabel =
-      activePeriod?.short_label || activePeriod?.label || "Toutes périodes";
-
-    // Construction HTML imprimable
-    const title = `Notes publiées — ${subjectName || "Matière"} — ${
-      classLabel || "Classe"
-    }`;
-
-    const headCols = [
-      "#",
-      "Élève",
-      "Matricule",
-      ...matrixEvals.map((ev) => {
-        const dateLabel = (() => {
-          try {
-            return df.format(new Date(ev.eval_date));
-          } catch {
-            return ev.eval_date;
-          }
-        })();
-        return `${evalKindLabel(ev.eval_kind)} (${dateLabel} /${ev.scale})`;
-      }),
-      "Moyenne /20",
-    ];
-
-    const rowsHtml = matrixStudents
-      .map((st, idx) => {
-        const mForStudent = matrixMarks[st.student_id] || {};
-        let sum20 = 0;
-        let cnt20 = 0;
-
-        const cells: string[] = [];
-        cells.push(`<td>${idx + 1}</td>`);
-        cells.push(`<td>${escapeHtml(st.full_name)}</td>`);
-        cells.push(`<td>${escapeHtml(st.matricule || "")}</td>`);
-
-        for (const ev of matrixEvals) {
-          const cell = mForStudent[ev.id];
-          let display = "";
-          if (cell && cell.raw != null) {
-            const raw = Number(cell.raw);
-            display = `${raw.toFixed(2)} /${ev.scale}`;
-            let v20: number | null = null;
-            if (cell.mark_20 != null) {
-              v20 = Number(cell.mark_20);
-            } else if (ev.scale) {
-              v20 = (raw / ev.scale) * 20;
-            }
-            if (v20 != null) {
-              sum20 += v20;
-              cnt20++;
-            }
-          }
-          cells.push(`<td class="num">${escapeHtml(display)}</td>`);
-        }
-
-        const avg = cnt20 ? sum20 / cnt20 : null;
-        cells.push(
-          `<td class="num"><strong>${
-            avg == null ? "" : `${avg.toFixed(2)} /20`
-          }</strong></td>`
-        );
-
-        return `<tr>${cells.join("")}</tr>`;
-      })
-      .join("");
-
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charSet="utf-8" />
-  <title>${escapeHtml(title)}</title>
-  <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: 12px;
-      color: #0f172a;
-      padding: 16px;
-    }
-    h1 {
-      font-size: 18px;
-      margin-bottom: 4px;
-    }
-    h2 {
-      font-size: 14px;
-      margin: 12px 0 4px;
-    }
-    .meta {
-      font-size: 11px;
-      color: #334155;
-      margin-bottom: 8px;
-    }
-    .meta span {
-      display: inline-block;
-      margin-right: 12px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 8px;
-    }
-    thead {
-      background: #f1f5f9;
-    }
-    th, td {
-      border: 1px solid #e2e8f0;
-      padding: 4px 6px;
-    }
-    th {
-      font-size: 11px;
-      text-align: left;
-    }
-    td.num, th.num {
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-    }
-    .legend {
-      font-size: 11px;
-      margin-top: 8px;
-      color: #475569;
-    }
-    @media print {
-      body {
-        padding: 0;
-      }
-    }
-  </style>
-</head>
-<body>
-  <h1>${escapeHtml(title)}</h1>
-  <div class="meta">
-    <span><strong>Prof :</strong> ${escapeHtml(teacherName || "—")}</span>
-    <span><strong>Classe :</strong> ${escapeHtml(classLabel || "—")}</span>
-    <span><strong>Matière :</strong> ${escapeHtml(subjectName || "—")}</span>
-  </div>
-  <div class="meta">
-    <span><strong>Année scolaire :</strong> ${escapeHtml(
-      academicYearLabel || "—"
-    )}</span>
-    <span><strong>Période / trimestre :</strong> ${escapeHtml(periodLabel)}</span>
-    <span><strong>Effectif :</strong> ${matrixStudents.length}</span>
-    <span><strong>Élèves à la moyenne (≥ 10/20) :</strong> ${nbAtLeast10}</span>
-  </div>
-  <div class="meta">
-    <span><strong>Premier :</strong> ${
-      best
-        ? escapeHtml(
-            `${best.st.full_name} (${best.avg.toFixed(2).replace(".", ",")}/20)`
-          )
-        : "—"
-    }</span>
-    <span><strong>Dernier :</strong> ${
-      worst
-        ? escapeHtml(
-            `${worst.st.full_name} (${worst.avg.toFixed(2).replace(".", ",")}/20)`
-          )
-        : "—"
-    }</span>
-  </div>
-  <div class="meta">
-    <span><strong>Intervalles de moyennes marquants :</strong></span>
-    <span>[0;5[ : ${dist["0-5"]}</span>
-    <span>[5;10[ : ${dist["5-10"]}</span>
-    <span>[10;15[ : ${dist["10-15"]}</span>
-    <span>[15;20] : ${dist["15-20"]}</span>
-  </div>
-
-  <h2>Notes par élève (évaluations publiées)</h2>
-  <table>
-    <thead>
-      <tr>
-        ${headCols
-          .map((h, idx) =>
-            idx <= 2
-              ? `<th>${escapeHtml(h)}</th>`
-              : `<th class="num">${escapeHtml(h)}</th>`
-          )
-          .join("")}
-      </tr>
-    </thead>
-    <tbody>
-      ${rowsHtml}
-    </tbody>
-  </table>
-
-  <div class="legend">
-    Ce document reprend uniquement les évaluations <strong>publiées</strong> aux parents sur la période choisie.
-  </div>
-  <script>
-    window.onload = function() {
-      window.print();
-    };
-  </script>
-</body>
-</html>`;
-
+    // Ouvrir la fenêtre pendant le clic, avant les appels asynchrones.
     const win = window.open("", "_blank");
     if (!win) {
-      setMatrixError(
-        "Impossible d'ouvrir la fenêtre d'impression / PDF. Vérifiez le bloqueur de pop-up."
-      );
+      setMatrixError("Impossible d'ouvrir la fenêtre d'impression. Vérifiez le bloqueur de pop-up.");
       return;
     }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-    win.focus();
+    setMatrixError(null);
+    setMatrixLoading(true);
+    try {
+      win.document.write("<!doctype html><html lang='fr'><title>Registre des notes</title><p>Chargement du registre…</p></html>");
+      win.document.close();
+      const qs = new URLSearchParams({ class_id: selectedClassId, subject_id: selectedSubjectId, from, to });
+      if (status === "published") qs.set("published", "true");
+      if (status === "draft") qs.set("published", "false");
+      const matrixRes = await fetch("/api/admin/notes/matrix?" + qs, { cache: "no-store" });
+      const matrix = await matrixRes.json() as MatrixOk;
+      if (!matrixRes.ok || !matrix.ok || !matrix.evaluations?.length || !matrix.students?.length) {
+        throw new Error("Aucune note à imprimer pour ces filtres.");
+      }
+      const officialParams = new URLSearchParams({
+        class_id: selectedClassId, from, to, register_subject_id: matrix.meta.subject_id,
+      });
+      const officialRes = await fetch("/api/admin/grades/bulletin?" + officialParams, { cache: "no-store" });
+      const official = await officialRes.json();
+      if (!officialRes.ok || !official.ok || !Array.isArray(official.averages)) {
+        throw new Error(official.error === "REGISTER_PERIOD_REQUIRED"
+          ? "Choisissez les dates exactes d'un trimestre ou d'une période de bulletin."
+          : "Impossible de récupérer les moyennes officielles. Aucun registre inexact ne sera imprimé.");
+      }
+      const averages = new Map<string, number | null>();
+      for (const row of official.averages) {
+        if (typeof row.student_id === "string") {
+          averages.set(row.student_id, typeof row.avg20 === "number" && Number.isFinite(row.avg20) ? row.avg20 : null);
+        }
+      }
+      const evaluations = matrix.evaluations;
+      const students = matrix.students;
+      const teachers = Array.from(new Set(evaluations.map(ev => ev.teacher_name).filter(Boolean))).join(", ");
+      const periodLabel = official.period?.short_label || official.period?.label || activePeriod?.label || "Période";
+      const academicYear = official.period?.academic_year || selectedYearCode || "—";
+      const fmt = (n: number) => n.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+      const fmtAvg = (n: number) => n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const dateLabel = (d: string) => {
+        const parts = d.slice(0, 10).split("-");
+        return parts.length === 3 ? parts[2] + "/" + parts[1] : d;
+      };
+      // Jusqu'à 20 évaluations sur la largeur A4. Au-delà, garder une taille
+      // lisible et répéter les identifiants et la moyenne sur chaque volet.
+      const groups: MatrixEval[][] = [];
+      for (let i = 0; i < evaluations.length; i += 20) groups.push(evaluations.slice(i, i + 20));
+      const compact = students.length > 38 || evaluations.length > 12;
+      const hasDrafts = evaluations.some(ev => !ev.is_published);
+      const title = "Registre des notes";
+      const sections = groups.map((group, groupIndex) => {
+        const headers = group.map((ev, i) => `<th class="note">Note ${groupIndex * 20 + i + 1}<span>/${escapeHtml(String(ev.scale))} · c${escapeHtml(String(ev.coeff))}</span><span>${escapeHtml(dateLabel(ev.eval_date))}${ev.is_published ? "" : " *"}</span></th>`).join("");
+        const rows = students.map((st, i) => {
+          const marks = matrix.marks[st.student_id] || {};
+          const cells = group.map(ev => {
+            const raw = marks[ev.id]?.raw;
+            return `<td class="num">${raw == null ? "—" : escapeHtml(fmt(raw))}</td>`;
+          }).join("");
+          const avg = averages.get(st.student_id);
+          return `<tr><td class="num">${i + 1}</td><td class="name">${escapeHtml(st.full_name)}</td><td class="matricule">${escapeHtml(st.matricule || "—")}</td>${cells}<td class="avg">${avg == null ? "NC" : escapeHtml(fmtAvg(avg))}</td></tr>`;
+        }).join("");
+        const groupLabel = groups.length > 1 ? ` — volet ${groupIndex + 1}/${groups.length}` : "";
+        const filterLabel = status === "published" ? "Notes publiées" : status === "draft" ? "Notes non publiées" : "Toutes les notes";
+        return `<section>
+          <header><h1>${title}${groupLabel}</h1>
+            <div><b>Classe :</b> ${escapeHtml(selectedClass?.name || "—")} &nbsp; <b>Matière :</b> ${escapeHtml(selectedSubject?.name || "—")} &nbsp; <b>Enseignant(s) :</b> ${escapeHtml(teachers || "—")}</div>
+            <div><b>Année :</b> ${escapeHtml(academicYear)} &nbsp; <b>Période :</b> ${escapeHtml(periodLabel)} (${escapeHtml(from)} au ${escapeHtml(to)}) &nbsp; <b>Effectif :</b> ${students.length} &nbsp; ${filterLabel}</div>
+          </header>
+          <table><colgroup><col style="width:7mm"><col style="width:55mm"><col style="width:22mm">${group.map(() => "<col>").join("")}<col style="width:17mm"></colgroup>
+          <thead><tr><th>N°</th><th>Nom et prénoms</th><th>Matricule</th>${headers}<th>Moyenne<br>/20</th></tr></thead>
+          <tbody>${rows}</tbody></table>
+          <p class="legend">Moyenne officielle du bulletin avant coefficient de matière ; NC = non classé / moyenne non disponible ; — = note absente ; c = coefficient de l'évaluation.${hasDrafts ? " * Évaluation non publiée : exclue de la moyenne officielle." : ""}</p>
+        </section>`;
+      }).join("");
+      const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${title}</title><style>
+        @page { size: A4 landscape; margin: 7mm; }
+        * { box-sizing: border-box; }
+        body { margin: 0; color: #111; font-family: Arial, sans-serif; font-size: ${compact ? "8pt" : "9pt"}; }
+        section + section { break-before: page; }
+        header { margin: 0 0 2mm; line-height: 1.25; }
+        h1 { font-size: 13pt; margin: 0 0 1mm; text-transform: uppercase; text-align: center; }
+        table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+        thead { display: table-header-group; }
+        tr { break-inside: avoid; page-break-inside: avoid; }
+        th, td { border: .2mm solid #999; padding: ${compact ? ".25mm .4mm" : ".55mm .7mm"}; line-height: 1.05; vertical-align: middle; }
+        th { background: #eee; text-align: center; font-size: ${evaluations.length > 12 ? "7pt" : "8pt"}; overflow-wrap: anywhere; }
+        th span { display: block; font-weight: normal; }
+        .num, .avg { text-align: center; font-variant-numeric: tabular-nums; }
+        .name, .matricule { overflow-wrap: anywhere; }
+        .avg { font-weight: bold; background: #f2f2f2; }
+        .legend { font-size: 7pt; margin: 1mm 0 0; }
+        @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+      </style></head><body>${sections}</body></html>`;
+      if (win.closed) return;
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => { if (!win.closed) win.print(); }, 250);
+    } catch (e: any) {
+      if (!win.closed) win.close();
+      setMatrixError(e?.message || "Impossible de préparer le registre.");
+    } finally {
+      setMatrixLoading(false);
+    }
   }
 
   // changement de niveau → reset classe & matières
@@ -1620,16 +1441,10 @@ export default function AdminNotesEvaluationsPage() {
             <GhostButton
               type="button"
               onClick={exportMatrixPdf}
-              disabled={
-                matrixLoading ||
-                !selectedClassId ||
-                !selectedSubjectId ||
-                !matrixStudents.length ||
-                !matrixEvals.length
-              }
+              disabled={matrixLoading || !selectedClassId || !selectedSubjectId || !from || !to}
             >
               <FileText className="h-4 w-4" />
-              Exporter PDF (notes publiées)
+              Imprimer le registre (PDF)
             </GhostButton>
           </div>
         }
@@ -1681,7 +1496,7 @@ export default function AdminNotesEvaluationsPage() {
                       </div>
                     </th>
                   ))}
-                  <th className="px-2 py-2 text-right">Moyenne /20</th>
+                  <th className="px-2 py-2 text-right">Moyenne indicative /20</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
