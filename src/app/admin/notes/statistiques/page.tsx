@@ -128,6 +128,7 @@ type RegisterResponse = {
 type RegisterOverviewItem = {
   teacher_id: string;
   teacher_name: string;
+  assigned_teacher_names?: string[];
   subject_id: string;
   subject_label: string;
   evaluations_count: number;
@@ -442,7 +443,7 @@ export default function AdminGradeRegisterPage() {
       current.published_notes_count += row.published_notes_count;
       current.unpublished_notes_count += row.unpublished_notes_count;
       if (row.last_eval_date > current.last_eval_date) current.last_eval_date = row.last_eval_date;
-      current.teacher_name = [...new Set([...current.teacher_name.split(" · "), row.teacher_name])].join(" · ");
+      current.assigned_teacher_names = [...new Set([...(current.assigned_teacher_names || []), ...(row.assigned_teacher_names || [])])];
     }
     return [...map.values()].sort((a, b) => a.subject_label.localeCompare(b.subject_label, "fr"));
   }, [overviewItems]);
@@ -450,7 +451,7 @@ export default function AdminGradeRegisterPage() {
     if (publicationFilter === "published" && !item.published_notes_count) return false;
     if (publicationFilter === "unpublished" && !item.unpublished_notes_count) return false;
     const query = search.trim().toLocaleLowerCase("fr");
-    return !query || `${item.teacher_name} ${item.subject_label}`.toLocaleLowerCase("fr").includes(query);
+    return !query || `${(item.assigned_teacher_names || []).join(" ")} ${item.subject_label}`.toLocaleLowerCase("fr").includes(query);
   });
 
   const dirtyCount = useMemo(
@@ -1300,7 +1301,7 @@ export default function AdminGradeRegisterPage() {
                   <thead className="bg-slate-50 text-left text-slate-600">
                     <tr>
                       <th scope="col" className="px-4 py-3">Discipline</th>
-                      <th scope="col" className="px-4 py-3">Contributeurs aux notes</th>
+                      <th scope="col" className="px-4 py-3">Professeur affecté</th>
                       <th scope="col" className="px-4 py-3 text-center">Évaluations</th>
                       <th scope="col" className="px-4 py-3 text-center">Notes saisies</th>
                       <th scope="col" className="px-4 py-3 text-center">Publiées</th>
@@ -1320,7 +1321,7 @@ export default function AdminGradeRegisterPage() {
                             {item.subject_label}
                           </button>
                         </td>
-                        <td className="px-4 py-3 text-xs text-slate-500">{item.teacher_name}</td>
+                        <td className="px-4 py-3 text-xs text-slate-600">{item.assigned_teacher_names?.length ? item.assigned_teacher_names.join(" · ") : "Aucune affectation active"}</td>
                         <td className="px-4 py-3 text-center tabular-nums">{item.evaluations_count}</td>
                         <td className="px-4 py-3 text-center font-semibold tabular-nums">{item.notes_count}</td>
                         <td className="px-4 py-3 text-center tabular-nums text-emerald-700">{item.published_notes_count}</td>
@@ -1437,7 +1438,7 @@ export default function AdminGradeRegisterPage() {
                           <div className="font-bold text-slate-800">
                             {evaluation.column_label || `Note ${index + 1}`}
                           </div>
-                          {selectedTeacherId === "__all__" && evaluation.teacher_name && <div className="mt-1 max-w-[130px] text-[10px] font-normal text-slate-500">{evaluation.teacher_name}</div>}
+                          {selectedTeacherId === "__all__" && evaluation.teacher_name && <div className="mt-1 max-w-[130px] text-[10px] font-normal text-slate-500" title="Compte associé à l’évaluation, pas nécessairement le professeur affecté">Compte : {evaluation.teacher_name}</div>}
                           <div className="mt-0.5 text-[11px] font-normal text-slate-500">
                             {evalKindLabel(evaluation.eval_kind)} · {formatDate(evaluation.eval_date)} · /{evaluation.scale}
                             {Number(evaluation.coeff || 1) !== 1 ? ` · Coef. ${evaluation.coeff}` : ""}
