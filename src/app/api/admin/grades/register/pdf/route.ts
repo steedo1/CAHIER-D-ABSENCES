@@ -27,12 +27,13 @@ export async function GET(req: NextRequest) {
     }
 
     const srv = getSupabaseServiceClient();
-    const { data: teacher, error: teacherError } = await srv
-      .from("profiles")
-      .select("display_name")
-      .eq("id", String(result.teacher_id || ""))
-      .maybeSingle();
-    if (teacherError) throw teacherError;
+    let teacherName = "Tous les enseignants";
+    if (result.teacher_id !== "__all__") {
+      const { data: teacher, error: teacherError } = await srv.from("profiles")
+        .select("display_name").eq("id", String(result.teacher_id || "")).maybeSingle();
+      if (teacherError) throw teacherError;
+      teacherName = String(teacher?.display_name || "Enseignant");
+    }
 
     const filter = req.nextUrl.searchParams.get("publication_filter") || "all";
     if (!["all", "published", "unpublished"].includes(filter)) {
@@ -52,7 +53,9 @@ export async function GET(req: NextRequest) {
       classLabel: String(result.class.label || "Classe"),
       academicYear: String(result.class.academic_year || ""),
       subject: String(result.subject.label || ""),
-      teacher: String(teacher?.display_name || "Enseignant"),
+      teacher: teacherName,
+      officialAverages: result.official_averages || {},
+      officialAverageStatus: result.official_average_status || "unavailable",
       period: String(result.period?.label || "Toute l’année scolaire"),
       students: result.roster || [],
       evaluations,
