@@ -738,7 +738,7 @@ export default function AdminGradeRegisterPage() {
 
   function studentAverage20(studentId: string) {
     // This indicative calculation is never presented as a bulletin average.
-    if (selectedTeacherId !== "__all__" || (register?.components || []).length > 0 || evaluations.some(ev => ev.subject_component_id)) return null;
+    if ((!primaryRegister && selectedTeacherId !== "__all__") || (register?.components || []).length > 0 || evaluations.some(ev => ev.subject_component_id)) return null;
     let numerator = 0;
     let denominator = 0;
 
@@ -1378,7 +1378,7 @@ export default function AdminGradeRegisterPage() {
                             <div className="font-bold tabular-nums text-slate-900">
                               {average === null ? "—" : average.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
-                            {indicative !== null && <div className="mt-1 text-[10px] text-amber-700">Indicative : {indicative.toFixed(2)}</div>}
+                            {indicative !== null && <div className="mt-1 text-[10px] text-amber-700">Indicative : {indicative.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                           </div>
                         </div>
                         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -1502,7 +1502,7 @@ export default function AdminGradeRegisterPage() {
 
                         <td className="sticky right-0 z-20 border-b border-l border-slate-200 bg-slate-100 px-4 py-2.5 text-center font-bold tabular-nums text-slate-900">
                           {average === null ? "—" : average.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          {indicative !== null && <div className="mt-1 text-[10px] font-normal text-amber-700">Indicative : {indicative.toFixed(2)}</div>}
+                          {indicative !== null && <div className="mt-1 text-[10px] font-normal text-amber-700">Indicative : {indicative.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                         </td>
                       </tr>
                     );
