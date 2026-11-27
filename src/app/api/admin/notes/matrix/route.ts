@@ -51,6 +51,7 @@ type EvalOut = {
   title: string | null;
   teacher_id: string | null;
   teacher_name: string | null;
+  is_published: boolean;
 };
 
 function cleanName(...parts: Array<string | null | undefined>) {
@@ -372,23 +373,23 @@ export async function GET(req: NextRequest) {
     /* ───────── Notes ───────── */
     const marksRows: MarkRow[] = [];
 
-    for (const part of chunks(evalIds, 500)) {
-      const { data: marksData, error: marksErr } = await getSupabaseServiceClient()
-        .from("grade_flat_marks")
-        .select(
-          "evaluation_id, student_id, raw_score, mark_20, last_name, first_name, matricule"
-        )
-        .in("evaluation_id", part);
-
-      if (marksErr) {
-        console.error("[admin.notes.matrix] grade_flat_marks error", marksErr);
-        return NextResponse.json(
-          { ok: false, error: "MARKS_ERROR" },
-          { status: 500 }
-        );
+    for (const part of chunks(evalIds, 100)) {
+      const pageSize = 500;
+      for (let offset = 0; ; offset += pageSize) {
+        const { data: marksData, error: marksErr } = await getSupabaseServiceClient()
+          .from("grade_flat_marks")
+          .select("evaluation_id, student_id, raw_score, mark_20, last_name, first_name, matricule")
+          .in("evaluation_id", part)
+          .order("evaluation_id", { ascending: true })
+          .order("student_id", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (marksErr) {
+          console.error("[admin.notes.matrix] grade_flat_marks error", marksErr);
+          return NextResponse.json({ ok: false, error: "MARKS_ERROR" }, { status: 500 });
+        }
+        marksRows.push(...((marksData || []) as MarkRow[]));
+        if ((marksData || []).length < pageSize) break;
       }
-
-      marksRows.push(...((marksData || []) as MarkRow[]));
     }
 
     /* ───────── Élèves + notes ───────── */
@@ -472,6 +473,7 @@ export async function GET(req: NextRequest) {
       title: ev.title ?? null,
       teacher_id: ev.teacher_id,
       teacher_name: ev.teacher_id ? teachersById[ev.teacher_id] ?? null : null,
+      is_published: ev.is_published === true,
     }));
 
     return NextResponse.json({
