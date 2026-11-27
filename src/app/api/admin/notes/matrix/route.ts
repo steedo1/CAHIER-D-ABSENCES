@@ -50,6 +50,7 @@ type EvalOut = {
   title: string | null;
   teacher_id: string | null;
   teacher_name: string | null;
+  is_published: boolean;
 };
 
 function cleanName(...parts: Array<string | null | undefined>) {
@@ -474,6 +475,7 @@ export async function GET(req: NextRequest) {
       title: ev.title ?? null,
       teacher_id: ev.teacher_id,
       teacher_name: ev.teacher_id ? teachersById[ev.teacher_id] ?? null : null,
+      is_published: ev.is_published === true,
     }));
 
     return NextResponse.json({
