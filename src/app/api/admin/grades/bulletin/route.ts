@@ -1432,6 +1432,10 @@ export async function GET(req: NextRequest) {
   const classId = searchParams.get("class_id");
   const dateFrom = searchParams.get("from");
   const dateTo = searchParams.get("to");
+  const registerSubjectId = searchParams.get("register_subject_id")?.trim() || null;
+  if (registerSubjectId && (!dateFrom || !dateTo)) {
+    return NextResponse.json({ ok: false, error: "REGISTER_PERIOD_REQUIRED" }, { status: 400 });
+  }
 
   if (!classId) {
     return NextResponse.json({ ok: false, error: "MISSING_CLASS_ID" }, { status: 400 });
@@ -1599,6 +1603,10 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  if (registerSubjectId && !periodMeta.id) {
+    return NextResponse.json({ ok: false, error: "REGISTER_PERIOD_REQUIRED" }, { status: 400 });
+  }
+
   const periodResponse = {
     ...periodMeta,
     periods_defined: periodsDefined,
@@ -1743,6 +1751,19 @@ export async function GET(req: NextRequest) {
       subject_groups: [],
       subject_components: [],
       items: [],
+    });
+  }
+
+  // Registre : lecture seule de la moyenne finale issue du calcul du bulletin.
+  // Ne jamais générer de QR ni de snapshots pour ce mode.
+  function registerAveragesResponse(rows: Array<{ student_id: string; per_subject: Array<{ subject_id: string; avg20: number | null }> }>) {
+    return NextResponse.json({
+      ok: true,
+      period: periodResponse,
+      averages: rows.map((row) => ({
+        student_id: row.student_id,
+        avg20: row.per_subject.find((subject) => String(subject.subject_id) === registerSubjectId)?.avg20 ?? null,
+      })),
     });
   }
 
@@ -2092,6 +2113,7 @@ export async function GET(req: NextRequest) {
     });
 
     applyPeriodNcOverridesToItems(baseItems, periodNcOverrideMap);
+    if (registerSubjectId) return registerAveragesResponse(baseItems);
 
     const itemsWithQr = await addQrToItems(srvClient, baseItems, {
       origin,
@@ -3153,6 +3175,7 @@ export async function GET(req: NextRequest) {
   });
 
   applyPeriodNcOverridesToItems(items, periodNcOverrideMap);
+  if (registerSubjectId) return registerAveragesResponse(items);
 
   // ✅ Rang général trimestriel
   // Nouvelle règle : on classe tout élève qui possède une moyenne générale calculable.
