@@ -123,6 +123,7 @@ type RegisterResponse = {
   components?: SubjectComponent[];
   official_averages?: Record<string, number | null>;
   official_average_status?: string;
+  can_publish?: boolean;
 };
 
 type RegisterOverviewItem = {
@@ -321,6 +322,8 @@ export default function AdminGradeRegisterPage() {
   const [directDirty, setDirectDirty] = useState(false);
   const [directSaving, setDirectSaving] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const publishingRef = useRef(false);
   const overviewMode = selectedSubjectId === "";
 
   const loadSeq = useRef(0);
@@ -414,6 +417,15 @@ export default function AdminGradeRegisterPage() {
     (publicationFilter === "published" ? isPublished(evaluation) : !isPublished(evaluation)),
   );
   const roster = register?.roster || [];
+  const savedScoreCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of register?.scores || []) {
+      if (row.score !== null && Number.isFinite(row.score)) map.set(row.evaluation_id, (map.get(row.evaluation_id) || 0) + 1);
+    }
+    return map;
+  }, [register?.scores]);
+  const publishableEvaluations = visibleEvaluations.filter(ev =>
+    !isPublished(ev) && !ev.is_locked && ["draft", "submitted", "changes_requested"].includes(String(ev.publication_status || "draft").toLowerCase()) && (savedScoreCounts.get(ev.id) || 0) > 0);
   const originalScoreMap = useMemo(() => {
     const map = new Map<string, number | null>();
     for (const item of register?.scores || []) {
@@ -727,6 +739,7 @@ export default function AdminGradeRegisterPage() {
   }
 
   function setCellValue(evaluationId: string, studentId: string, value: string) {
+    if (publishingRef.current) return;
     setDirty((current) => ({
       ...current,
       [evaluationId]: {
@@ -758,6 +771,7 @@ export default function AdminGradeRegisterPage() {
   }
 
   async function saveChanges() {
+    if (publishingRef.current) return;
     const entries = Object.entries(dirty).filter(([, items]) => Object.keys(items).length > 0);
     if (!entries.length) {
       setMessage("Aucune modification à enregistrer.");
@@ -828,6 +842,7 @@ export default function AdminGradeRegisterPage() {
   }
 
   async function createEvaluation() {
+    if (publishingRef.current) return;
     if (!selectedClassId || (!primaryRegister && !selectedPeriodId) || !selectedSubjectId || !selectedTeacherId || selectedTeacherId === "__all__") {
       setError("Complétez d’abord les sélections du registre.");
       return;
@@ -866,6 +881,56 @@ export default function AdminGradeRegisterPage() {
       setError(reason?.message || "Impossible d’ajouter la nouvelle note.");
     } finally {
       setCreatingEvaluation(false);
+    }
+  }
+
+  async function publishEvaluations(ids: string[]) {
+    if (publishingRef.current || saving || creatingEvaluation || registerLoading || dirtyCount || !register?.can_publish || !ids.length) return;
+    const selected = publishableEvaluations.filter(ev => ids.includes(ev.id));
+    if (selected.length !== ids.length) return;
+    const details = selected.map(ev => (ev.column_label || "Note") + " · " + (savedScoreCounts.get(ev.id) || 0) + " notes").join("\n");
+    if (!window.confirm("Publier officiellement pour " + classLabel(selectedClass) + " — " + (selectedSubject?.label || "Discipline") + " ?\n\n" + details + "\n\nLes notes seront prises en compte dans les bulletins et accessibles aux parents selon les paramètres de l’établissement.")) return;
+    publishingRef.current = true;
+    setPublishing(true);
+    setError(null);
+    setMessage(null);
+    try {
+      // Batches are explicit and bounded; never include a newly created or hidden evaluation.
+      let published = 0, already = 0;
+      const failures: string[] = [];
+      try {
+        for (let offset = 0; offset < ids.length; offset += 50) {
+          const batch = ids.slice(offset, offset + 50);
+          const response = await fetch("/api/admin/grades/register", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "publish_evaluations", evaluation_ids: batch,
+              class_id: selectedClassId, subject_id: selectedSubjectId, teacher_id: selectedTeacherId,
+              academic_year: selectedYear, grading_period_id: primaryRegister ? null : selectedPeriodId }),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.ok) {
+            failures.push(String(result.error || "Publication impossible"));
+            break;
+          }
+          published += Number(result.published_count || 0);
+          already += Number(result.already_published_count || 0);
+          for (const item of result.results || []) {
+            if (item.status === "failed") failures.push((selected.find(ev => ev.id === item.evaluation_id)?.column_label || "Évaluation") + " : " + item.error);
+          }
+        }
+      } catch {
+        failures.push("Connexion interrompue : vérifiez les statuts actualisés avant de réessayer.");
+      }
+      setPublicationFilter("all");
+      await loadRegister();
+      if (failures.length) {
+        setError(published + " évaluation(s) publiée(s). " + failures.join(" · ") + " Vérifiez les statuts avant toute nouvelle publication.");
+      } else {
+        setMessage(published + " évaluation(s) publiée(s) officiellement." + (already ? " " + already + " déjà publiée(s)." : ""));
+      }
+    } finally {
+      publishingRef.current = false;
+      setPublishing(false);
     }
   }
 
@@ -946,7 +1011,7 @@ export default function AdminGradeRegisterPage() {
 
             {entryMode === "notes" && <div className="flex flex-wrap items-center gap-2">
               {!overviewMode && (
-                <Button type="button" tone="ghost" onClick={showAllDisciplines} disabled={saving}>
+                <Button type="button" tone="ghost" onClick={showAllDisciplines} disabled={saving || publishing}>
                   <ArrowLeft className="h-4 w-4" />
                   Toutes les disciplines
                 </Button>
@@ -955,16 +1020,16 @@ export default function AdminGradeRegisterPage() {
                 type="button"
                 tone="ghost"
                 onClick={() => void (overviewMode ? loadOverview() : loadRegister())}
-                disabled={!(overviewMode ? contextReady : ready) || registerLoading}
+                disabled={!(overviewMode ? contextReady : ready) || registerLoading || publishing}
               >
                 <RefreshCw className={`h-4 w-4 ${registerLoading ? "animate-spin" : ""}`} />
                 Actualiser
               </Button>
-              <Button type="button" tone="secondary" onClick={openNewEvaluation} disabled={!ready || selectedTeacherId === "__all__"}>
+              <Button type="button" tone="secondary" onClick={openNewEvaluation} disabled={!ready || selectedTeacherId === "__all__" || publishing}>
                 <Plus className="h-4 w-4" />
                 Ajouter une note
               </Button>
-              <Button type="button" onClick={() => void saveChanges()} disabled={!dirtyCount || saving}>
+              <Button type="button" onClick={() => void saveChanges()} disabled={!dirtyCount || saving || publishing}>
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 Enregistrer{dirtyCount ? ` (${dirtyCount})` : ""}
               </Button>
@@ -972,13 +1037,13 @@ export default function AdminGradeRegisterPage() {
           </div>
         </header>
         <div className="flex flex-wrap gap-2" aria-label="Mode du cahier de notes">
-          {(["notes", "averages"] as const).map(value => <Button key={value} type="button" disabled={directDirty || directSaving || saving || dirtyCount > 0}
+          {(["notes", "averages"] as const).map(value => <Button key={value} type="button" disabled={directDirty || directSaving || saving || publishing || dirtyCount > 0}
             tone={entryMode === value ? "primary" : "ghost"} aria-pressed={entryMode === value} onClick={() => setEntryMode(value)}>
             {value === "notes" ? "Notes des devoirs" : "Saisir les moyennes"}
           </Button>)}
         </div>
 
-        <fieldset disabled={directDirty || directSaving} className="min-w-0">
+        <fieldset disabled={directDirty || directSaving || publishing} className="min-w-0">
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <EducationScopeFilter
             value={educationScope}
@@ -1195,7 +1260,7 @@ export default function AdminGradeRegisterPage() {
               <Button type="button" tone="ghost" onClick={() => setShowNewEvaluation(false)}>
                 Annuler
               </Button>
-              <Button type="button" onClick={() => void createEvaluation()} disabled={creatingEvaluation}>
+              <Button type="button" onClick={() => void createEvaluation()} disabled={creatingEvaluation || publishing}>
                 {creatingEvaluation ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 Créer la colonne
               </Button>
@@ -1252,7 +1317,7 @@ export default function AdminGradeRegisterPage() {
                 <button
                   type="button"
                   onClick={() => void exportRegisterPdf()}
-                  disabled={!register || !visibleEvaluations.length || !roster.length || registerLoading || pdfLoading || dirtyCount > 0}
+                  disabled={!register || !visibleEvaluations.length || !roster.length || registerLoading || pdfLoading || publishing || dirtyCount > 0}
                   className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
@@ -1264,7 +1329,7 @@ export default function AdminGradeRegisterPage() {
                 <Select
                   value={publicationFilter}
                   onChange={(event) => setPublicationFilter(event.target.value as typeof publicationFilter)}
-                  disabled={!contextReady || registerLoading}
+                  disabled={!contextReady || registerLoading || publishing}
                 >
                   <option value="all">Toutes les notes</option>
                   <option value="published">Publiées</option>
@@ -1284,6 +1349,37 @@ export default function AdminGradeRegisterPage() {
             </div>
           </div>
 
+          {!overviewMode && register?.can_publish && !registerLoading && (
+            <div className="border-b border-slate-200 bg-emerald-50/40 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Publication officielle des notes</h3>
+                  <p className="text-xs text-slate-600">Publiez une évaluation ou toutes les évaluations non publiées de la sélection.</p>
+                </div>
+                <Button type="button" onClick={() => void publishEvaluations(publishableEvaluations.map(ev => ev.id))}
+                  disabled={publishing || saving || creatingEvaluation || dirtyCount > 0 || !publishableEvaluations.length}>
+                  {publishing && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {publishing ? "Publication en cours…" : "Tout publier (" + publishableEvaluations.length + ")"}
+                </Button>
+              </div>
+              {dirtyCount > 0 && <p className="mt-2 text-xs text-amber-800">Enregistrez les modifications avant de publier.</p>}
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {visibleEvaluations.filter(ev => !isPublished(ev)).map(ev => (
+                  <div key={ev.id} className="flex items-center justify-between gap-2 rounded-lg border bg-white p-2 text-xs">
+                    <div className="min-w-0">
+                      <div className="font-semibold">{ev.column_label || "Note"} · /{ev.scale}</div>
+                      <div className="text-slate-500">{formatDate(ev.eval_date)} · {savedScoreCounts.get(ev.id) || 0} notes saisies</div>
+                      {ev.is_locked && <div className="text-amber-700">Verrouillée</div>}
+                    </div>
+                    <button type="button" className="rounded-lg border border-emerald-300 px-3 py-2 font-semibold text-emerald-800 disabled:opacity-40"
+                      disabled={publishing || saving || creatingEvaluation || dirtyCount > 0 || !publishableEvaluations.some(row => row.id === ev.id)}
+                      onClick={() => void publishEvaluations([ev.id])}>Publier</button>
+                  </div>
+                ))}
+              </div>
+              {!publishableEvaluations.length && <p className="mt-2 text-xs text-slate-500">Aucune évaluation publiable dans cette sélection.</p>}
+            </div>
+          )}
           {registerLoading ? (
             <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-slate-500">
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -1385,7 +1481,7 @@ export default function AdminGradeRegisterPage() {
                         <div className="mt-3 grid grid-cols-2 gap-2">
                           {visibleEvaluations.map((evaluation, index) => {
                             const value = getCellValue(evaluation.id, student.id);
-                            const editable = evaluation.editable === true;
+                            const editable = evaluation.editable === true && !publishing;
                             return (
                               <div key={evaluation.id} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
                                 <div className="flex items-start justify-between gap-1">
@@ -1478,7 +1574,7 @@ export default function AdminGradeRegisterPage() {
 
                         {visibleEvaluations.map((evaluation) => {
                           const value = getCellValue(evaluation.id, student.id);
-                          const editable = evaluation.editable === true;
+                          const editable = evaluation.editable === true && !publishing;
                           return (
                             <td key={evaluation.id} className="border-b border-r border-slate-100 px-2 py-1.5 text-center">
                               {editable ? (
