@@ -250,127 +250,42 @@ async function resolveSubjectIdToGlobal(
 }
 
 /**
- * Détermine le teacher_id à enregistrer sur grade_evaluations.
- *
- * - Si l'utilisateur est un professeur "normal" → on met son profile.id
- * - Si c'est un compte-classe → on essaie de retrouver le prof via class_teachers
- *   pour (class_id, subject_id)
- * - Sinon on garde le profile.id en fallback.
+ * A staff account or class device is the author of the operation, not
+ * the pedagogical owner. Resolve only the class/subject assignment.
  */
 async function resolveTeacherIdForEvaluation(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
   profileId: string,
   classId: string,
-  rawSubjectId: string | null,
-  resolvedSubjectId: string | null
-): Promise<string | null> {
-  try {
-    const { data: roleRows, error: rolesErr } = await srv
-      .from("user_roles")
-      .select("role")
-      .eq("profile_id", profileId)
-      .eq("institution_id", institutionId);
+  resolvedSubjectId: string | null,
+  evalDate: string,
+  access: "staff" | "teacher" | "class_device",
+  requestedTeacherId: string | null
+): Promise<{ teacherId: string | null; error: string | null }> {
+  if (access === "teacher") return { teacherId: profileId, error: null };
+  if (!resolvedSubjectId) return { teacherId: null, error: "evaluation_subject_required" };
 
-    if (rolesErr) {
-      console.error(
-        "[grades/evaluations] resolveTeacherIdForEvaluation roles error",
-        rolesErr
-      );
-      return profileId;
-    }
+  const { data: links, error: linkError } = await srv.from("institution_subjects")
+    .select("id").eq("institution_id", institutionId).eq("subject_id", resolvedSubjectId);
+  if (linkError) throw linkError;
+  const subjectIds = [...new Set([resolvedSubjectId, ...(links || []).map(row => String(row.id))])];
+  const { data: rows, error: assignmentError } = await srv.from("class_teachers")
+    .select("teacher_id,start_date,end_date")
+    .eq("institution_id", institutionId).eq("class_id", classId)
+    .in("subject_id", subjectIds).lte("start_date", evalDate)
+    .or(`end_date.is.null,end_date.gt.${evalDate}`);
+  if (assignmentError) throw assignmentError;
 
-    const roles = new Set<string>(
-      (roleRows ?? []).map((r: any) => String(r.role))
-    );
-
-    const isTeacher = roles.has("teacher");
-    const isClassDevice = roles.has("class_device");
-
-    // Prof classique → on garde le prof lui-même
-    if (isTeacher && !isClassDevice) {
-      return profileId;
-    }
-
-    // Autre rôle sans class_device (admin qui crée une note par ex.)
-    if (!isClassDevice) {
-      return profileId;
-    }
-
-    // Compte-classe : on va chercher le prof de la classe
-    const { data: ctRows, error: ctErr } = await srv
-      .from("class_teachers")
-      .select("teacher_id,subject_id")
-      .eq("institution_id", institutionId)
-      .eq("class_id", classId)
-      .is("end_date", null);
-
-    if (ctErr) {
-      console.error(
-        "[grades/evaluations] resolveTeacherIdForEvaluation class_teachers error",
-        ctErr
-      );
-      return profileId;
-    }
-
-    const rows = ctRows ?? [];
-
-    if (!rows.length) {
-      console.warn(
-        "[grades/evaluations] resolveTeacherIdForEvaluation: aucun enseignant trouvé pour la classe",
-        { classId, institutionId }
-      );
-      return profileId;
-    }
-
-    const matchByRaw = rawSubjectId
-      ? rows.filter((r: any) => r.subject_id === rawSubjectId)
-      : [];
-
-    const matchByResolved = resolvedSubjectId
-      ? rows.filter((r: any) => r.subject_id === resolvedSubjectId)
-      : [];
-
-    const candidates =
-      matchByRaw.length > 0
-        ? matchByRaw
-        : matchByResolved.length > 0
-          ? matchByResolved
-          : rows;
-
-    if (candidates.length === 1) {
-      const tid = (candidates[0] as any).teacher_id || profileId;
-
-      console.log(
-        "[grades/evaluations] resolveTeacherIdForEvaluation: teacher trouvé pour compte-classe",
-        { classId, rawSubjectId, resolvedSubjectId, teacher_id: tid }
-      );
-
-      return tid;
-    }
-
-    const chosen = (candidates[0] as any)?.teacher_id || profileId;
-
-    console.warn(
-      "[grades/evaluations] resolveTeacherIdForEvaluation: plusieurs enseignants possibles, on prend le premier",
-      {
-        classId,
-        rawSubjectId,
-        resolvedSubjectId,
-        teacher_id: chosen,
-      }
-    );
-
-    return chosen;
-  } catch (err) {
-    console.error(
-      "[grades/evaluations] resolveTeacherIdForEvaluation unexpected error",
-      err,
-      { institutionId, profileId, classId }
-    );
-
-    return profileId;
+  const candidates = [...new Set((rows || []).map(row => row.teacher_id).filter((id): id is string => typeof id === "string" && !!id))];
+  if (!candidates.length) return { teacherId: null, error: "class_subject_teacher_missing" };
+  if (access === "staff" && requestedTeacherId) {
+    return candidates.includes(requestedTeacherId)
+      ? { teacherId: requestedTeacherId, error: null }
+      : { teacherId: null, error: "teacher_not_assigned" };
   }
+  if (candidates.length !== 1) return { teacherId: null, error: "class_subject_teacher_ambiguous" };
+  return { teacherId: candidates[0], error: null };
 }
 
 function normalizePublicationStatus(value: unknown): string {
@@ -981,14 +896,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const teacherId = await resolveTeacherIdForEvaluation(
-      srv,
-      profile.institution_id,
-      profile.id,
-      class_id,
-      subjRaw,
-      resolvedSubjectId
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(eval_date)) {
+      return NextResponse.json({ ok: false, error: "INVALID_EVAL_DATE" }, { status: 400 });
+    }
+    const teacherResolution = await resolveTeacherIdForEvaluation(
+      srv, profile.institution_id, profile.id, class_id, resolvedSubjectId,
+      eval_date, access, normalizeUuidLike(body.teacher_id)
     );
+    if (!teacherResolution.teacherId) {
+      return NextResponse.json({ ok: false, error: teacherResolution.error }, { status: 409 });
+    }
+    const teacherId = teacherResolution.teacherId;
 
     const explicitGradingPeriodId =
       normalizeUuidLike(gradingPeriodId) ??
