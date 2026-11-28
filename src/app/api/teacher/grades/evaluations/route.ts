@@ -1032,17 +1032,32 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true, reused: true, item: visibleItem(items[0]) });
       }
     }
-    // An EPC class-device acts for the assigned teacher, never as the teacher identity itself.
+    // Staff and class devices act on behalf of the assigned teacher.
     let evaluationTeacherId = profileId;
-    if (classDeviceAccess) {
-      const { data: assignment, error: assignmentError } = await srv.from("class_teachers")
+    if (classDeviceAccess || isPrivileged(roles)) {
+      if (!globalId || !subjectCandidates.length) {
+        return NextResponse.json({ ok: false, error: "evaluation_subject_required" }, { status: 400 });
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(eval_date)) {
+        return NextResponse.json({ ok: false, error: "invalid_eval_date" }, { status: 400 });
+      }
+      const { data: assignments, error: assignmentError } = await srv.from("class_teachers")
         .select("teacher_id").eq("institution_id", institutionId)
         .eq("class_id", class_id).in("subject_id", subjectCandidates)
-        .is("end_date", null).order("teacher_id").limit(1).maybeSingle();
-      if (assignmentError || !assignment?.teacher_id) {
+        .lte("start_date", eval_date).or(`end_date.is.null,end_date.gt.${eval_date}`);
+      if (assignmentError) throw assignmentError;
+      const candidates = [...new Set((assignments || []).map(row => row.teacher_id).filter((id): id is string => typeof id === "string" && !!id))];
+      if (!candidates.length) {
         return NextResponse.json({ ok: false, error: "class_subject_teacher_missing" }, { status: 409 });
       }
-      evaluationTeacherId = assignment.teacher_id;
+      const requestedTeacherId = isPrivileged(roles) && !classDeviceAccess ? normalizeUuidLike(body.teacher_id) : null;
+      if (requestedTeacherId && !candidates.includes(requestedTeacherId)) {
+        return NextResponse.json({ ok: false, error: "teacher_not_assigned" }, { status: 409 });
+      }
+      if (!requestedTeacherId && candidates.length !== 1) {
+        return NextResponse.json({ ok: false, error: "class_subject_teacher_ambiguous" }, { status: 409 });
+      }
+      evaluationTeacherId = requestedTeacherId || candidates[0];
     }
     const { data, error } = await srv
       .from("grade_evaluations")
